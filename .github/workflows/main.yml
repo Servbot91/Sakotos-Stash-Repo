@@ -1,0 +1,77 @@
+name: Auto Zip Plugin Folders and Update Manifest
+
+on:
+  push:
+    paths:
+      - 'plugins/Ascension/plugins/Ascension/**'
+      - 'plugins/Deck Viewer/plugins/Deck Viewer/**'
+      - 'plugins/DiceR/plugins/DiceR/**'
+      - 'plugins/Senpai Stash Addon/plugins/senpai-addon-pack/**'
+      - 'plugins/Senpai Stash Theme/plugins/SenpaiV1/**'
+      - 'plugins/TagImagesFromGalleries/plugins/tagImagesFromGalleries/**'
+      - 'manifest.yml'
+
+jobs:
+  zip-and-update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install PyYAML
+
+      - name: Zip Ascension
+        if: github.event_name == 'push' && (contains(github.event.head_commit.added, 'plugins/Ascension/plugins/Ascension') || contains(github.event.head_commit.modified, 'plugins/Ascension/plugins/Ascension') || contains(github.event.head_commit.removed, 'plugins/Ascension/plugins/Ascension'))
+        run: |
+          cd plugins/Ascension/plugins
+          zip -r Ascension.zip Ascension
+
+      - name: Zip Deck Viewer
+        if: github.event_name == 'push' && (contains(github.event.head_commit.added, 'plugins/Deck Viewer/plugins/Deck Viewer') || contains(github.event.head_commit.modified, 'plugins/Deck Viewer/plugins/Deck Viewer') || contains(github.event.head_commit.removed, 'plugins/Deck Viewer/plugins/Deck Viewer'))
+        run: |
+          cd plugins/Deck\ Viewer/plugins
+          zip -r "Deck Viewer.zip" "Deck Viewer"
+
+      - name: Zip DiceR
+        if: github.event_name == 'push' && (contains(github.event.head_commit.added, 'plugins/DiceR/plugins/DiceR') || contains(github.event.head_commit.modified, 'plugins/DiceR/plugins/DiceR') || contains(github.event.head_commit.removed, 'plugins/DiceR/plugins/DiceR'))
+        run: |
+          cd plugins/DiceR/plugins
+          zip -r DiceR.zip DiceR
+
+      - name: Zip Senpai Addon Pack
+        if: github.event_name == 'push' && (contains(github.event.head_commit.added, 'plugins/Senpai Stash Addon/plugins/senpai-addon-pack') || contains(github.event.head_commit.modified, 'plugins/Senpai Stash Addon/plugins/senpai-addon-pack') || contains(github.event.head_commit.removed, 'plugins/Senpai Stash Addon/plugins/senpai-addon-pack'))
+        run: |
+          cd plugins/Senpai\ Stash\ Addon/plugins
+          zip -r senpai-addon-pack.zip senpai-addon-pack
+
+      - name: Zip Senpai Theme
+        if: github.event_name == 'push' && (contains(github.event.head_commit.added, 'plugins/Senpai Stash Theme/plugins/SenpaiV1') || contains(github.event.head_commit.modified, 'plugins/Senpai Stash Theme/plugins/SenpaiV1') || contains(github.event.head_commit.removed, 'plugins/Senpai Stash Theme/plugins/SenpaiV1'))
+        run: |
+          cd plugins/Senpai\ Stash\ Theme/plugins
+          zip -r SenpaiV1.zip SenpaiV1
+
+      - name: Zip TagImagesFromGalleries
+        if: github.event_name == 'push' && (contains(github.event.head_commit.added, 'plugins/TagImagesFromGalleries/plugins/tagImagesFromGalleries') || contains(github.event.head_commit.modified, 'plugins/TagImagesFromGalleries/plugins/tagImagesFromGalleries') || contains(github.event.head_commit.removed, 'plugins/TagImagesFromGalleries/plugins/tagImagesFromGalleries'))
+        run: |
+          cd plugins/TagImagesFromGalleries/plugins
+          zip -r tagImagesFromGalleries.zip tagImagesFromGalleries
+
+      - name: Update manifest with SHA256 hashes
+        run: |
+          python .github/scripts/update_manifest.py
+
+      - name: Commit and push updated files
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git add .
+          git commit -m "Auto-update zip files and manifest" || exit 0
+          git push
