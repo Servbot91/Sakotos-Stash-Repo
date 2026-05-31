@@ -1,505 +1,110 @@
-name: Auto Zip Plugin Folders and Update Manifest
+name: Build Plugins and Update Manifest
 
 on:
   push:
     branches:
       - main
     paths:
-      - 'plugins/**'
-    # Prevents the bot's own commits from triggering an infinite workflow loop
-    paths-ignore:
-      - 'plugins/**/*.zip'
-      - 'plugins/manifest.yml'
-
-permissions:
-  contents: write
+      - 'plugins/Ascension/plugins/Ascension/**'
+      - 'plugins/Deck Viewer/plugins/Deck Viewer/**'
+      - 'plugins/DiceR/plugins/DiceR/**'
+      - 'plugins/Senpai Stash Addon/plugins/senpai-addon-pack/**'
+      - 'plugins/Senpai Stash Theme/plugins/SenpaiV1/**'
+      - 'plugins/TagImagesFromGalleries/plugins/tagImagesFromGalleries/**'
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 2
 
-      # ---------------------------------
-      # Get commit info
-      # ---------------------------------
-      - name: Get commit info
-        id: commit
-        run: |
-          SHORT_SHA=$(git rev-parse --short HEAD)
-          COMMIT_TS=$(git log -1 --pretty=format:'%ct')
-          COMMIT_DATE=$(date -d @$COMMIT_TS +"%Y-%m-%d %H:%M:%S")
-          echo "sha=$SHORT_SHA" >> $GITHUB_OUTPUT
-          echo "date=$COMMIT_DATE" >> $GITHUB_OUTPUT
+    - name: Get Changed Files
+      id: changed-files
+      uses: tj-actions/changed-files@v44
 
-      # ---------------------------------
-      # Always build all zip files
-      # ---------------------------------
-      - name: Build all zip files
-        run: |
-          echo "Building all zip files..."
-          
-          # Ascension
-          if [ -d "plugins/Ascension/plugins/Ascension" ]; then
-            echo "Building Ascension.zip"
-            cd plugins/Ascension/plugins
-            rm -f Ascension.zip
-            zip -r Ascension.zip Ascension
-            cd ../../../..
-          fi
-          
-          # Deck Viewer
-          if [ -d "plugins/Deck Viewer/plugins/Deck Viewer" ]; then
-            echo "Building Deck Viewer.zip"
-            cd "plugins/Deck Viewer/plugins"
-            rm -f "Deck Viewer.zip"
-            zip -r "Deck Viewer.zip" "Deck Viewer"
-            cd ../../../..
-          fi
-          
-          # DiceR
-          if [ -d "plugins/DiceR/plugins/DiceR" ]; then
-            echo "Building DiceR.zip"
-            cd plugins/DiceR/plugins
-            rm -f DiceR.zip
-            zip -r DiceR.zip DiceR
-            cd ../../../..
-          fi
-          
-          # Senpai Addon Pack
-          if [ -d "plugins/Senpai Stash Addon/plugins/senpai-addon-pack" ]; then
-            echo "Building senpai-addon-pack.zip"
-            cd "plugins/Senpai Stash Addon/plugins"
-            rm -f senpai-addon-pack.zip
-            zip -r senpai-addon-pack.zip senpai-addon-pack
-            cd ../../../..
-          fi
-          
-          # Senpai Theme
-          if [ -d "plugins/Senpai Stash Theme/plugins/SenpaiV1" ]; then
-            echo "Building SenpaiV1.zip"
-            cd "plugins/Senpai Stash Theme/plugins"
-            rm -f SenpaiV1.zip
-            zip -r SenpaiV1.zip SenpaiV1
-            cd ../../../..
-          fi
-          
-          # TagImagesFromGalleries
-          if [ -d "plugins/TagImagesFromGalleries/plugins/tagImagesFromGalleries" ]; then
-            echo "Building tagImagesFromGalleries.zip"
-            cd plugins/TagImagesFromGalleries/plugins
-            rm -f tagImagesFromGalleries.zip
-            zip -r tagImagesFromGalleries.zip tagImagesFromGalleries
-            cd ../../../..
-          fi
-
-      # ---------------------------------
-      # Calculate SHA256 hashes
-      # ---------------------------------
-      - name: Calculate SHA256 hashes
-        id: hash
-        run: |
-          echo "Calculating SHA256 hashes..."
-          
-          # Ascension
-          if [ -f "plugins/Ascension/plugins/Ascension.zip" ]; then
-            HASH=$(sha256sum plugins/Ascension/plugins/Ascension.zip | awk '{ print $1 }')
-            echo "ascension_sha256=$HASH" >> $GITHUB_OUTPUT
-          fi
-          
-          # Deck Viewer
-          if [ -f "plugins/Deck Viewer/plugins/Deck Viewer.zip" ]; then
-            HASH=$(sha256sum "plugins/Deck Viewer/plugins/Deck Viewer.zip" | awk '{ print $1 }')
-            echo "deckviewer_sha256=$HASH" >> $GITHUB_OUTPUT
-          fi
-          
-          # DiceR
-          if [ -f "plugins/DiceR/plugins/DiceR.zip" ]; then
-            HASH=$(sha256sum plugins/DiceR/plugins/DiceR.zip | awk '{ print $1 }')
-            echo "dicer_sha256=$HASH" >> $GITHUB_OUTPUT
-          fi
-          
-          # Senpai Addon Pack
-          if [ -f "plugins/Senpai Stash Addon/plugins/senpai-addon-pack.zip" ]; then
-            HASH=$(sha256sum "plugins/Senpai Stash Addon/plugins/senpai-addon-pack.zip" | awk '{ print $1 }')
-            echo "senpaiaddon_sha256=$HASH" >> $GITHUB_OUTPUT
-          fi
-          
-          # Senpai Theme
-          if [ -f "plugins/Senpai Stash Theme/plugins/SenpaiV1.zip" ]; then
-            HASH=$(sha256sum "plugins/Senpai Stash Theme/plugins/SenpaiV1.zip" | awk '{ print $1 }')
-            echo "senpaitheme_sha256=$HASH" >> $GITHUB_OUTPUT
-          fi
-          
-          # TagImagesFromGalleries
-          if [ -f "plugins/TagImagesFromGalleries/plugins/tagImagesFromGalleries.zip" ]; then
-            HASH=$(sha256sum plugins/TagImagesFromGalleries/plugins/tagImagesFromGalleries.zip | awk '{ print $1 }')
-            echo "tagimages_sha256=$HASH" >> $GITHUB_OUTPUT
-          fi
-
-      # ---------------------------------
-      # Update manifest.yml using Python
-      # ---------------------------------
-      - name: Update manifest with Python
-        run: |
-          cat > update_manifest.py << 'EOF'
-import yaml
-import sys
-import os
-
-def update_manifest():
-    if len(sys.argv) < 3:
-        print("Usage: python script.py <sha> <date> [hash_pairs...]")
-        return
-    
-    sha = sys.argv[1]
-    date = sys.argv[2]
-    
-    hashes = {}
-    i = 3
-    while i < len(sys.argv):
-        if i + 1 < len(sys.argv):
-            key = sys.argv[i]
-            value = sys.argv[i + 1]
-            if value != "":
-                hashes[key] = value
-        i += 2
-    
-    manifest_path = 'plugins/manifest.yml'
-    
-    if not os.path.exists(manifest_path):
-        print("Manifest file not found")
-        return
+    - name: Process, Zip, and Update YAML Manifest
+      run: |
+        # Current Timestamp formatted like your manifest: YYYY-MM-DD HH:MM:SS
+        TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S")
+        MANIFEST_PATH="plugins/manifest.yml"
         
-    with open(manifest_path, 'r') as f:
-        content = f.read()
-    
-    docs = content.split('---')
-    manifest_entries = []
-    
-    for doc in docs:
-        doc = doc.strip()
-        if doc and doc != '---':
-            try:
-                entry = yaml.safe_load(doc)
-                if entry:
-                    manifest_entries.append(entry)
-            except Exception as e:
-                print(f"Error parsing document: {e}")
-    
-    hash_mapping = {
-        'Ascension': hashes.get('ascension'),
-        'DeckViewer': hashes.get('deckviewer'),
-        'DiceR': hashes.get('dicer'),
-        'SenpaiAddonPack': hashes.get('senpaiaddon'),
-        'SenpaiTheme': hashes.get('senpaitheme'),
-        'TagImagesFromGalleries': hashes.get('tagimages')
-    }
-    
-    for entry in manifest_entries:
-        plugin_id = entry.get('id')
-        if plugin_id in hash_mapping and hash_mapping[plugin_id]:
-            entry['version'] = f"1.0{sha}"
-            entry['date'] = date
-            entry['sha256'] = hash_mapping[plugin_id]
-    
-    with open(manifest_path, 'w') as f:
-        f.write('---\n')
-        for i, entry in enumerate(manifest_entries):
-            yaml.dump(entry, f, default_flow_style=False, sort_keys=False)
-            if i < len(manifest_entries) - 1:
-                f.write('---\n')
-        f.write('---\n')
+        # Array schema: "TriggerPath|ZipDestinationFolder|ZipFileName|SourceFolderToZip|ManifestID"
+        PLUGINS=(
+          "plugins/Ascension/plugins/Ascension/|plugins/Ascension/plugins|Ascension.zip|plugins/Ascension/plugins/Ascension|Ascension"
+          "plugins/Deck Viewer/plugins/Deck Viewer/|plugins/Deck Viewer/plugins|Deck Viewer.zip|plugins/Deck Viewer/plugins/Deck Viewer|DeckViewer"
+          "plugins/DiceR/plugins/DiceR/|plugins/DiceR/plugins|DiceR.zip|plugins/DiceR/plugins/DiceR|DiceR"
+          "plugins/Senpai Stash Addon/plugins/senpai-addon-pack/|plugins/Senpai Stash Addon/plugins|senpai-addon-pack.zip|plugins/Senpai Stash Addon/plugins/senpai-addon-pack|SenpaiAddonPack"
+          "plugins/Senpai Stash Theme/plugins/SenpaiV1/|plugins/Senpai Stash Theme/plugins|SenpaiV1.zip|plugins/Senpai Stash Theme/plugins/SenpaiV1|SenpaiTheme"
+          "plugins/TagImagesFromGalleries/plugins/tagImagesFromGalleries/|plugins/TagImagesFromGalleries/plugins|tagImagesFromGalleries.zip|plugins/TagImagesFromGalleries/plugins/tagImagesFromGalleries|TagImagesFromGalleries"
+        )
 
-if __name__ == '__main__':
-    update_manifest()
-EOF
+        UPDATED_ANY=false
 
-          python3 update_manifest.py \
-            "${{ steps.commit.outputs.sha }}" \
-            "${{ steps.commit.outputs.date }}" \
-            ascension "${{ steps.hash.outputs.ascension_sha256 }}" \
-            deckviewer "${{ steps.hash.outputs.deckviewer_sha256 }}" \
-            dicer "${{ steps.hash.outputs.dicer_sha256 }}" \
-            senpaiaddon "${{ steps.hash.outputs.senpaiaddon_sha256 }}" \
-            senpaitheme "${{ steps.hash.outputs.senpaitheme_sha256 }}" \
-            tagimages "${{ steps.hash.outputs.tagimages_sha256 }}"
-
-      # ---------------------------------
-      # Commit changes with Rebase Safeguard
-      # ---------------------------------
-      - name: Commit updated files
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          # Add files tracking updates
-          git add plugins/*/plugins/*.zip 2>/dev/null || true
-          git add plugins/manifest.yml
-
-          if git diff --staged --quiet; then
-            echo "No changes to commit"
-          else
-            git commit -m "Auto-build zip and update metadata (1.0${{ steps.commit.outputs.sha }})"
-            
-            # Pull any parallel upstream changes and stack this commit cleanly on top
-            git pull --rebase origin main
-            
-            # Target the specific branch explicitly to bypass detached HEAD risks
-            git push origin main
-          finame: Auto Zip Plugin Folders and Update Manifest
-
-on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'plugins/**'
-
-permissions:
-  contents: write
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      # ---------------------------------
-      # Get commit info
-      # ---------------------------------
-      - name: Get commit info
-        id: commit
-        run: |
-          SHORT_SHA=$(git rev-parse --short HEAD)
-          COMMIT_TS=$(git log -1 --pretty=format:'%ct')
-          COMMIT_DATE=$(date -d @$COMMIT_TS +"%Y-%m-%d %H:%M:%S")
-          echo "sha=$SHORT_SHA" >> $GITHUB_OUTPUT
-          echo "date=$COMMIT_DATE" >> $GITHUB_OUTPUT
-
-      # ---------------------------------
-      # Always build all zip files
-      # ---------------------------------
-      - name: Build all zip files
-        run: |
-          echo "Building all zip files..."
+        for plugin in "${PLUGINS[@]}"; do
+          IFS="|" read -r TRIGGER DEST_DIR ZIP_NAME SRC_DIR MANIFEST_ID <<< "$plugin"
           
-          # Ascension
-          if [ -d "plugins/Ascension/plugins/Ascension" ]; then
-            echo "Building Ascension.zip"
-            cd plugins/Ascension/plugins
-            rm -f Ascension.zip
-            zip -r Ascension.zip Ascension
-            cd ../../../..
-          fi
-          
-          # Deck Viewer
-          if [ -d "plugins/Deck Viewer/plugins/Deck Viewer" ]; then
-            echo "Building Deck Viewer.zip"
-            cd "plugins/Deck Viewer/plugins"
-            rm -f "Deck Viewer.zip"
-            zip -r "Deck Viewer.zip" "Deck Viewer"
-            cd ../../../..
-          fi
-          
-          # DiceR
-          if [ -d "plugins/DiceR/plugins/DiceR" ]; then
-            echo "Building DiceR.zip"
-            cd plugins/DiceR/plugins
-            rm -f DiceR.zip
-            zip -r DiceR.zip DiceR
-            cd ../../../..
-          fi
-          
-          # Senpai Addon Pack
-          if [ -d "plugins/Senpai Stash Addon/plugins/senpai-addon-pack" ]; then
-            echo "Building senpai-addon-pack.zip"
-            cd "plugins/Senpai Stash Addon/plugins"
-            rm -f senpai-addon-pack.zip
-            zip -r senpai-addon-pack.zip senpai-addon-pack
-            cd ../../../..
-          fi
-          
-          # Senpai Theme
-          if [ -d "plugins/Senpai Stash Theme/plugins/SenpaiV1" ]; then
-            echo "Building SenpaiV1.zip"
-            cd "plugins/Senpai Stash Theme/plugins"
-            rm -f SenpaiV1.zip
-            zip -r SenpaiV1.zip SenpaiV1
-            cd ../../../..
-          fi
-          
-          # TagImagesFromGalleries
-          if [ -d "plugins/TagImagesFromGalleries/plugins/tagImagesFromGalleries" ]; then
-            echo "Building tagImagesFromGalleries.zip"
-            cd plugins/TagImagesFromGalleries/plugins
-            rm -f tagImagesFromGalleries.zip
-            zip -r tagImagesFromGalleries.zip tagImagesFromGalleries
-            cd ../../../..
-          fi
-
-      # ---------------------------------
-      # Calculate SHA256 hashes
-      # ---------------------------------
-      - name: Calculate SHA256 hashes
-        id: hash
-        run: |
-          echo "Calculating SHA256 hashes..."
-          
-          # Ascension
-          if [ -f "plugins/Ascension/plugins/Ascension.zip" ]; then
-            HASH=$(sha256sum plugins/Ascension/plugins/Ascension.zip | awk '{ print $1 }')
-            echo "ascension_sha256=$HASH" >> $GITHUB_OUTPUT
-          fi
-          
-          # Deck Viewer
-          if [ -f "plugins/Deck Viewer/plugins/Deck Viewer.zip" ]; then
-            HASH=$(sha256sum "plugins/Deck Viewer/plugins/Deck Viewer.zip" | awk '{ print $1 }')
-            echo "deckviewer_sha256=$HASH" >> $GITHUB_OUTPUT
-          fi
-          
-          # DiceR
-          if [ -f "plugins/DiceR/plugins/DiceR.zip" ]; then
-            HASH=$(sha256sum plugins/DiceR/plugins/DiceR.zip | awk '{ print $1 }')
-            echo "dicer_sha256=$HASH" >> $GITHUB_OUTPUT
-          fi
-          
-          # Senpai Addon Pack
-          if [ -f "plugins/Senpai Stash Addon/plugins/senpai-addon-pack.zip" ]; then
-            HASH=$(sha256sum "plugins/Senpai Stash Addon/plugins/senpai-addon-pack.zip" | awk '{ print $1 }')
-            echo "senpaiaddon_sha256=$HASH" >> $GITHUB_OUTPUT
-          fi
-          
-          # Senpai Theme
-          if [ -f "plugins/Senpai Stash Theme/plugins/SenpaiV1.zip" ]; then
-            HASH=$(sha256sum "plugins/Senpai Stash Theme/plugins/SenpaiV1.zip" | awk '{ print $1 }')
-            echo "senpaitheme_sha256=$HASH" >> $GITHUB_OUTPUT
-          fi
-          
-          # TagImagesFromGalleries
-          if [ -f "plugins/TagImagesFromGalleries/plugins/tagImagesFromGalleries.zip" ]; then
-            HASH=$(sha256sum plugins/TagImagesFromGalleries/plugins/tagImagesFromGalleries.zip | awk '{ print $1 }')
-            echo "tagimages_sha256=$HASH" >> $GITHUB_OUTPUT
-          fi
-
-      # ---------------------------------
-      # Update manifest.yml using Python
-      # ---------------------------------
-      - name: Update manifest with Python
-        run: |
-          cat > update_manifest.py << 'EOF'
-import yaml
-import sys
-import os
-
-def update_manifest():
-    # Get parameters from command line
-    if len(sys.argv) < 3:
-        print("Usage: python script.py <sha> <date> [hash_pairs...]")
-        return
-    
-    sha = sys.argv[1]
-    date = sys.argv[2]
-    
-    # Parse hash pairs
-    hashes = {}
-    i = 3
-    while i < len(sys.argv):
-        if i + 1 < len(sys.argv):
-            key = sys.argv[i]
-            value = sys.argv[i + 1]
-            if value != "":
-                hashes[key] = value
-        i += 2
-    
-    manifest_path = 'plugins/manifest.yml'
-    
-    if not os.path.exists(manifest_path):
-        print("Manifest file not found")
-        return
+          # Check if changes happened in this plugin's watched folder
+          for file in ${{ steps.changed-files.outputs.all_changed_files }}; do
+            if [[ "$file" == "$TRIGGER"* ]]; then
+              echo "Changes detected for ID: $MANIFEST_ID. Rebuilding zip..."
+              
+              # Ensure output directory exists
+              mkdir -p "$DEST_DIR"
+              TARGET_ZIP="$PWD/$DEST_DIR/$ZIP_NAME"
+              
+              # Pack the folder contents (not the parent folder structure)
+              cd "$SRC_DIR"
+              zip -r "$TARGET_ZIP" ./*
+              cd - > /dev/null
+              
+              # Calculate SHA256 of the freshly built zip file
+              SHA256_HASH=$(sha256sum "$DEST_DIR/$ZIP_NAME" | awk '{print $1}')
+              
+              # Optional: Try to automatically read the version inside plugin.yml if it exists
+              VERSION="1.0.0"
+              if [ -f "$SRC_DIR/plugin.yml" ]; then
+                EXTRACTED_VER=$(yq '.version // empty' "$SRC_DIR/plugin.yml")
+                if [ ! -z "$EXTRACTED_VER" ]; then
+                  VERSION=$EXTRACTED_VER
+                fi
+              fi
+              
+              # Update plugins/manifest.yml fields via yq using the matching ID block
+              if [ -f "$MANIFEST_PATH" ]; then
+                yq -i "(.[] | select(.id == \"$MANIFEST_ID\")).sha256 = \"$SHA256_HASH\"" "$MANIFEST_PATH"
+                yq -i "(.[] | select(.id == \"$MANIFEST_ID\")).date = \"$TIMESTAMP\"" "$MANIFEST_PATH"
+                
+                # Only overwrite version if we managed to dynamically fetch it from a plugin.yml
+                if [ "$VERSION" != "1.0.0" ]; then
+                  yq -i "(.[] | select(.id == \"$MANIFEST_ID\")).version = \"$VERSION\"" "$MANIFEST_PATH"
+                fi
+              fi
+              
+              UPDATED_ANY=true
+              break 
+            fi
+          done
+        done
         
-    # Read the manifest file
-    with open(manifest_path, 'r') as f:
-        content = f.read()
-    
-    # Split by --- to get individual documents
-    docs = content.split('---')
-    manifest_entries = []
-    
-    for doc in docs:
-        doc = doc.strip()
-        if doc and doc != '---':
-            try:
-                entry = yaml.safe_load(doc)
-                if entry:
-                    manifest_entries.append(entry)
-            except Exception as e:
-                print(f"Error parsing document: {e}")
-    
-    # Update entries with available hashes
-    hash_mapping = {
-        'Ascension': hashes.get('ascension'),
-        'DeckViewer': hashes.get('deckviewer'),
-        'DiceR': hashes.get('dicer'),
-        'SenpaiAddonPack': hashes.get('senpaiaddon'),
-        'SenpaiTheme': hashes.get('senpaitheme'),
-        'TagImagesFromGalleries': hashes.get('tagimages')
-    }
-    
-    for entry in manifest_entries:
-        plugin_id = entry.get('id')
-        if plugin_id in hash_mapping and hash_mapping[plugin_id]:
-            entry['version'] = f"1.0{sha}"
-            entry['date'] = date
-            entry['sha256'] = hash_mapping[plugin_id]
-    
-    # Write back to file
-    with open(manifest_path, 'w') as f:
-        f.write('---\n')
-        for i, entry in enumerate(manifest_entries):
-            yaml.dump(entry, f, default_flow_style=False, sort_keys=False)
-            if i < len(manifest_entries) - 1:
-                f.write('---\n')
-        f.write('---\n')
+        echo "UPDATED_ANY=$UPDATED_ANY" >> $GITHUB_ENV
 
-if __name__ == '__main__':
-    update_manifest()
-EOF
-
-          # Run the Python script with available hashes
-          python3 update_manifest.py \
-            "${{ steps.commit.outputs.sha }}" \
-            "${{ steps.commit.outputs.date }}" \
-            ascension "${{ steps.hash.outputs.ascension_sha256 }}" \
-            deckviewer "${{ steps.hash.outputs.deckviewer_sha256 }}" \
-            dicer "${{ steps.hash.outputs.dicer_sha256 }}" \
-            senpaiaddon "${{ steps.hash.outputs.senpaiaddon_sha256 }}" \
-            senpaitheme "${{ steps.hash.outputs.senpaitheme_sha256 }}" \
-            tagimages "${{ steps.hash.outputs.tagimages_sha256 }}"
-
-      # ---------------------------------
-      # Commit changes
-      # ---------------------------------
-      - name: Commit updated files
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          # Add all zip files and manifest
-          git add plugins/*/plugins/*.zip 2>/dev/null || true
-          git add plugins/manifest.yml
-
-          if git diff --staged --quiet; then
-            echo "No changes to commit"
-          else
-            git commit -m "Auto-build zip and update metadata (1.0${{ steps.commit.outputs.sha }})"
-            git push
-          fi
+    - name: Commit and Push Changes
+      if: env.UPDATED_ANY == 'true'
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        
+        git add plugins/
+        
+        if ! git diff --cached --quiet; then
+          git commit -m "chore: automated zip rebuild & manifest.yml update [skip ci]"
+          git push
+        else
+          echo "No distinct changes found to commit."
+        fi
