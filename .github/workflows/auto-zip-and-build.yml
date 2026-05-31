@@ -9,7 +9,6 @@ on:
       - 'plugins/Senpai Stash Addon/plugins/senpai-addon-pack/**'
       - 'plugins/Senpai Stash Theme/plugins/SenpaiV1/**'
       - 'plugins/TagImagesFromGalleries/plugins/tagImagesFromGalleries/**'
-      - 'manifest.yml'
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -32,39 +31,45 @@ jobs:
           pip install PyYAML
 
       - name: Zip Ascension
-        if: github.event_name == 'push' && (contains(github.event.head_commit.added, 'plugins/Ascension/plugins/Ascension') || contains(github.event.head_commit.modified, 'plugins/Ascension/plugins/Ascension') || contains(github.event.head_commit.removed, 'plugins/Ascension/plugins/Ascension'))
+        if: startsWith(github.event.head_commit.message, 'Update Ascension') || contains(github.event.head_commit.added, 'plugins/Ascension/plugins/Ascension/') || contains(github.event.head_commit.modified, 'plugins/Ascension/plugins/Ascension/') || contains(github.event.head_commit.removed, 'plugins/Ascension/plugins/Ascension/')
         run: |
           cd plugins/Ascension/plugins
+          rm -f Ascension.zip
           zip -r Ascension.zip Ascension
 
       - name: Zip Deck Viewer
-        if: github.event_name == 'push' && (contains(github.event.head_commit.added, 'plugins/Deck Viewer/plugins/Deck Viewer') || contains(github.event.head_commit.modified, 'plugins/Deck Viewer/plugins/Deck Viewer') || contains(github.event.head_commit.removed, 'plugins/Deck Viewer/plugins/Deck Viewer'))
+        if: startsWith(github.event.head_commit.message, 'Update Deck Viewer') || contains(github.event.head_commit.added, 'plugins/Deck Viewer/plugins/Deck Viewer/') || contains(github.event.head_commit.modified, 'plugins/Deck Viewer/plugins/Deck Viewer/') || contains(github.event.head_commit.removed, 'plugins/Deck Viewer/plugins/Deck Viewer/')
         run: |
           cd plugins/Deck\ Viewer/plugins
+          rm -f "Deck Viewer.zip"
           zip -r "Deck Viewer.zip" "Deck Viewer"
 
       - name: Zip DiceR
-        if: github.event_name == 'push' && (contains(github.event.head_commit.added, 'plugins/DiceR/plugins/DiceR') || contains(github.event.head_commit.modified, 'plugins/DiceR/plugins/DiceR') || contains(github.event.head_commit.removed, 'plugins/DiceR/plugins/DiceR'))
+        if: startsWith(github.event.head_commit.message, 'Update DiceR') || contains(github.event.head_commit.added, 'plugins/DiceR/plugins/DiceR/') || contains(github.event.head_commit.modified, 'plugins/DiceR/plugins/DiceR/') || contains(github.event.head_commit.removed, 'plugins/DiceR/plugins/DiceR/')
         run: |
           cd plugins/DiceR/plugins
+          rm -f DiceR.zip
           zip -r DiceR.zip DiceR
 
       - name: Zip Senpai Addon Pack
-        if: github.event_name == 'push' && (contains(github.event.head_commit.added, 'plugins/Senpai Stash Addon/plugins/senpai-addon-pack') || contains(github.event.head_commit.modified, 'plugins/Senpai Stash Addon/plugins/senpai-addon-pack') || contains(github.event.head_commit.removed, 'plugins/Senpai Stash Addon/plugins/senpai-addon-pack'))
+        if: startsWith(github.event.head_commit.message, 'Update Senpai Addon') || contains(github.event.head_commit.added, 'plugins/Senpai Stash Addon/plugins/senpai-addon-pack/') || contains(github.event.head_commit.modified, 'plugins/Senpai Stash Addon/plugins/senpai-addon-pack/') || contains(github.event.head_commit.removed, 'plugins/Senpai Stash Addon/plugins/senpai-addon-pack/')
         run: |
           cd plugins/Senpai\ Stash\ Addon/plugins
+          rm -f senpai-addon-pack.zip
           zip -r senpai-addon-pack.zip senpai-addon-pack
 
       - name: Zip Senpai Theme
-        if: github.event_name == 'push' && (contains(github.event.head_commit.added, 'plugins/Senpai Stash Theme/plugins/SenpaiV1') || contains(github.event.head_commit.modified, 'plugins/Senpai Stash Theme/plugins/SenpaiV1') || contains(github.event.head_commit.removed, 'plugins/Senpai Stash Theme/plugins/SenpaiV1'))
+        if: startsWith(github.event.head_commit.message, 'Update Senpai Theme') || contains(github.event.head_commit.added, 'plugins/Senpai Stash Theme/plugins/SenpaiV1/') || contains(github.event.head_commit.modified, 'plugins/Senpai Stash Theme/plugins/SenpaiV1/') || contains(github.event.head_commit.removed, 'plugins/Senpai Stash Theme/plugins/SenpaiV1/')
         run: |
           cd plugins/Senpai\ Stash\ Theme/plugins
+          rm -f SenpaiV1.zip
           zip -r SenpaiV1.zip SenpaiV1
 
       - name: Zip TagImagesFromGalleries
-        if: github.event_name == 'push' && (contains(github.event.head_commit.added, 'plugins/TagImagesFromGalleries/plugins/tagImagesFromGalleries') || contains(github.event.head_commit.modified, 'plugins/TagImagesFromGalleries/plugins/tagImagesFromGalleries') || contains(github.event.head_commit.removed, 'plugins/TagImagesFromGalleries/plugins/tagImagesFromGalleries'))
+        if: startsWith(github.event.head_commit.message, 'Update TagImages') || contains(github.event.head_commit.added, 'plugins/TagImagesFromGalleries/plugins/tagImagesFromGalleries/') || contains(github.event.head_commit.modified, 'plugins/TagImagesFromGalleries/plugins/tagImagesFromGalleries/') || contains(github.event.head_commit.removed, 'plugins/TagImagesFromGalleries/plugins/tagImagesFromGalleries/')
         run: |
           cd plugins/TagImagesFromGalleries/plugins
+          rm -f tagImagesFromGalleries.zip
           zip -r tagImagesFromGalleries.zip tagImagesFromGalleries
 
       - name: Update manifest with SHA256 hashes
