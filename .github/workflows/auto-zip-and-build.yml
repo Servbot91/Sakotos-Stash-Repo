@@ -2,114 +2,186 @@ name: Auto Zip Plugin Folders and Update Manifest
 
 on:
   push:
+    branches:
+      - main
     paths:
       - 'plugins/**'
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+permissions:
+  contents: write
 
 jobs:
-  zip-and-update:
+  build:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
         with:
-          python-version: '3.x'
+          fetch-depth: 0
 
-      - name: Install dependencies
+      # ---------------------------------
+      # Get commit info
+      # ---------------------------------
+      - name: Get commit info
+        id: commit
         run: |
-          python -m pip install --upgrade pip
-          pip install PyYAML
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          # Get commit timestamp in seconds
+          COMMIT_TS=$(git log -1 --pretty=format:'%ct')
+          # Format as YYYY-MM-DD HH:MM:SS
+          COMMIT_DATE=$(date -d @$COMMIT_TS +"%Y-%m-%d %H:%M:%S")
+          echo "sha=$SHORT_SHA" >> $GITHUB_OUTPUT
+          echo "date=$COMMIT_DATE" >> $GITHUB_OUTPUT
 
-      - name: Debug - List plugin directories
+      # ---------------------------------
+      # Build all zip files
+      # ---------------------------------
+      - name: Build Ascension.zip
+        if: github.event.head_commit.modified contains 'plugins/Ascension' || github.event.head_commit.added contains 'plugins/Ascension' || github.event.head_commit.removed contains 'plugins/Ascension'
         run: |
-          echo "Plugin directories:"
-          ls -la plugins/
-          echo "Ascension:"
-          ls -la plugins/Ascension/plugins/ || echo "Ascension dir not found"
-          echo "Deck Viewer:"
-          ls -la "plugins/Deck Viewer/plugins/" || echo "Deck Viewer dir not found"
+          cd plugins/Ascension/plugins
+          rm -f Ascension.zip
+          zip -r Ascension.zip Ascension
 
-      - name: Create/Update Zip Files
+      - name: Build Deck Viewer.zip
+        if: github.event.head_commit.modified contains 'plugins/Deck Viewer' || github.event.head_commit.added contains 'plugins/Deck Viewer' || github.event.head_commit.removed contains 'plugins/Deck Viewer'
         run: |
+          cd "plugins/Deck Viewer/plugins"
+          rm -f "Deck Viewer.zip"
+          zip -r "Deck Viewer.zip" "Deck Viewer"
+
+      - name: Build DiceR.zip
+        if: github.event.head_commit.modified contains 'plugins/DiceR' || github.event.head_commit.added contains 'plugins/DiceR' || github.event.head_commit.removed contains 'plugins/DiceR'
+        run: |
+          cd plugins/DiceR/plugins
+          rm -f DiceR.zip
+          zip -r DiceR.zip DiceR
+
+      - name: Build senpai-addon-pack.zip
+        if: github.event.head_commit.modified contains 'plugins/Senpai Stash Addon' || github.event.head_commit.added contains 'plugins/Senpai Stash Addon' || github.event.head_commit.removed contains 'plugins/Senpai Stash Addon'
+        run: |
+          cd "plugins/Senpai Stash Addon/plugins"
+          rm -f senpai-addon-pack.zip
+          zip -r senpai-addon-pack.zip senpai-addon-pack
+
+      - name: Build SenpaiV1.zip
+        if: github.event.head_commit.modified contains 'plugins/Senpai Stash Theme' || github.event.head_commit.added contains 'plugins/Senpai Stash Theme' || github.event.head_commit.removed contains 'plugins/Senpai Stash Theme'
+        run: |
+          cd "plugins/Senpai Stash Theme/plugins"
+          rm -f SenpaiV1.zip
+          zip -r SenpaiV1.zip SenpaiV1
+
+      - name: Build tagImagesFromGalleries.zip
+        if: github.event.head_commit.modified contains 'plugins/TagImagesFromGalleries' || github.event.head_commit.added contains 'plugins/TagImagesFromGalleries' || github.event.head_commit.removed contains 'plugins/TagImagesFromGalleries'
+        run: |
+          cd plugins/TagImagesFromGalleries/plugins
+          rm -f tagImagesFromGalleries.zip
+          zip -r tagImagesFromGalleries.zip tagImagesFromGalleries
+
+      # ---------------------------------
+      # Calculate SHA256 hashes
+      # ---------------------------------
+      - name: Calculate SHA256 hashes
+        id: hash
+        run: |
+          # Initialize variables
+          echo "Calculating SHA256 hashes..."
+          
           # Ascension
-          if [ -d "plugins/Ascension/plugins/Ascension" ]; then
-            cd plugins/Ascension/plugins
-            rm -f Ascension.zip
-            zip -r Ascension.zip Ascension
-            echo "Created Ascension.zip"
-            ls -la Ascension.zip
-            cd ../../../..
+          if [ -f "plugins/Ascension/plugins/Ascension.zip" ]; then
+            ASCENSION_HASH=$(sha256sum plugins/Ascension/plugins/Ascension.zip | awk '{ print $1 }')
+            echo "ascension_sha256=$ASCENSION_HASH" >> $GITHUB_OUTPUT
           fi
           
           # Deck Viewer
-          if [ -d "plugins/Deck Viewer/plugins/Deck Viewer" ]; then
-            cd "plugins/Deck Viewer/plugins"
-            rm -f "Deck Viewer.zip"
-            zip -r "Deck Viewer.zip" "Deck Viewer"
-            echo "Created Deck Viewer.zip"
-            ls -la "Deck Viewer.zip"
-            cd ../../../..
+          if [ -f "plugins/Deck Viewer/plugins/Deck Viewer.zip" ]; then
+            DECKVIEWER_HASH=$(sha256sum "plugins/Deck Viewer/plugins/Deck Viewer.zip" | awk '{ print $1 }')
+            echo "deckviewer_sha256=$DECKVIEWER_HASH" >> $GITHUB_OUTPUT
           fi
           
           # DiceR
-          if [ -d "plugins/DiceR/plugins/DiceR" ]; then
-            cd plugins/DiceR/plugins
-            rm -f DiceR.zip
-            zip -r DiceR.zip DiceR
-            echo "Created DiceR.zip"
-            ls -la DiceR.zip
-            cd ../../../..
+          if [ -f "plugins/DiceR/plugins/DiceR.zip" ]; then
+            DICER_HASH=$(sha256sum plugins/DiceR/plugins/DiceR.zip | awk '{ print $1 }')
+            echo "dicer_sha256=$DICER_HASH" >> $GITHUB_OUTPUT
           fi
           
           # Senpai Addon Pack
-          if [ -d "plugins/Senpai Stash Addon/plugins/senpai-addon-pack" ]; then
-            cd "plugins/Senpai Stash Addon/plugins"
-            rm -f senpai-addon-pack.zip
-            zip -r senpai-addon-pack.zip senpai-addon-pack
-            echo "Created senpai-addon-pack.zip"
-            ls -la senpai-addon-pack.zip
-            cd ../../../..
+          if [ -f "plugins/Senpai Stash Addon/plugins/senpai-addon-pack.zip" ]; then
+            SENPAIADDON_HASH=$(sha256sum "plugins/Senpai Stash Addon/plugins/senpai-addon-pack.zip" | awk '{ print $1 }')
+            echo "senpaiaddon_sha256=$SENPAIADDON_HASH" >> $GITHUB_OUTPUT
           fi
           
           # Senpai Theme
-          if [ -d "plugins/Senpai Stash Theme/plugins/SenpaiV1" ]; then
-            cd "plugins/Senpai Stash Theme/plugins"
-            rm -f SenpaiV1.zip
-            zip -r SenpaiV1.zip SenpaiV1
-            echo "Created SenpaiV1.zip"
-            ls -la SenpaiV1.zip
-            cd ../../../..
+          if [ -f "plugins/Senpai Stash Theme/plugins/SenpaiV1.zip" ]; then
+            SENPAITHEME_HASH=$(sha256sum "plugins/Senpai Stash Theme/plugins/SenpaiV1.zip" | awk '{ print $1 }')
+            echo "senpaitheme_sha256=$SENPAITHEME_HASH" >> $GITHUB_OUTPUT
           fi
           
           # TagImagesFromGalleries
-          if [ -d "plugins/TagImagesFromGalleries/plugins/tagImagesFromGalleries" ]; then
-            cd plugins/TagImagesFromGalleries/plugins
-            rm -f tagImagesFromGalleries.zip
-            zip -r tagImagesFromGalleries.zip tagImagesFromGalleries
-            echo "Created tagImagesFromGalleries.zip"
-            ls -la tagImagesFromGalleries.zip
-            cd ../../../..
+          if [ -f "plugins/TagImagesFromGalleries/plugins/tagImagesFromGalleries.zip" ]; then
+            TAGIMAGES_HASH=$(sha256sum plugins/TagImagesFromGalleries/plugins/tagImagesFromGalleries.zip | awk '{ print $1 }')
+            echo "tagimages_sha256=$TAGIMAGES_HASH" >> $GITHUB_OUTPUT
           fi
 
-      - name: Debug - Check zip files
+      # ---------------------------------
+      # Update manifest.yml using yq
+      # ---------------------------------
+      - name: Install yq
         run: |
-          echo "Checking for zip files:"
-          find plugins/ -name "*.zip" -type f
+          sudo wget -O /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.40.5/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
 
-      - name: Update manifest with SHA256 hashes
+      - name: Update manifest.yml
         run: |
-          python .github/scripts/update_manifest.py
+          FILE="plugins/manifest.yml"
+          COMMIT_SHA="${{ steps.commit.outputs.sha }}"
+          COMMIT_DATE="${{ steps.commit.outputs.date }}"
+          
+          # Update Ascension
+          if [ -n "${{ steps.hash.outputs.ascension_sha256 }}" ]; then
+            yq eval ".[0].version = \"1.0$COMMIT_SHA\" | .[0].date = \"$COMMIT_DATE\" | .[0].sha256 = \"${{ steps.hash.outputs.ascension_sha256 }}\"" -i "$FILE"
+          fi
+          
+          # Update Deck Viewer
+          if [ -n "${{ steps.hash.outputs.deckviewer_sha256 }}" ]; then
+            yq eval ".[1].version = \"1.0$COMMIT_SHA\" | .[1].date = \"$COMMIT_DATE\" | .[1].sha256 = \"${{ steps.hash.outputs.deckviewer_sha256 }}\"" -i "$FILE"
+          fi
+          
+          # Update DiceR
+          if [ -n "${{ steps.hash.outputs.dicer_sha256 }}" ]; then
+            yq eval ".[2].version = \"1.0$COMMIT_SHA\" | .[2].date = \"$COMMIT_DATE\" | .[2].sha256 = \"${{ steps.hash.outputs.dicer_sha256 }}\"" -i "$FILE"
+          fi
+          
+          # Update Senpai Addon Pack
+          if [ -n "${{ steps.hash.outputs.senpaiaddon_sha256 }}" ]; then
+            yq eval ".[3].version = \"1.0$COMMIT_SHA\" | .[3].date = \"$COMMIT_DATE\" | .[3].sha256 = \"${{ steps.hash.outputs.senpaiaddon_sha256 }}\"" -i "$FILE"
+          fi
+          
+          # Update Senpai Theme
+          if [ -n "${{ steps.hash.outputs.senpaitheme_sha256 }}" ]; then
+            yq eval ".[4].version = \"1.0$COMMIT_SHA\" | .[4].date = \"$COMMIT_DATE\" | .[4].sha256 = \"${{ steps.hash.outputs.senpaitheme_sha256 }}\"" -i "$FILE"
+          fi
+          
+          # Update TagImagesFromGalleries
+          if [ -n "${{ steps.hash.outputs.tagimages_sha256 }}" ]; then
+            yq eval ".[5].version = \"1.0$COMMIT_SHA\" | .[5].date = \"$COMMIT_DATE\" | .[5].sha256 = \"${{ steps.hash.outputs.tagimages_sha256 }}\"" -i "$FILE"
+          fi
 
-      - name: Commit and push updated files
+      # ---------------------------------
+      # Commit changes
+      # ---------------------------------
+      - name: Commit updated files
         run: |
-          git config --global user.name 'github-actions[bot]'
-          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-          git add .
-          git status
-          git commit -m "Auto-update zip files and manifest" || echo "No changes to commit"
-          git push
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add plugins/*/plugins/*.zip
+          git add plugins/manifest.yml
+
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Auto-build zip and update metadata (1.0${{ steps.commit.outputs.sha }})"
+            git push
+          fi
