@@ -33,7 +33,7 @@ jobs:
           echo "date=$COMMIT_DATE" >> $GITHUB_OUTPUT
 
       # ---------------------------------
-      # Always build all zip files (simpler approach)
+      # Always build all zip files
       # ---------------------------------
       - name: Build all zip files
         run: |
@@ -138,7 +138,7 @@ jobs:
           fi
 
       # ---------------------------------
-      # Update manifest.yml using Python (more reliable)
+      # Update manifest.yml using Python
       # ---------------------------------
       - name: Update manifest with Python
         run: |
@@ -147,7 +147,26 @@ import yaml
 import sys
 import os
 
-def update_manifest(sha, date, hashes):
+def update_manifest():
+    # Get parameters from command line
+    if len(sys.argv) < 3:
+        print("Usage: python script.py <sha> <date> [hash_pairs...]")
+        return
+    
+    sha = sys.argv[1]
+    date = sys.argv[2]
+    
+    # Parse hash pairs
+    hashes = {}
+    i = 3
+    while i < len(sys.argv):
+        if i + 1 < len(sys.argv):
+            key = sys.argv[i]
+            value = sys.argv[i + 1]
+            if value != "":
+                hashes[key] = value
+        i += 2
+    
     manifest_path = 'plugins/manifest.yml'
     
     if not os.path.exists(manifest_path):
@@ -199,26 +218,19 @@ def update_manifest(sha, date, hashes):
         f.write('---\n')
 
 if __name__ == '__main__':
-    sha = sys.argv[1]
-    date = sys.argv[2]
-    hashes = {}
-    for i in range(3, len(sys.argv), 2):
-        if i+1 < len(sys.argv):
-            hashes[sys.argv[i]] = sys.argv[i+1]
-    
-    update_manifest(sha, date, hashes)
+    update_manifest()
 EOF
 
           # Run the Python script with available hashes
           python3 update_manifest.py \
             "${{ steps.commit.outputs.sha }}" \
             "${{ steps.commit.outputs.date }}" \
-            "ascension" "${{ steps.hash.outputs.ascension_sha256 }}" \
-            "deckviewer" "${{ steps.hash.outputs.deckviewer_sha256 }}" \
-            "dicer" "${{ steps.hash.outputs.dicer_sha256 }}" \
-            "senpaiaddon" "${{ steps.hash.outputs.senpaiaddon_sha256 }}" \
-            "senpaitheme" "${{ steps.hash.outputs.senpaitheme_sha256 }}" \
-            "tagimages" "${{ steps.hash.outputs.tagimages_sha256 }}"
+            ascension "${{ steps.hash.outputs.ascension_sha256 }}" \
+            deckviewer "${{ steps.hash.outputs.deckviewer_sha256 }}" \
+            dicer "${{ steps.hash.outputs.dicer_sha256 }}" \
+            senpaiaddon "${{ steps.hash.outputs.senpaiaddon_sha256 }}" \
+            senpaitheme "${{ steps.hash.outputs.senpaitheme_sha256 }}" \
+            tagimages "${{ steps.hash.outputs.tagimages_sha256 }}"
 
       # ---------------------------------
       # Commit changes
