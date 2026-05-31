@@ -1,8 +1,0 @@
-- id: senpai-addon-pack
-  name: Senpai Plugin Add-on Pack
-  metadata:
-    description: Additional plugin pack add-on for the SenpaiV1 theme.
-  version: 1.0-66aca59
-  date: 2026-04-24 18:13:23
-  path: https://github.com/Servbot91/Senpai-Stash-Addon/raw/refs/heads/main/plugins/senpai-addon-pack.zip
-  sha256: 75b030eeb54f8ff72824ab411f7839a6b8b73b17191724d7125fa2e990de1a2d

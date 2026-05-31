@@ -1,0 +1,49 @@
+---
+- id: Ascension
+  name: Ascension
+  metadata:
+    description: The Sakoto fork of the HotorNot plugin which adds a tier based rating system for performers and images. Features include real time dynamic and scaling matchmaking system, leaderboards, metrics, better ui, and better mobile integration.
+  version: 1.0900f916
+  date: 2026-05-22 00:52:36
+  path: https://github.com/Servbot91/Sakotos-Stash-Repo/raw/main/plugins/Ascension/plugins/Ascension.zip
+  sha256: e83db55dbce93a29868ecf97fe5d3512e3c9a454fb5d9e76199f5a3b4e7e9122
+- id: DeckViewer
+  name: Deck Viewer
+  metadata:
+    description: Plugin for viewing decks
+  version: 1.0.0
+  date: 2024-01-01 00:00:00
+  path: https://github.com/Servbot91/Sakotos-Stash-Repo/raw/main/plugins/Deck%20Viewer/plugins/Deck%20Viewer.zip
+  sha256: placeholder_sha256_here
+- id: DiceR
+  name: DiceR
+  metadata:
+    description: Plugin for rolling dice
+  version: 1.0.0
+  date: 2024-01-01 00:00:00
+  path: https://github.com/Servbot91/Sakotos-Stash-Repo/raw/main/plugins/DiceR/plugins/DiceR.zip
+  sha256: placeholder_sha256_here
+- id: SenpaiAddonPack
+  name: Senpai Addon Pack
+  metadata:
+    description: Senpai addon pack
+  version: 1.0.0
+  date: 2024-01-01 00:00:00
+  path: https://github.com/Servbot91/Sakotos-Stash-Repo/raw/main/plugins/Senpai%20Stash%20Addon/plugins/senpai-addon-pack.zip
+  sha256: placeholder_sha256_here
+- id: SenpaiTheme
+  name: Senpai Theme
+  metadata:
+    description: Senpai theme for Stash
+  version: 1.0.0
+  date: 2024-01-01 00:00:00
+  path: https://github.com/Servbot91/Sakotos-Stash-Repo/raw/main/plugins/Senpai%20Stash%20Theme/plugins/SenpaiV1.zip
+  sha256: placeholder_sha256_here
+- id: TagImagesFromGalleries
+  name: Tag Images From Galleries
+  metadata:
+    description: Plugin to tag images from galleries
+  version: 1.0.0
+  date: 2024-01-01 00:00:00
+  path: https://github.com/Servbot91/Sakotos-Stash-Repo/raw/main/plugins/TagImagesFromGalleries/plugins/tagImagesFromGalleries.zip
+  sha256: placeholder_sha256_here

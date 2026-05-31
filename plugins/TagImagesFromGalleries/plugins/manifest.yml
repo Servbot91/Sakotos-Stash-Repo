@@ -1,8 +1,0 @@
-- id: tagImagesFromGalleries
-  name: Tag Images From Galleries
-  metadata:
-    description: Tags images with tags of galleries.
-  version: 1.05de6b91
-  date: 2026-03-06 23:48:47
-  path: https://github.com/Servbot91/StashAPP-TagImagesFromGalleries/raw/refs/heads/main/plugins/tagImagesFromGalleries.zip
-  sha256: 7b22844dca48951f1d6ef9c07d53c988b7b1569ca14a9243000c9d708787c11f
