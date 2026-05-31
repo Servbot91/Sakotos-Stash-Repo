@@ -1,0 +1,15 @@
+# Dependencies - regenerate with `npm install`
+node_modules/
+
+# Test coverage output
+coverage/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

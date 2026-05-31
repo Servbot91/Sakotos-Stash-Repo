@@ -1,0 +1,46 @@
+id: HotorNotStatsDisplay
+name: HotorNot Match History
+metadata:
+  description: Formats Hot or Not Match history info, adds streak badges, and future
+    support for additional HotorNot fields.
+version: 1.0c5ff164
+date: "2026-02-12 13:53:10"
+requires: []
+source_repository: https://raw.githubusercontent.com/Servbot91/HotorNot-Stat-Addon/refs/heads/main/plugins/manifest.yml
+files:
+- HotorNotStats/.git/COMMIT_EDITMSG
+- HotorNotStats/.git/config
+- HotorNotStats/.git/description
+- HotorNotStats/.git/HEAD
+- HotorNotStats/.git/hooks/applypatch-msg.sample
+- HotorNotStats/.git/hooks/commit-msg.sample
+- HotorNotStats/.git/hooks/fsmonitor-watchman.sample
+- HotorNotStats/.git/hooks/post-update.sample
+- HotorNotStats/.git/hooks/pre-applypatch.sample
+- HotorNotStats/.git/hooks/pre-commit.sample
+- HotorNotStats/.git/hooks/pre-merge-commit.sample
+- HotorNotStats/.git/hooks/pre-push.sample
+- HotorNotStats/.git/hooks/pre-rebase.sample
+- HotorNotStats/.git/hooks/pre-receive.sample
+- HotorNotStats/.git/hooks/prepare-commit-msg.sample
+- HotorNotStats/.git/hooks/push-to-checkout.sample
+- HotorNotStats/.git/hooks/sendemail-validate.sample
+- HotorNotStats/.git/hooks/update.sample
+- HotorNotStats/.git/index
+- HotorNotStats/.git/info/exclude
+- HotorNotStats/.git/logs/HEAD
+- HotorNotStats/.git/logs/refs/heads/master
+- HotorNotStats/.git/logs/refs/remotes/origin/master
+- HotorNotStats/.git/objects/0c/22a6562b66c215d63cc0fbf86de786d2075ea8
+- HotorNotStats/.git/objects/33/d97116b2b99ba7c6b5dc00b94f55bb7014f5ba
+- HotorNotStats/.git/objects/49/411b0ab6e45513512ab833e95cb96e9f36c919
+- HotorNotStats/.git/objects/9e/a18947aae1b896344122593a984ca3d56a6aa1
+- HotorNotStats/.git/objects/e4/666e8cfd95545aa6d9dcd481a41aee7651212b
+- HotorNotStats/.git/refs/heads/master
+- HotorNotStats/.git/refs/remotes/origin/master
+- HotorNotStats/HotorNotStatsDisplay.js
+- HotorNotStats/hotstatcs.css
+- HotorNotStats/HotStats.yml
+- HotorNotAddon/HotStats.yml
+- HotorNotAddon/HotorNotStatsDisplay.js
+- HotorNotAddon/hotstatcs.css

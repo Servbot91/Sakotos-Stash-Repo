@@ -1,0 +1,11 @@
+id: TetraxUserscriptLibrary
+name: Tetrax Userscript Library
+metadata:
+  description: Utility library for Tetrax userscripts
+version: 1.0-2612778
+date: "2024-06-16 06:48:51"
+requires: []
+source_repository: https://tetrax-10.github.io/stash-stuffs/index.yml(deprecated)
+files:
+- TetraxUserscriptLibrary.yml
+- TetraxUserscriptLibrary.js

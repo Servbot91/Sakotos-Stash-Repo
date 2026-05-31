@@ -1,0 +1,13 @@
+id: dicer
+name: DiceR
+metadata:
+  description: Randomizer with logic to prevent repetition until exhaustion and include
+    new content while actively maintaining list integrity.
+version: 1.0de421e5
+date: "2026-02-28 15:02:02"
+requires: []
+source_repository: https://raw.githubusercontent.com/Servbot91/DiceR/refs/heads/main/plugins/manifest.yml
+files:
+- DiceR/DiceR.yml
+- DiceR/randomlogic.js
+- DiceR/randomlogicstyle.css

@@ -1,0 +1,11 @@
+id: SpriteTab
+name: Sprite Tab
+metadata:
+  description: Adds a tab to the scene page displaying the full sprite sheet.
+version: 1.2-cd198ba
+date: "2026-02-27 17:56:28"
+requires: []
+source_repository: https://hippochapel.github.io/hippo-stash-plugins/main/index.yml
+files:
+- sprites.js
+- SpriteTab.yml

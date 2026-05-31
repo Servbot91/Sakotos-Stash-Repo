@@ -1,0 +1,11 @@
+id: Glassy - Performer Scene Card Details Redesign
+name: Glassy - Performer Scene Card Details Redesign
+metadata:
+  description: A Glassy Add-On Module.
+version: 0.1-7571e2a
+date: "2024-05-28 13:47:46"
+requires: []
+source_repository: https://serechops.github.io/Serechops-Stash/index.yml
+files:
+- Glassy - Performer Scene Card Details Redesign.css
+- Glassy - Performer Scene Card Details Redesign.yml

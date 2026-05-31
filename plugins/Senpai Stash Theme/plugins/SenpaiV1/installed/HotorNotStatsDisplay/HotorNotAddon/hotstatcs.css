@@ -1,0 +1,452 @@
+/* Hot or Not stats layout */
+
+/* Labels */
+.custom-field-hotornot_stats .stats-key {
+  font-size: 13px;
+  font-weight: 600;
+  color: #9aa4b2 !important;
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* Values */
+.custom-field-hotornot_stats .stats-value {
+  font-size: 14px;
+  font-weight: 500;
+  color: #e5e7eb !important;
+}
+
+.custom-field-hotornot_stats .stats-key:contains("Win"),
+.custom-field-hotornot_stats .stats-value {
+  color: #22c55e !important;
+}
+
+.custom-field-hotornot_stats .stats-value.stat-positive {
+  color: #22c55e !important; /* green */
+}
+
+.custom-field-hotornot_stats .stats-value.stat-negative {
+  color: #ef4444 !important; /* red */
+}
+
+.custom-field-hotornot_stats .stats-grid {
+  display: flex;           /* switch from grid to flex */
+  flex-direction: row;     /* horizontal layout */
+  gap: 6px;               /* space between each stat */
+  flex-wrap: nowrap;       /* keep all in one row, no wrapping */
+  font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+}
+
+.custom-field-hotornot_stats .stat-item {
+  display: flex;
+  flex-direction: row;     /* label + value side by side */
+  gap: 7px;                /* space between label and value */
+  align-items: center;     /* vertically center label & value */
+}
+
+.custom-field-hotornot_stats .stats-key {
+  font-size: 13px;
+  font-weight: 600;
+  color: #9aa4b2 !important;
+}
+
+.custom-field-hotornot_stats .stats-value {
+  max-width: 180px;        /* adjust as needed */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Mobile: single column */
+@media (max-width: 768px) {
+  .custom-field-hotornot_stats .stats-grid {
+    flex-direction: column;   /* stack stats vertically */
+    gap: 12px;                /* space between each stat */
+  }
+
+  .custom-field-hotornot_stats .stat-item {
+    width: 100%;              /* full width for each stat */
+  }
+
+  .custom-field-hotornot_stats .stats-value {
+    max-width: 100%;          /* let value use full width */
+    white-space: normal;      /* allow wrapping */
+    word-break: break-word;
+  }
+}
+
+.custom-field-hotornot_stats .stats-value.stat-positive {
+  color: #22c55e !important; /* green */
+}
+
+.custom-field-hotornot_stats .stats-value.stat-negative {
+  color: #ef4444 !important; /* red */
+}
+
+/* Default Chevron points down */
+.collapse-button svg {
+  transition: transform 0.3s ease;
+}
+
+/* Added support for the manual class toggle in your JS */
+.collapse-button svg.rotated,
+.collapse.show + .collapse-button svg {
+  transform: rotate(180deg);
+}
+
+/* Stats Grid Layout */
+
+  .stat-item {
+    background: rgba(255,255,255,0.05);
+    padding: 10px;
+    border-radius: 8px;
+    text-align: center;
+    border: 1px solid rgba(255,255,255,0.1);
+  }
+  .stats-key {
+    font-size: 0.7rem;
+    color: #888;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+    letter-spacing: 0.5px;
+  }
+  .stats-value {
+    font-size: 1.1rem;
+    font-weight: bold;
+    color: #fff;
+  }
+  
+  /* Stat Coloring */
+  .stat-positive { color: #4caf50 !important; }
+  .stat-negative { color: #f44336 !important; }
+  
+  
+/* ================================ */
+/* Performer Record (Match History) */
+/* ================================ */
+
+.custom-field-performer_record,
+.custom-field-performer_record .TruncatedText {
+  max-width: 100% !important;
+  width: 100% !important;
+  display: block !important;
+  overflow: visible !important;
+}
+
+/* Match Timeline Styles */
+.match-timeline {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr); 
+  gap: 6px;
+  padding: 8px 0;
+  width: 735% !important; 
+  font-family: sans-serif;
+}
+
+.timeline-entry {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important; 
+  padding: 3px 8px !important;               
+  background: rgba(255,255,255,0.05) !important;
+  border-radius: 4px !important;
+  font-size: 1rem !important;             
+  min-height: 40px !important;              
+  border-left: 3px solid transparent !important;
+}
+
+/* Win: Greenish theme */
+.timeline-entry.win {
+  border-left: 3px solid #4caf50 !important;
+  background: rgba(76, 175, 80, 0.1) !important;
+}
+.timeline-entry.win .timeline-status {
+  color: #4caf50 !important;
+  font-weight: bold !important;
+}
+.timeline-entry.win .timeline-marker {
+  color: #4caf50 !important;
+}
+
+/* Loss: Reddish theme */
+.timeline-entry.loss {
+  border-left: 3px solid #f44336 !important;
+  background: rgba(244, 67, 54, 0.1) !important;
+}
+.timeline-entry.loss .timeline-status {
+  color: #f44336 !important;
+  font-weight: bold !important;
+}
+.timeline-entry.loss .timeline-marker {
+  color: #f44336 !important;
+}
+
+/* Draw/Neutral: Gray theme */
+.timeline-entry.draw {
+  border-left: 3px solid #9e9e9e !important;
+  background: rgba(158, 158, 158, 0.1) !important;
+}
+.timeline-entry.draw .timeline-status {
+  color: #9e9e9e !important;
+}
+
+.timeline-content {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  gap: 6px !important;
+  flex-grow: 1 !important;
+  height: 100% !important;
+}
+
+/* Ensure ALL elements are vertically centered */
+.timeline-date,
+.timeline-marker,
+.timeline-status,
+.timeline-vs,
+.timeline-opponent-link,
+.timeline-rating {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  height: 100% !important;
+}
+
+.timeline-status {
+  font-weight: bold !important;
+  font-size: 0.7rem !important;
+}
+
+.timeline-vs {
+  font-size: 0.9rem !important;
+}
+
+.timeline-opponent-link {
+  color: #00b2ff !important;
+  text-decoration: none !important;
+  white-space: nowrap !important;
+}
+
+.timeline-date {
+  font-size: 0.65rem !important;
+  opacity: 0.5 !important;
+  margin-right: 4px !important;
+}
+
+.timeline-rating { 
+  font-weight: bold !important; 
+  color: #00b2ff !important; 
+  background: rgba(0,178,255,0.12) !important; 
+  padding: 1px 4px !important; 
+  border-radius: 3px !important; 
+  font-size: 0.7rem !important;
+  margin-left: 4px !important;
+  min-width: 35px !important;
+  text-align: center !important;
+}
+
+/* Responsive Breakpoints */
+@media (max-width: 1200px) {
+  .match-timeline { grid-template-columns: repeat(3, 1fr); }
+}
+
+@media (max-width: 800px) {
+  .match-timeline { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 500px) {
+  .match-timeline { grid-template-columns: 1fr; }
+}
+
+/* Stash version .30 backwards compatibility */
+
+/* Hot or Not stats layout */
+
+/* Labels */
+.hotornot_stats .stats-key {
+  font-size: 13px;
+  font-weight: 600;
+  color: #9aa4b2 !important;
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* Values */
+.hotornot_stats .stats-value {
+  font-size: 14px;
+  font-weight: 500;
+  color: #e5e7eb !important;
+}
+
+.hotornot_stats .stats-key:contains("Win"),
+.hotornot_stats .stats-value {
+  color: #22c55e !important;
+}
+
+.hotornot_stats .stats-value.stat-positive {
+  color: #22c55e !important; /* green */
+}
+
+.hotornot_stats .stats-value.stat-negative {
+  color: #ef4444 !important; /* red */
+}
+
+.hotornot_stats .stats-grid {
+  display: flex;           /* switch from grid to flex */
+  flex-direction: row;     /* horizontal layout */
+  gap: 6px;               /* space between each stat */
+  flex-wrap: nowrap;       /* keep all in one row, no wrapping */
+  font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+}
+
+.hotornot_stats .stat-item {
+  display: flex;
+  flex-direction: row;     /* label + value side by side */
+  gap: 7px;                /* space between label and value */
+  align-items: center;     /* vertically center label & value */
+}
+
+.hotornot_stats .stats-key {
+  font-size: 13px;
+  font-weight: 600;
+  color: #9aa4b2 !important;
+}
+
+.hotornot_stats .stats-value {
+  max-width: 180px;        /* adjust as needed */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Mobile: single column */
+@media (max-width: 768px) {
+  .hotornot_stats .stats-grid {
+    flex-direction: column;   /* stack stats vertically */
+    gap: 12px;                /* space between each stat */
+  }
+
+  .hotornot_stats .stat-item {
+    width: 100%;              /* full width for each stat */
+  }
+
+  .hotornot_stats .stats-value {
+    max-width: 100%;          /* let value use full width */
+    white-space: normal;      /* allow wrapping */
+    word-break: break-word;
+  }
+}
+
+.hotornot_stats .stats-value.stat-positive {
+  color: #22c55e !important; /* green */
+}
+
+.hotornot_stats .stats-value.stat-negative {
+  color: #ef4444 !important; /* red */
+}
+
+/* Default Chevron points down */
+.collapse-button svg {
+  transition: transform 0.3s ease;
+}
+
+/* Added support for the manual class toggle in your JS */
+.collapse-button svg.rotated,
+.collapse.show + .collapse-button svg {
+  transform: rotate(180deg);
+}
+
+/* Stats Grid Layout */
+
+  .stat-item {
+    background: rgba(255,255,255,0.05);
+    padding: 10px;
+    border-radius: 8px;
+    text-align: center;
+    border: 1px solid rgba(255,255,255,0.1);
+  }
+  .stats-key {
+    font-size: 0.7rem;
+    color: #888;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+    letter-spacing: 0.5px;
+  }
+  .stats-value {
+    font-size: 1.1rem;
+    font-weight: bold;
+    color: #fff;
+  }
+  
+  /* Stat Coloring */
+  .stat-positive { color: #4caf50 !important; }
+  .stat-negative { color: #f44336 !important; }
+  
+  
+
+/* --- Recent Matches Colors --- */
+
+/* Win: Greenish theme */
+.timeline-entry.win {
+  border-left: 3px solid #4caf50;
+  background: rgba(76, 175, 80, 0.1);
+}
+.timeline-entry.win .timeline-status {
+  color: #4caf50;
+  font-weight: bold;
+}
+.timeline-entry.win .timeline-marker {
+  color: #4caf50;
+}
+
+/* Loss: Reddish theme */
+.timeline-entry.loss {
+  border-left: 3px solid #f44336;
+  background: rgba(244, 67, 54, 0.1);
+}
+.timeline-entry.loss .timeline-status {
+  color: #f44336;
+  font-weight: bold;
+}
+.timeline-entry.loss .timeline-marker {
+  color: #f44336;
+}
+
+/* Draw/Neutral: Gray theme */
+.timeline-entry.draw {
+  border-left: 3px solid #9e9e9e;
+  background: rgba(158, 158, 158, 0.1);
+}
+.timeline-entry.draw .timeline-status {
+  color: #9e9e9e;
+}
+
+
+/* Rating badges that match the status */
+.timeline-entry.win .timeline-rating {
+  color: #4caf50 !important;
+  background: rgba(76, 175, 80, 0.15) !important;
+}
+
+.timeline-entry.loss .timeline-rating {
+  color: #f44336 !important;
+  background: rgba(244, 67, 54, 0.15) !important;
+}
+
+.timeline-entry.draw .timeline-rating {
+  color: #9e9e9e !important;
+  background: rgba(158, 158, 158, 0.15) !important;
+}
+
+.timeline-rating { 
+  font-weight: bold; 
+  color: #00b2ff; 
+  background: rgba(0,178,255,0.15); 
+  padding: 2px 6px; 
+  border-radius: 4px; 
+  font-size: 0.8rem;
+  min-width: 35px;
+  text-align: center;
+  margin-left: auto; /* Pushes rating to the far right of the entry */
+  margin-right: 4px;
+}

@@ -1,0 +1,293 @@
+
+
+/*******************************************************************************************************************************/
+
+/* ===================================== */
+/* Mobile Configurations */
+/* ===================================== */
+
+/* Mobile-specific reversed image */
+@media (max-width: 767px) {
+    button.minimal.brand-link.d-none.d-md-inline-block.btn.btn-primary, 
+    button.minimal.brand-link.d-inline-block.btn.btn-primary {
+        width: 40.5px;   /* Half of 95px */
+        height: 40px;    /* Half of 40px */
+
+        /* Align background to left (optional depending on your flip) */
+        background-position: 60% center;
+        background-size: cover; /* Ensures it still covers the button */
+    }
+}
+
+
+/*Brings back the Studio Image Size in Mobile*/
+@media only screen and (max-width: 767px) {
+
+.justify-content-center .studio-card .studio-card-image {
+    width: 100%; 
+}
+}
+
+/*Adjusts text size of headers in mobile*/
+@media only screen and (max-width: 768px) {
+    h1, h2, h3, h4, h5, h6 {
+        font-size: 14px !important; /* Adjust the font size for mobile devices */
+    }
+}
+
+/* Media query for mobile devices */
+@media only screen and (max-width: 767px) {
+
+    .row.justify-content-center {
+        display: grid;
+        grid-template-columns: 1fr;
+        grid-gap: 3px;
+    }
+
+    .scene-card .progress-bar {
+        transform: translateY(217px);
+    }
+}
+
+/* Responsive Adjustments */
+@media screen and (max-width: 767px) {
+	.container {
+		padding: 8px;
+	}
+
+	.logo {
+		font-size: 12px;
+	}
+
+	.card {
+		padding: 8px;
+	}
+
+	.card-title {
+		font-size: 14px;
+	}
+
+	.card-description {
+		font-size: 12px;
+	}
+
+	.btn {
+		padding: 6px 12px;
+		font-size: 12px;
+	}
+}
+
+/* Adjust Scene Page in Mobile */
+@media only screen and (max-width: 767px) {
+	.scrubber-wrapper {
+		display: none;
+	}
+}
+
+/* Media query for mobile devices */
+@media only screen and (max-width: 767px) {
+
+	/* Disable animations and hover effects on mobile */
+	.movie-recommendations .slick-track,
+	.scene-recommendations .slick-track,
+	.performer-recommendations .slick-track,
+	.studio-recommendations .slick-track,
+	.movie-recommendations .slick-track:hover,
+	.scene-recommendations .slick-track:hover,
+	.performer-recommendations .slick-track:hover,
+	.studio-recommendations .slick-track:hover {
+		animation: none;
+		animation-play-state: running;
+		/* Ensure animations are not paused on hover on mobile */
+	}
+}
+
+/* Apply styles for mobile devices (adjust max-width as needed) */
+@media only screen and (max-width: 767px) {
+	.VideoPlayer {
+		position: fixed;
+		top: 0;
+		left: 0;
+		width: 100%;
+		height: 240px;
+		/* Adjust the height as needed */
+		z-index: 1000;
+		/* Adjust the z-index as needed */
+		margin-top: 60px;
+		margin-bottom: 1px;
+	}
+
+	.nav.nav-tabs {
+		margin-top: 240px;
+		/* Set margin-top equal to the height of VideoPlayer */
+		z-index: 1100;
+	}
+}
+
+/* Apply styles for mobile devices (adjust max-width as needed) */
+@media only screen and (max-width: 767px) {
+.scene-header.d-xl-none {
+    width: 100%;
+}
+	/* Ensure full width on mobile */
+}
+
+/* Apply styles for mobile devices (adjust max-width as needed) */
+@media only screen and (max-width: 767px) {
+	h1 {
+		font-size: 24px;
+		/* Adjust the font size for h1 on mobile */
+	}
+
+	h2 {
+		font-size: 22px;
+		/* Adjust the font size for h2 on mobile */
+	}
+
+	h3 {
+		font-size: 18px;
+		/* Adjust the font size for h3 on mobile */
+	}
+
+	h4 {
+		font-size: 18px;
+		/* Adjust the font size for h4 on mobile */
+	}
+
+	h5 {
+		font-size: 16px;
+		/* Adjust the font size for h5 on mobile */
+	}
+
+	h6 {
+		font-size: 14px;
+		/* Adjust the font size for h6 on mobile */
+	}
+}
+
+/* Media query for mobile devices */
+@media only screen and (max-width: 767px) {
+    .studio-logo {
+        background: rgba(0, 0, 0, 0.4);
+        color: #fff;
+        border-radius: 10px;
+        padding: 20px;
+        box-shadow: 0 4px 8px rgba(255, 255, 255, 0.1),
+                    0 0 10px rgba(255, 255, 255, 0.1);
+    }
+}
+
+	/* Apply styles for mobile devices (adjust max-width as needed) */
+	@media only screen and (max-width: 767px) {
+		#studio-page .detail-container {
+			margin-bottom: 0;
+			/* Adjust margin-bottom as needed to reduce the gap */
+		}
+
+		#studio-page .nav.nav-tabs {
+			margin-top: 0;
+			/* Adjust margin-top as needed to reduce the gap */
+		}
+	}
+
+	/* Apply styles for mobile devices (adjust max-width as needed) */
+	@media only screen and (max-width: 767px) {
+		#performer-page .detail-container {
+			margin-bottom: 0;
+			/* Adjust margin-bottom as needed to reduce the gap */
+		}
+
+		#performer-page .nav.nav-tabs {
+			margin-top: 0;
+			/* Adjust margin-top as needed to reduce the gap */
+		}
+	}
+/**************** Mobile Scene Page Adjustments ***********************/
+@media only screen and (max-width: 767px) {
+.scene-tabs {
+	transform: translateY(230px);
+}
+
+.scene-header,
+.mr-auto.nav.nav-tabs {
+	margin: 1px;
+}
+
+.nav-utility.custom-support-div {
+	display: none;
+}
+
+}
+
+@media only screen and (max-width: 576px) {
+	.VideoPlayer {
+		margin-top: 0;
+		margin-bottom: 1px;
+	}
+	
+	.scene-header,
+	.mr-auto.nav.nav-tabs {
+	margin: 1px;
+}
+}
+
+@media only screen and (max-width: 767px) {
+  :root {
+    --background-image-url: url('/plugin/senpai/assets/mobile.jpg');
+  }
+}
+
+/*mobile fill*/
+
+@media only screen and (max-width: 767px) {
+  body {
+    background-size: contain;
+    background-position: center;
+    background-repeat: no-repeat;
+    background-attachment: scroll;
+  }
+}
+
+.performer.performer-video.lazy-load {
+	background: rgba(0, 0, 0, 0.4);
+	/* Darker background for dark mode, adjust opacity as needed */
+	color: #fff;
+	/* Text color for dark mode */
+	border-radius: 10px;
+	/* Adjust the border-radius for rounded corners */
+	padding: 20px;
+	/* Adjust the padding as needed */
+	box-shadow: 0 4px 8px rgba(255, 255, 255, 0.1), 0 0 10px rgba(255, 255, 255, 0.1);
+	/* Raised embossed effect */
+}
+
+.performer-video.lazy-load {
+    opacity: 0;
+    transition: opacity 0.3s ease-in-out;
+}
+
+.performer-video.lazy-load:hover {
+    opacity: 1;
+}
+
+.tag-card-header video {
+    width: auto;
+    height: 100%;
+    object-fit: cover;
+    object-position: center;
+}
+
+/* Nav Button Effects */
+.nav-item:hover {
+    opacity: 0.8;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #f0f0f0;
+    border: 2px solid #ddd;
+    border-radius: 6px;
+}

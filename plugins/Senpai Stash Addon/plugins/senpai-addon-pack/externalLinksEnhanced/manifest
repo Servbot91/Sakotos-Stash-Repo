@@ -1,0 +1,17 @@
+id: externalLinksEnhanced
+name: External Links Enhanced
+metadata:
+  description: Adds additional icons for external links.
+version: 1.2-43feb59
+date: "2025-12-20 01:59:59"
+requires: []
+source_repository: https://stashapp.github.io/CommunityScripts/stable/index.yml
+files:
+- README.md
+- externalLinksEnhanced.yml
+- externalLinksEnhanced.js
+- CHANGELOG.md
+- custom/onlyfans.svg
+- custom/custom.json
+- custom/bluesky.svg
+- externalLinksEnhanced.css

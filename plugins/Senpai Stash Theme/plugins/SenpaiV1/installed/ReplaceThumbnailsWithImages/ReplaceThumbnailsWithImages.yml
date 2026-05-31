@@ -1,0 +1,9 @@
+name: Replace Thumbnails With High-Res Images
+description: Replaces thumbnails with original high res images
+url: https://github.com/Tetrax-10/stash-stuffs
+version: 1.0
+ui:
+  javascript:
+    - ReplaceThumbnailsWithImages.js
+  requires:
+    - TetraxUserscriptLibrary

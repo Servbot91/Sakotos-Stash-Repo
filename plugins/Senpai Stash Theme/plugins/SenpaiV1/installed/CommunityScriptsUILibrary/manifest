@@ -1,0 +1,12 @@
+id: CommunityScriptsUILibrary
+name: CommunityScriptsUILibrary
+metadata:
+  description: CommunityScripts UI helper library
+version: 1.0.0-512fbb8
+date: "2024-11-27 21:50:31"
+requires: []
+source_repository: https://stashapp.github.io/CommunityScripts/stable/index.yml
+files:
+- CommunityScriptsUILibrary.yml
+- README.md
+- cs-ui-lib.js

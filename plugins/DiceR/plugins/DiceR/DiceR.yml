@@ -1,0 +1,10 @@
+name: DiceR
+description: An intelligent all entity randomizer with logic to prevent repetition until exhaustion and include new content while maintaining list integrity with mobile and desktop optimizations
+version: 1.9
+url: https://discourse.stashapp.cc/t/dicer/5721
+ui:
+  requires: []
+  javascript:
+    - randomlogic.js
+  css:
+    - randomlogicstyle.css

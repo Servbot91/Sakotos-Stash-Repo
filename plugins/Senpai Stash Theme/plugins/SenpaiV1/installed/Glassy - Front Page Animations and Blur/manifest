@@ -1,0 +1,11 @@
+id: Glassy - Front Page Animations and Blur
+name: Glassy - Front Page Animations and Blur
+metadata:
+  description: A Glassy Add-On Module.
+version: 0.1-7571e2a
+date: "2024-05-28 13:47:46"
+requires: []
+source_repository: https://serechops.github.io/Serechops-Stash/index.yml
+files:
+- Glassy - Front Page Animations and Blur.yml
+- Glassy - Front Page Animations and Blur.css

@@ -1,0 +1,23 @@
+name: O Stats
+description: Adds O stats to the stats page
+version: 1.0
+url: https://discourse.stashapp.cc/t/o-stats/4766/7
+ui:
+  javascript:
+    - ostats.js
+  assets:
+    /: .
+
+exec:
+  - python
+  - '{pluginDir}/save_watch_data.py'
+interface: raw
+tasks:
+  - name: saveWatchData
+    description: Save watch history to JSON file
+    defaultArgs:
+      mode: save
+  - name: loadWatchData
+    description: Load watch history from JSON file
+    defaultArgs:
+      mode: load

@@ -1,0 +1,12 @@
+id: stash-battle
+name: Stash Battle
+metadata:
+  description: Adds an ELO based ranking system for scenes
+version: 2.6.4-b0abd40
+date: "2026-03-12 03:34:28"
+requires: []
+source_repository: https://dtt-git.github.io/stash-battle/main/index.yml
+files:
+- stash-battle.js
+- stash-battle.yml
+- stash-battle.css

@@ -1,0 +1,27 @@
+name: Hot or Not Match History Add-on
+description: Formats Hot or Not Match history info. Adds streaks, performer ledger, and additional maitenance tasks.
+version: "1.3.2"
+url: https://discourse.stashapp.cc/t/hotornot-match-history-add-on/5701
+exec:
+  - python
+  - "{pluginDir}/HotOrNotwipe.py"
+ui:
+  css:
+    - hotstatcs.css
+  javascript:
+    - HotorNotStatsDisplay.js
+
+interface: raw
+
+
+tasks:
+  - name: "Wipe Performer Match History"
+    description: Deletes all Performer Hot or Not Match history from custom fields. 
+    defaultArgs:
+      mode: processAll
+      task: wipe
+  - name: "Reset All Performer Ratings"
+    description: Resets all Performer ratings to 0. 
+    defaultArgs:
+      mode: processAll
+      task: reset

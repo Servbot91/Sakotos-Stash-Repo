@@ -1,0 +1,47 @@
+name: Deck Viewer
+description: The Sakoto Fork of the Image-Deck plugin. Features include Hijacking of the built in stash viewbox, full mobile integration and optimization with one-handed controls, tagging, filtering, customizable visual effects, and additional features to better enhance the gallery and image viewing experience in stash.
+version: 1.2
+settings:
+  # Playback settings
+  autoPlayInterval:
+    displayName: Auto-play Interval (ms)
+    description: 'Time between automatic transitions in milliseconds (100-5000, default: 500)'
+    type: NUMBER
+  transitionEffect:
+    displayName: Transition Effect
+    description: 'Swiper effect: slide, fade, cards, coverflow, flip, cube (default: cards)'
+    type: STRING
+
+  # UI settings
+#  showProgressBar:
+#   displayName: Show Progress Bar
+#   description: 'Display progress bar at the top (default: enabled)'
+#   type: BOOLEAN
+  showCounter:
+    displayName: Show Counter
+    description: 'Display "3 of 150" counter (default: enabled)'
+    type: BOOLEAN
+
+
+  # Color settings (0-360 for hue)
+  ambientColorHue:
+    displayName: Ambient Glow Hue
+    description: 'Background ambient glow hue (0-360, default: 260 = purple)'
+    type: NUMBER
+  imageGlowIntensity:
+    displayName: Image Glow Intensity
+    description: 'Glow/shadow intensity around images (0-100, default: 40)'
+    type: NUMBER
+
+ui:
+  javascript:
+    - https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.js
+    - deck-viewer.js
+  css:
+    - https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.css
+    - deck-viewer-styling.css
+  csp:
+    script-src:
+      - https://cdn.jsdelivr.net
+    style-src:
+      - https://cdn.jsdelivr.net

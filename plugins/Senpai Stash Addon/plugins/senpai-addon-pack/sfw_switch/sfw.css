@@ -1,0 +1,175 @@
+
+/* === MORE BLUR === */
+/* common */
+.thumbnail-container img,
+.detail-header-image,
+.wall-item-gallery,
+
+/* scene */
+.scene-player-container,
+.scene-cover,
+.scene-card-preview,
+.scrubber-item,
+.scene-image,
+.scene-card img,
+.wall-item-media,
+.wall-item.show-title,
+
+/* image */
+.image-card img,
+.image-thumbnail,
+.Lightbox-carousel,
+.image-image,
+.react-photo-gallery--gallery img,
+
+/* group */
+.group-card-image,
+
+/* gallery */
+.gallery-image,
+.gallery-card-image,
+.gallery-card img,
+.gallery-cover img,
+.GalleryWallCard.GalleryWallCard-portrait,
+.GalleryWallCard.GalleryWallCard-landscape,
+
+/* performer */
+.performer-card img,
+
+/* studio */
+.studio-card-image,
+.studio-card img,
+
+/* tag */
+.tag-card img
+{
+
+    filter: blur(30px);
+    transition: filter 0.25s ease;
+}
+
+/* === LESS BLUR === */
+
+/* common */
+.card-section-title,
+.detail-item-value.description,
+.detail-item-value,
+.TruncatedText,
+
+/* scene */
+.scene-studio-overlay,
+.scene-header > h3,
+h3.scene-header,
+.TruncatedText.scene-card__description,
+.queue-scene-details,
+.marker-wall,
+
+/* performer */
+.performer-name,
+.card-section,
+.name-data,
+.aliases-data,
+
+/* gallery */
+.gallery-header.no-studio,
+.TruncatedText.gallery-card__description,
+
+
+/* studio */
+.studio-name,
+.studio-overlay a,
+.studio-logo,
+.studio-parent-studios,
+
+/* group */
+.group-details > div > h2,
+
+/* image */
+h3.image-header,
+.Lightbox-carousel:hover,
+.TruncatedText.image-card__description,
+
+/* tag */
+.TruncatedText.tag-description,
+.tag-item.tag-link.badge.badge-secondary,
+.tag-name
+
+{
+filter: blur(2px);
+}
+
+
+/* === UNBLUR ON HOVER === */
+
+/* common */
+.detail-item-value:hover,
+.scene-cover:hover,
+
+.card-section-title:hover,
+.TruncatedText.tag-description:hover,
+.detail-item-value.description:hover,
+.TruncatedText:hover,
+
+/* scene */
+.scene-player-container:hover,
+.scene-card-preview:hover,
+.queue-scene-details:hover,
+.scene-card:hover img,
+.TruncatedText.scene-card__description:hover,
+.scene-player-container:hover,
+.scene-header:hover > h3,
+div:hover > .scene-header,
+.wall-item-media:hover,
+.marker-wall:hover,
+.wall-item.show-title:hover,
+
+/* image */
+.detail-header-image:hover,
+div:hover > .image-header,
+.image-card:hover img,
+.react-photo-gallery--gallery img:hover,
+.image-thumbnail:hover,
+.TruncatedText.image-card__description:hover,
+.wall-item:hover img,
+.image-image:hover,
+
+
+/* group */
+.group-card:hover img,
+
+/* gallery */
+.gallery-header.no-studio,
+.gallery-card:hover img,
+.gallery-cover:hover img,
+.gallery-image:hover,
+.gallery-card-image:hover,
+.TruncatedText.gallery-card__description:hover,
+.GalleryWallCard.GalleryWallCard-portrait:hover,
+.GalleryWallCard.GalleryWallCard-landscape:hover,
+
+/* performer */
+.performer-card-image:hover,
+.performer-name:hover,
+.card-section:hover,
+.name-data:hover,
+.aliases-data:hover,
+.performer-card img:hover,
+
+/* studio */ 
+.studio-name:hover,
+.studio-overlay:hover a,
+.studio-card:hover img,
+.studio-parent-studios:hover,
+.studio-logo:hover,
+
+
+/* tag */
+.tag-card:hover img,
+.tag-item.tag-link.badge.badge-secondary:hover,
+.tag-name:hover
+{
+    filter: blur(0);
+	transition: filter 0.25s ease;
+}
+
+/*Credit: fl0w#9497 */

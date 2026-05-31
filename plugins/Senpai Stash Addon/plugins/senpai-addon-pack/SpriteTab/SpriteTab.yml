@@ -1,0 +1,32 @@
+name: Sprite Tab
+description: Adds a tab to the scene page displaying the full sprite sheet.
+version: 1.2
+url: https://github.com/hippochapel/hippo-stash-plugins/tree/main/plugins/SpriteTab
+ui:
+  javascript:
+    - sprites.js
+settings:
+  tooltip_enabled:
+    displayName: Tooltip Enabled
+    description: Show magnified preview when hovering over sprites
+    type: BOOLEAN
+  tooltip_width:
+    displayName: Tooltip Preview Width
+    description: Width of the tooltip preview popup in pixels
+    type: NUMBER
+  show_timestamps:
+    displayName: Show Timestamps
+    description: Display timestamp overlay on each sprite
+    type: BOOLEAN
+  compact_view:
+    displayName: Compact View
+    description: Remove gaps and borders between sprites
+    type: BOOLEAN
+  auto_scroll:
+    displayName: Auto-Scroll
+    description: Automatically scroll to the current sprite during playback
+    type: BOOLEAN
+  grid_columns:
+    displayName: Grid Columns
+    description: Fixed number of columns (1-12). Leave empty to show size slider in toolbar.
+    type: NUMBER

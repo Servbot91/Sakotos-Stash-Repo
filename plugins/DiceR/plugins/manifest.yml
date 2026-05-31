@@ -1,0 +1,8 @@
+- id: dicer
+  name: DiceR
+  metadata:
+    description: Randomizer with logic to prevent repetition until exhaustion and include new content while actively maintaining list integrity.
+  version: 1.049ad3e4
+  date: 2026-03-29 15:36:55
+  path: https://github.com/Servbot91/DiceR/raw/refs/heads/main/plugins/DiceR.zip
+  sha256: 8a051f428328b0b91e2b0da8c80e9f5964c1186408e620ab589b734611c78990

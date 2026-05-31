@@ -1,0 +1,15 @@
+id: PerformerDetailsExtended
+name: Performer Details Extended
+metadata:
+  description: Displays additional metadata on performer pages, such as their most
+    regular scene partners, top studio, and total play duration. Requires Stash v0.27.0
+    or higher.
+version: 1.0.2-e48a9e7
+date: "2025-03-18 23:42:55"
+requires: []
+source_repository: https://valkyr-js.github.io/stash-plugins/index.yml
+files:
+- PerformerDetailsExtended.css
+- PerformerDetailsExtended.js.LICENSE.txt
+- PerformerDetailsExtended.js
+- PerformerDetailsExtended.yml
