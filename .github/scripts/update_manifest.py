@@ -6,6 +6,7 @@ from datetime import datetime
 def calculate_sha256(file_path):
     """Calculate SHA256 hash of a file"""
     if not os.path.exists(file_path):
+        print(f"File not found: {file_path}")
         return "FILE_NOT_FOUND"
     sha256_hash = hashlib.sha256()
     with open(file_path, "rb") as f:
@@ -14,7 +15,7 @@ def calculate_sha256(file_path):
     return sha256_hash.hexdigest()
 
 def update_manifest():
-    manifest_path = 'manifest.yml'
+    manifest_path = 'plugins/manifest.yml'  # Correct path
     if not os.path.exists(manifest_path):
         print("Manifest file not found.")
         return
