@@ -1,6 +1,6 @@
 name: Deck Viewer
 description: The Sakoto Fork of the Image-Deck plugin. Features include Hijacking of the built in stash viewbox, full mobile integration and optimization with one-handed controls, tagging, filtering, customizable visual effects, and additional features to better enhance the gallery and image viewing experience in stash.
-version: 1.2t
+version: 1.2
 settings:
   # Playback settings
   autoPlayInterval:
