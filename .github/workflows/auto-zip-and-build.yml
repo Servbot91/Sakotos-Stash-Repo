@@ -27,6 +27,8 @@ jobs:
     - name: Get Changed Files
       id: changed-files
       uses: tj-actions/changed-files@v44
+      with:
+        separator: "\n"
 
     - name: Process, Zip, and Update YAML Manifest
       run: |
@@ -44,13 +46,15 @@ jobs:
           "plugins/TagImagesFromGalleries/plugins/tagImagesFromGalleries/|plugins/TagImagesFromGalleries/plugins|tagImagesFromGalleries.zip|plugins/TagImagesFromGalleries/plugins/tagImagesFromGalleries|TagImagesFromGalleries"
         )
 
-        UPDATED_ANY=false
+        echo "UPDATED_ANY=false" >> $GITHUB_ENV
 
         for plugin in "${PLUGINS[@]}"; do
           IFS="|" read -r TRIGGER DEST_DIR ZIP_NAME SRC_DIR MANIFEST_ID <<< "$plugin"
           
-          # Check if changes happened in this plugin's watched folder
-          for file in ${{ steps.changed-files.outputs.all_changed_files }}; do
+          # Use a newline-safe loop to read changed files containing spaces safely
+          echo "${{ steps.changed-files.outputs.all_changed_files }}" | while IFS= read -r file; do
+            [ -z "$file" ] && continue
+            
             if [[ "$file" == "$TRIGGER"* ]]; then
               echo "Changes detected for ID: $MANIFEST_ID. Rebuilding zip..."
               
@@ -86,13 +90,12 @@ jobs:
                 fi
               fi
               
-              UPDATED_ANY=true
+              # We set the environment variable immediately inside the loop block
+              echo "UPDATED_ANY=true" >> $GITHUB_ENV
               break 
             fi
           done
         done
-        
-        echo "UPDATED_ANY=$UPDATED_ANY" >> $GITHUB_ENV
 
     - name: Commit and Push Changes
       if: env.UPDATED_ANY == 'true'
