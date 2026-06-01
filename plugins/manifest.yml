@@ -28,9 +28,9 @@
   metadata:
     description: Senpai addon pack
   version: 1.0.0
-  date: 2024-01-01 00:00:00
+  date: "2026-06-01 12:26:43"
   path: https://github.com/Servbot91/Sakotos-Stash-Repo/raw/main/plugins/Senpai%20Stash%20Addon/plugins/senpai-addon-pack.zip
-  sha256: placeholder_sha256_here
+  sha256: cc49b30189c5734fcfc09a36e9130f67dc7bed6ab0804a70bb0f80334f7f2ce3
 - id: SenpaiTheme
   name: Senpai Theme
   metadata:
