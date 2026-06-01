@@ -1,6 +1,6 @@
 name: Senpai Stash Theme
 description: Modular Stash Theme with modified plugin dependencies for full integration and a streamlined experience for user customization
-version: 1.2.2t
+version: 1.2.2
 ui:
   css:
     - SenpaiV1.css
