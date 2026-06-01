@@ -44,6 +44,6 @@
   metadata:
     description: Plugin to tag images from galleries
   version: 1.0.0
-  date: 2024-01-01 00:00:00
+  date: "2026-06-01 12:19:14"
   path: https://github.com/Servbot91/Sakotos-Stash-Repo/raw/main/plugins/TagImagesFromGalleries/plugins/tagImagesFromGalleries.zip
-  sha256: placeholder_sha256_here
+  sha256: a77be7b2ef4558caed0de9b3fae896097e9aefe0e2e6502224de84f2c3f376e3
