@@ -36,9 +36,9 @@
   metadata:
     description: Senpai theme for Stash
   version: 1.0.0
-  date: 2024-01-01 00:00:00
+  date: "2026-06-01 12:25:04"
   path: https://github.com/Servbot91/Sakotos-Stash-Repo/raw/main/plugins/Senpai%20Stash%20Theme/plugins/SenpaiV1.zip
-  sha256: placeholder_sha256_here
+  sha256: e9bae4bda986421c7c6e45bce5f777b594ef44ba6512a35944dab89c7e7e2663
 - id: TagImagesFromGalleries
   name: Tag Images From Galleries
   metadata:
