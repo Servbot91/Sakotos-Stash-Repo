@@ -1,8 +1,8 @@
-name: Ascension-Beta
+name: Ascension
 description: "!!!DO NOT RUN THIS VERSION WITH THE STABLE BUILD ENABLED!!! DISABLE STABLE BUILD FIRST!!! 
 This is the beta version of Ascension. Always take a snapshot of your database just to be safe. While the goal is to maintain as stable a build as possible, you may encounter bugs. Please use the discourse thread used in the link button to report"
-version: 1.1RC2
-url: https://discourse.stashapp.cc/t/ascension/6714
+version: 1.2.5RC1
+url: 
 exec:
   - python
   - "{pluginDir}/jumper-beta.py"
@@ -13,6 +13,9 @@ ui:
     - ascen-stats-beta.js
   css:
     - ascension-beta.css
+  assets:
+    /: snapshots
+    
 interface: raw
 
 tasks:
@@ -35,7 +38,7 @@ tasks:
       task: reset
 
   - name: "Snapshot"
-    description: Writes all performer ratings, match history, and ledger to a json file. Example- DATE-TIME - Ascension Database Snapshot.json
+    description: Writes all ratings, match history, and ledger to a json file. Example- DATE-TIME - Ascension Database Snapshot.json
     defaultArgs:
       mode: processAll
       task: snapshotexport
