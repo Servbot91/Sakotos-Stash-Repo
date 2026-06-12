@@ -40,13 +40,11 @@ Deck Viewer is an image viewer that hijacks the built in stash image viewer. It 
 - Buttons and text fade out when zoomed in
 - Single hand optimizations
 
-## Release notes
-- 04-17-2026 -  Going forward all release notes will be posted on the github releases -> [Full Version 1.2 release notes](https://github.com/Servbot91/Deck-Viewer/releases/tag/1.2)
   
 ---
-## Installation
+## Plugin Installation Instructions
 1. Settings → Plugins → Available Plugins
-2. Add Source → Name: Deck Viewer
-3. Source URL: https://github.com/Servbot91/Deck-Viewer/raw/refs/heads/main/plugins/manifest.yml
+2. Add Source → Name: Sakotos Stash Repo
+3. Source URL: https://raw.githubusercontent.com/Servbot91/Sakotos-Stash-Repo/refs/heads/main/plugins/manifest.yml
 4. Click checkbox, Install
 5. Reload Plugins
