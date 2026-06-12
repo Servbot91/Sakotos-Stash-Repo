@@ -3,7 +3,7 @@ The definitive Sakoto Stash plugin repository.
 
 # Plugins
 - [Ascension](https://github.com/Servbot91/Sakotos-Stash-Repo/tree/main/plugins/Ascension)
-  - A Stash Entity Rating Comparor with extensive matchmaking, tier, and scoring system. 
+  - A Stash entity rating comparor with extensive matchmaking, tier, and scoring system. 
 - [Deck Viewer](https://github.com/Servbot91/Sakotos-Stash-Repo/tree/main/plugins/Deck%20Viewer)
   - A image viewer that hijacks the built in stash image viewer optimized for mobile.
 - [Dicer](https://github.com/Servbot91/Sakotos-Stash-Repo/tree/main/plugins/DiceR)
