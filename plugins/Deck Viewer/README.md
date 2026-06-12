@@ -1,8 +1,6 @@
 ## Overview
 
-Deck Viewer is the Sakoto fork and complete re imagination of the original [Image-Deck plugin](https://discourse.stashapp.cc/t/image-deck-fullscreen-swipeable-image-viewer/). It hijacks the built in stash image viewer. It is meant to further enhance gallery and image content consumption, streamlining one handed use while providing necessary functionality for cataloging and reducing accidental clicks\swipes.
-
-Deck Viewer was written with AI assistance (qwen3-coder:480b, and my local qwen3-coder30b) following general Dev standards and hygiene while also protecting integrity of the plugin with simple A\B testing and versioning.
+Deck Viewer is an image viewer that hijacks the built in stash image viewer. It is meant to further enhance gallery and image content consumption, streamlining one handed use while providing necessary functionality for cataloging and reducing accidental clicks\swipes.
 
 ---
 ## Improvements
