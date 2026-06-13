@@ -1,6 +1,6 @@
 name: Ascension
 description: "A comprehensive comparison tool that adds a tier based rating system for stash entities. Features include real time dynamic and scaling matchmaking system, leader-boards, metrics, better UI, and better mobile integration."
-version: 1.2.51
+version: 1.2.5
 url: 
 exec:
   - python
