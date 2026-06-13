@@ -1,6 +1,4 @@
 /* === ascenstyles.css === */
-/* Hot or Not stats layout */
-
 /* Labels */
 .custom-field-hotornot_stats .stats-key {
   font-size: 13px;
@@ -31,18 +29,18 @@
 }
 
 .custom-field-hotornot_stats .stats-grid {
-  display: flex;           /* switch from grid to flex */
-  flex-direction: row;     /* horizontal layout */
-  gap: 6px;               /* space between each stat */
-  flex-wrap: nowrap;       /* keep all in one row, no wrapping */
+  display: flex;           
+  flex-direction: row;   
+  gap: 6px;              
+  flex-wrap: nowrap;       
   font-family: system-ui, -apple-system, Segoe UI, sans-serif;
 }
 
 .custom-field-hotornot_stats .stat-item {
   display: flex;
-  flex-direction: row;     /* label + value side by side */
-  gap: 7px;                /* space between label and value */
-  align-items: center;     /* vertically center label & value */
+  flex-direction: row;    
+  gap: 7px;               
+  align-items: center;     
 }
 
 .custom-field-hotornot_stats .stats-key {
@@ -61,35 +59,34 @@
 /* Mobile: single column */
 @media (max-width: 768px) {
   .custom-field-hotornot_stats .stats-grid {
-    flex-direction: column;   /* stack stats vertically */
-    gap: 12px;                /* space between each stat */
+    flex-direction: column; 
+    gap: 12px;    
   }
 
   .custom-field-hotornot_stats .stat-item {
-    width: 100%;              /* full width for each stat */
+    width: 100%;   
   }
 
   .custom-field-hotornot_stats .stats-value {
-    max-width: 100%;          /* let value use full width */
-    white-space: normal;      /* allow wrapping */
+    max-width: 100%;       
+    white-space: normal;   
     word-break: break-word;
   }
 }
 
 .custom-field-hotornot_stats .stats-value.stat-positive {
-  color: #22c55e !important; /* green */
+  color: #22c55e !important; 
 }
 
 .custom-field-hotornot_stats .stats-value.stat-negative {
-  color: #ef4444 !important; /* red */
+  color: #ef4444 !important; 
 }
 
-/* Default Chevron points down */
+
 .collapse-button svg {
   transition: transform 0.3s ease;
 }
 
-/* Added support for the manual class toggle in your JS */
 .collapse-button svg.rotated,
 .collapse.show + .collapse-button svg {
   transform: rotate(180deg);
@@ -117,7 +114,6 @@
     color: #fff;
   }
   
-  /* Stat Coloring */
   .stat-positive { color: #4caf50 !important; }
   .stat-negative { color: #f44336 !important; }
   
@@ -143,7 +139,23 @@
   width: 550% !important; 
   font-family: sans-serif;
 }
-/* Mobile: shrink horizontal width */
+
+@media (min-width: 1201px) {
+
+ .match-timeline {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr); 
+  gap: 6px;
+  padding: 8px 0;
+  width: 650% !important; 
+  font-family: sans-serif;  
+}
+
+}
+
+/* ================================ */
+/* Mobile Performer Record (Match History) */
+/* ================================ */
 @media (max-width: 767px) {
   .match-timeline {
     width: 100% !important;
@@ -223,7 +235,6 @@
   height: 100% !important;
 }
 
-/* Ensure ALL elements are vertically centered */
 .timeline-date,
 .timeline-marker,
 .timeline-status,
@@ -492,6 +503,8 @@
   }
 }
 
+
+
 /* === base.css === */
 /* Base container and typography */
 .hon-container {
@@ -500,6 +513,7 @@
   align-items: center !important;
   margin: 20px auto !important;
   width: 95% !important;
+  min-height: 770px; 
   max-width: 1200px !important;
   background: #111;
   padding: 15px;
@@ -716,6 +730,7 @@
   font-weight: 600;
 }
 
+
 .hon-draws {
   color: #a3a3a3;
   font-weight: 600;
@@ -743,12 +758,126 @@
 }
 
 @media (max-width: 768px) {
-  .hon-match-stats {
-    display: none;
-  }
   
   .hon-battle-rank-badge {
     flex-wrap: nowrap;
+  }
+  
+  .hon-battle-rank-badge-compact {
+    display: inline-flex !important;
+  }
+  
+}
+
+.hon-battle-rank-badge-compact {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+  padding: 8px 8px !important;
+  border-radius: 12px !important;
+  font-size: 0.8rem !important;
+  margin: 2px 0 !important;
+  background: linear-gradient(135deg, #2a2a2a, #1a1a1a) !important;
+  border: 1px solid #444 !important;
+  color: #fff !important;
+  width: auto !important; 
+  max-width: fit-content !important; 
+  box-sizing: border-box !important;
+  min-height: auto !important;
+  height: auto !important;
+  align-self: center !important; 
+}
+
+.hon-battle-rank-badge-compact .hon-rank-text,
+.hon-battle-rank-badge-compact .hon-rank-total,
+.hon-battle-rank-badge-compact .hon-match-stats {
+  transform: translateX(-3px) !important;
+}
+
+.hon-battle-rank-badge-compact .hon-rank-emoji {
+  font-size: 1.1em !important;
+  flex-shrink: 0 !important;
+}
+
+.hon-battle-rank-badge-compact .hon-rank-text {
+  font-size: 1.1em !important;
+  font-weight: 600 !important;
+  white-space: nowrap !important;
+}
+
+.hon-battle-rank-badge-compact .hon-rank-total {
+  font-size: 1.1em !important;
+  color: #888 !important;
+  white-space: nowrap !important;
+}
+
+.hon-battle-rank-badge-compact .hon-match-stats {
+  display: flex !important;
+  align-items: center !important;
+  gap: 3px !important;
+  margin-left: 4px !important;
+  padding-left: 4px !important;
+  border-left: 1px solid rgba(255, 255, 255, 0.3) !important;
+  font-size: 1.1rem !important;
+  white-space: nowrap !important;
+}
+
+.hon-battle-rank-badge-compact .hon-stats-record {
+  display: flex !important;
+  gap: 2px !important;
+}
+
+.hon-battle-rank-badge-compact .hon-wins,
+.hon-battle-rank-badge-compact .hon-losses,
+.hon-battle-rank-badge-compact .hon-draws {
+  font-size: 0.7em !important;
+  font-weight: 600 !important;
+}
+
+.hon-battle-rank-badge-compact .hon-win-rate {
+  font-size: 0.7em !important;
+  font-weight: 700 !important;
+  color: #60a5fa !important;
+}
+
+.hon-battle-rank-badge-compact .hon-streak-positive,
+.hon-battle-rank-badge-compact .hon-streak-negative {
+  font-size: 0.6em !important;
+  font-weight: 700 !important;
+  padding: 1px 3px !important;
+  border-radius: 6px !important;
+}
+
+.thumbnail-section {
+  position: relative !important; 
+}
+
+.thumbnail-section .hon-battle-rank-badge-compact {
+  position: absolute !important; 
+  bottom: 5px !important; 
+  right: 5px !important; 
+  left: auto !important; 
+  transform: none !important; 
+  z-index: 10 !important; 
+  margin: 0 !important; 
+  width: auto !important;
+  max-width: 80% !important; 
+}
+
+
+.hon-battle-rank-badge-compact {
+  line-height: 1.4!important;
+  min-height: 24px !important;
+}
+
+@media (max-width: 180px) {
+  .hon-battle-rank-badge-compact .hon-match-stats {
+    display: none !important;
+  }
+  
+  .hon-battle-rank-badge-compact {
+    gap: 2px !important;
+    padding: 2px 4px !important;
   }
 }
 
@@ -2725,7 +2854,7 @@
 
 
 /* === modals.css === */
-/* General modal styles */
+
 #hon-modal {
   position: fixed;
   top: 0;
@@ -2745,7 +2874,6 @@
   width: 100%;
   height: 100%;
   
-  /* The blur effect */
   backdrop-filter: blur(8px); 
   -webkit-backdrop-filter: blur(8px);
   background: rgba(0, 0, 0, 0.3) !important; 
@@ -2780,7 +2908,6 @@
   position: relative;
 }
 
-
 @media (max-width: 1200px) {
   .hon-vs-container {
     display: flex;
@@ -2808,7 +2935,6 @@
   color: #fff;
 }
 
-/* Scrollbar styling */
 .hon-modal-content::-webkit-scrollbar {
   width: 8px;
 }
@@ -2826,7 +2952,6 @@
   background: #555;
 }
 
-/* Responsive adjustments */
 @media (max-width: 1200px) {
   .hon-modal-content {
     overflow-y: auto;
@@ -2844,7 +2969,6 @@
  } 
 }
 
-/* Z-index fixes */
 #hon-modal {
   z-index: 1000 !important;
 }
@@ -2857,7 +2981,6 @@
   z-index: 10002 !important;
 }
 
-/* Stats modal */
 #hon-stats-modal {
   position: fixed;
   top: 0;
@@ -2929,7 +3052,6 @@
   max-width: 100%;
 }
 
-/* Hide scrollbar but keep functionality */
 .hon-stats-content::-webkit-scrollbar {
   height: 6px;
 }
@@ -2943,8 +3065,6 @@
   border-radius: 3px;
 }
 
-
-/* Responsive adjustments */
 @media (max-width: 768px) {
 
 #hon-stats-modal .hon-stats-modal-dialog {
@@ -2954,59 +3074,18 @@
 
 }
 
-/* === mode-selection.css === */
-.hon-mode-toggle {
-  display: flex;
-  justify-content: center;
-  gap: 10px;
-  margin-bottom: 20px;
-  flex-wrap: wrap;
+@media (min-width: 1201px) {
+  .hon-modal-content {
+    display: flex !important;
+    flex-direction: row !important;
+    flex-wrap: wrap !important;
+    max-width: 100vw !important; 
+    width: 100vw !important; 
+    overflow-x: hidden !important; 
+    box-sizing: border-box !important; 
+  }
+  
 }
-
-.hon-mode-btn {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: flex-start;
-  padding: 12px 20px;
-  min-width: 0;
-  flex: 1;
-  max-width: 150px;
-  border: 2px solid #444;
-  background: transparent;
-  color: #aaa;
-  border-radius: 10px;
-  cursor: pointer;
-  font-size: 1rem;
-  transition: all 0.2s ease;
-  text-align: center;
-}
-
-.hon-mode-btn:hover {
-  border-color: #666;
-  color: #fff;
-}
-
-.hon-mode-btn.active {
-  background: #0d6efd;
-  border-color: #0d6efd;
-  color: #fff;
-}
-
-.hon-mode-desc {
-  font-size: 0.9rem;
-  margin-top: 4px;
-  opacity: 0.8;
-}
-
-.hon-mode-icon {
-  font-size: 1.3rem;
-}
-
-.hon-mode-title {
-  font-size: 1rem;
-}
-
 
 /* === performer-cards.css === */
 .hon-performer-card,
@@ -3112,14 +3191,6 @@
   text-align: center;
 }
 
-#hon-performer-list {
-  display: grid !important;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)) !important;
-  gap: 15px !important;
-  width: 100%;
-  padding: 15px 6px !important;
-  position: relative; /* Add this */
-}
 
 .hon-selection-card {
   background: #1a1a1a;
@@ -3134,7 +3205,6 @@
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
   height: 100%;
   z-index: 1;
-  /* Add these properties */
   will-change: transform, box-shadow, border-color;
 }
 
@@ -3142,72 +3212,9 @@
   transform: translateY(-10px) !important;
   box-shadow: 0 15px 30px rgba(0, 0, 0, 0.4) !important;
   z-index: 10 !important;
-  /* Add this to ensure proper layering */
   position: relative !important;
 }
 
-/*
-.hon-performer-card.tier-s {
-  box-shadow: 0 0 15px rgba(235, 152, 52, 0.7);
-}
-
-.hon-performer-card.tier-a {
-  box-shadow: 0 0 15px rgba(224, 20, 170, 0.7);
-}
-
-.hon-performer-card.tier-b {
-  box-shadow: 0 0 15px rgba(127, 30, 130, 0.7);
-}
-
-.hon-performer-card.tier-c {
-  box-shadow: 0 0 15px rgba(20, 187, 224, 0.7);
-}
-
-.hon-performer-card.tier-d {
-  box-shadow: 0 0 15px rgba(146, 224, 20, 0.7);
-}
-
-.hon-performer-card.tier-f {
-  box-shadow: 0 0 15px rgba(128, 128, 128, 0.7);
-}
-
- Enhanced glow on hover 
-.hon-performer-card.tier-s:hover {
-  box-shadow: 0 0 25px rgba(235, 152, 52, 0.9);
-}
-
-.hon-performer-card.tier-a:hover {
-  box-shadow: 0 0 25px rgba(224, 20, 170, 0.9);
-}
-
-.hon-performer-card.tier-b:hover {
-  box-shadow: 0 0 25px rgba(127, 30, 130, 0.9);
-}
-
-.hon-performer-card.tier-c:hover {
-  box-shadow: 0 0 25px rgba(20, 187, 224, 0.9);
-}
-
-.hon-performer-card.tier-d:hover {
-  box-shadow: 0 0 25px rgba(146, 224, 20, 0.9);
-}
-
-.hon-performer-card.tier-f:hover {
-  box-shadow: 0 0 25px rgba(128, 128, 128, 0.9);
-}
- Alternative: Pulsing animation for extra emphasis 
-@keyframes pulse-glow-s {
-  0% { box-shadow: 0 0 20px rgba(235, 152, 52, 0.9), 0 0 30px rgba(235, 152, 52, 0.6); }
-  50% { box-shadow: 0 0 30px rgba(235, 152, 52, 1), 0 0 45px rgba(235, 152, 52, 0.8); }
-  100% { box-shadow: 0 0 20px rgba(235, 152, 52, 0.9), 0 0 30px rgba(235, 152, 52, 0.6); }
-}
-
-@keyframes pulse-glow-a {
-  0% { box-shadow: 0 0 20px rgba(224, 20, 170, 0.9), 0 0 30px rgba(224, 20, 170, 0.6); }
-  50% { box-shadow: 0 0 30px rgba(224, 20, 170, 1), 0 0 45px rgba(224, 20, 170, 0.8); }
-  100% { box-shadow: 0 0 20px rgba(224, 20, 170, 0.9), 0 0 30px rgba(224, 20, 170, 0.6); }
-}
-*/
  Tier colors 
 .hon-selection-card.tier-s:hover,
 .hon-selection-card.tier-a:hover,
@@ -3220,34 +3227,53 @@
   z-index: 10;
 }
 
-.hon-scene-card {
-  transition: all 0.3s ease;
-  will-change: transform, opacity;
-}
-
-.hon-scene-card.hon-winner {
-  box-shadow: 0 0 20px rgba(76, 175, 80, 0.8);
-  transition: all 0.3s ease;
-}
-
-.hon-scene-card.hon-loser {
-  box-shadow: 0 0 20px rgba(244, 67, 54, 0.8);
-  transition: all 0.3s ease;
-}
-
-.hon-scene-card.hon-transition-out {
-  /* Longer transition for smoother effect */
-  transition: opacity 0.8s cubic-bezier(0.4, 0, 0.2, 1), 
-              transform 0.8s cubic-bezier(0.4, 0, 0.2, 1);
-  opacity: 0;
-}
-
-.hon-scene-card.hon-winner.hon-transition-out {
-  transform: scale(1.05) translateY(-20px);
-}
-
-.hon-scene-card.hon-loser.hon-transition-out {
-  transform: scale(0.9) translateY(20px);
+@media (min-width: 1201px) {
+  #hon-performer-list {
+    display: flex !important;
+    flex-direction: row !important;
+    flex-wrap: wrap !important;
+    width: 140% !important;
+    padding: 10px 1px !important;
+    position: relative !important;
+    gap: 1px !important; 
+  }
+  
+  .hon-selection-card {
+    width: 230px !important;
+    min-width: 100px !important;
+    height: 600px !important;
+    font-size: 0.5rem;
+    margin: 0 !important; 
+  }
+  
+  .hon-selection-image-container {
+    height: 600px !important;
+    max-height: 600px !important;
+  }
+  
+  .hon-selection-image {
+    max-height: 600px !important;
+    max-width: 100% !important;
+  }
+  
+  .hon-selection-info {
+    padding: 3px !important;
+    max-height: 200px !important;
+    height: 200px !important;
+  }
+  
+  .hon-selection-name {
+    font-size: 0.5rem;
+    margin-bottom: 1px;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  
+  .hon-selection-rating {
+    font-size: 0.5rem;
+    margin-bottom: 1px;
+  }
+  
 }
 
 #hon-performer-list .hon-selection-card {
@@ -3330,9 +3356,14 @@
 /* Responsive adjustments */
 @media (max-width: 1200px) {
   #hon-performer-list {
+	  display: grid !important;
+    gap: 1px !important;
     grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)) !important;
     gap: 20px !important;
+	padding: 10px 2px !important;
+    position: relative;
   }
+  
 }
 
 @media (max-width: 768px) {
@@ -3373,45 +3404,6 @@
   }
 }
 
-@media (min-width: 1400px) {
-  #hon-modal.hon-mode-gauntlet .hon-container,
-  #hon-modal.hon-mode-champion .hon-container {
-    max-width: 1600px !important;
-  }
-  
-  #hon-modal.hon-mode-gauntlet #hon-performer-list,
-  #hon-modal.hon-mode-champion #hon-performer-list {
-    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)) !important;
-    gap: 30px !important;
-  }
-}
-
-@media (min-width: 1800px) {
-  #hon-modal.hon-mode-gauntlet .hon-container,
-  #hon-modal.hon-mode-champion .hon-container {
-    max-width: 1800px !important;
-  }
-  
-  #hon-modal.hon-mode-gauntlet #hon-performer-list,
-  #hon-modal.hon-mode-champion #hon-performer-list {
-    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)) !important;
-    gap: 35px !important;
-  }
-}
-
-@media (min-width: 2000px) {
-  #hon-modal.hon-mode-gauntlet .hon-container,
-  #hon-modal.hon-mode-champion .hon-container {
-    max-width: 2000px !important;
-  }
-  
-  #hon-modal.hon-mode-gauntlet #hon-performer-list,
-  #hon-modal.hon-mode-champion #hon-performer-list {
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)) !important;
-    gap: 40px !important;
-  }
-}
-
 @keyframes slideUp {
   to {
     opacity: 1;
@@ -3431,7 +3423,7 @@
 */
 @media (max-width: 1200px) {
   .hon-vs-container {
-    display: Absolute;
+    position: relative;
     justify-content: center;
     position: relative;
     height: 90vh; 
@@ -3468,6 +3460,9 @@
     transition: none;
   }
 }
+
+
+
 /*
 ===============================
 === Swipe visual indicators ===
@@ -3531,7 +3526,6 @@
   .hon-tier-change-notification {
     position: absolute !important;
     left: 50% !important;
-    /* Initial state: Lowered and invisible */
     top: 20px !important; 
     transform: translateX(-50%) translateY(20px) !important;
     opacity: 0 !important;
@@ -3545,17 +3539,14 @@
     white-space: nowrap !important;
     display: inline-block !important;
     
-    /* Transition for both entrance and exit */
     transition: opacity 0.4s ease, transform 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) !important;
   }
 
-  /* Active state: Slid up to final position and fully visible */
   .hon-tier-change-notification.show {
     opacity: 1 !important;
     transform: translateX(-50%) translateY(0) !important;
   }
 
-  /* Exit state: Added via JS right before removal */
   .hon-tier-change-notification.exit {
     opacity: 0 !important;
     transform: translateX(-50%) translateY(-30px) !important;
@@ -3565,7 +3556,7 @@
   .hon-performer-selection .hon-vs-container {
     position: relative;
     width: 100%;
-    height: 600px; /* Adjust based on your design */
+    height: 600px; 
     overflow: hidden;
   }
   
@@ -3574,13 +3565,6 @@
     position: relative;
   }
 
-
-  .hon-selection-card {
-    backface-visibility: hidden;
-    -webkit-backface-visibility: hidden;
-    transform-style: preserve-3d;
-    -webkit-transform-style: preserve-3d;
-  }
   
   .hon-selection-card {
     position: absolute;
@@ -3592,40 +3576,22 @@
     opacity: 0;
     transform: translateX(100%);
     z-index: 1;
-    touch-action: pan-x; /* Better for horizontal swiping */
+    touch-action: pan-x; 
   }
 
-  /* Active card should be visible and in position */
   .hon-selection-card.active {
     transform: translateX(0);
     opacity: 1;
     z-index: 3;
   }
 
-  /* Inactive cards should be moved out of view */
   .hon-selection-card.inactive {
     transform: translateX(-100%);
     opacity: 0;
     z-index: 2;
   }
 
-  /* During swiping, disable transitions for smooth dragging */
-  .hon-selection-card.swiping {
-    transition: none;
-  }
-
-  /* Ensure cards that are being swiped away fade out properly */
-  .hon-selection-card.swiping-left {
-    transform: translateX(-100%) !important;
-    opacity: 0 !important;
-  }
-
-  .hon-selection-card.swiping-right {
-    transform: translateX(100%) !important;
-    opacity: 0 !important;
-  }
 }
-	/* Swipe hints for selection */
 	.hon-swipe-hint {
 	  position: absolute;
 	  top: 50%;
@@ -3656,7 +3622,6 @@
 	.hon-swipe-hint.visible {
 	  opacity: 1;
 	}
-}
 
 /*
 ======================
@@ -3703,9 +3668,6 @@
   box-shadow: 0 4px 8px rgba(0,0,0,0.4);
 }
 
-
-
-/* Mobile styles */
 @media (max-width: 1200px) {
   .hon-action-buttons {
     flex-direction: row;
@@ -3725,7 +3687,6 @@
   }
 }
 
-/* Ensure the vs container has relative positioning for absolute buttons */
 .hon-vs-container {
   position: relative;
   width: 100%;
@@ -3739,20 +3700,22 @@
 }
 
 .hon-performer-meta.hon-scene-meta .hon-meta-item {
-    color: #ffffff; /* default text (the values) white */
+    color: #ffffff; 
 }
 
 .hon-performer-meta.hon-scene-meta .hon-meta-item strong {
-    color: #999999; /* the labels in grey */
+    color: #999999; 
 }
+
+
 
 /* === plugin-layout.css === */
 .hon-plugin-layout {
   display: flex;
   width: 100%;
   gap: 20px;
-  position: relative; /* Needed for absolute positioning of event log */
-  min-height: 500px; /* Ensure enough space for event log */
+  position: relative; 
+  min-height: 500px; 
 }
 
 .hon-sidebar {
@@ -3769,7 +3732,7 @@
   flex: 1;
   min-width: 0;
   position: relative;
-  z-index: 1; /* Above event log to prevent interaction issues */
+  z-index: 1; 
 }
 
 .hon-sidebar-content {
@@ -3847,7 +3810,6 @@
   font-size: 1.1em;
 }
 
-/* Nested sidebar styles */
 .hon-sidebar-subsection {
   margin: 10px 0;
   padding-left: 10px;
@@ -3868,7 +3830,6 @@
   padding-left: 10px;
 }
 
-/* Responsive adjustments */
 @media (max-width: 768px) {
   .hon-plugin-layout {
     flex-direction: column;
@@ -3876,7 +3837,6 @@
 
 }
 
-/* Adjust main section spacing */
 .hon-sidebar-section {
   margin-bottom: 15px;
   padding-bottom: 15px;
@@ -3925,22 +3885,152 @@
   font-weight: bold;
   z-index: 5;
 }
-
 .hon-streak-badge {
   position: absolute;
   top: 10px;
   left: 10px;
-  background: linear-gradient(
-    135deg,
-    rgba(49, 247, 237, 0.8), /* #31f7ed with 80% opacity */
-    rgba(42, 141, 222, 0.8)  /* #2a8dde with 80% opacity */
-  );
   color: #000;
   padding: 6px 12px;
   border-radius: 20px;
   font-size: 0.9rem;
   z-index: 5;
+  background: linear-gradient(135deg, rgba(49, 247, 237, 0.8), rgba(42, 141, 222, 0.8));
+  
+  /* Animation properties */
+  animation: floatAndBreathe 1.4s ease-in-out infinite;
 }
+
+.hon-streak-badge::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  border-radius: 20px;
+  background: linear-gradient(135deg, rgba(255, 105, 180, 0.8), rgba(255, 20, 147, 0.8));
+  opacity: 0;
+  z-index: -1;
+  animation: colorBlend 1.4s ease-in-out infinite;
+}
+
+@keyframes colorBlend {
+  0% {
+    opacity: 0;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes floatAndBreathe {
+  0% {
+    transform: translateY(0) scale(1);
+  }
+  45% {
+    transform: translateY(-5px) scale(1.05);
+  }
+  100% {
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (max-width: 1200px) {
+
+  
+  .hon-scene-image {
+    display: block !important;
+    margin: 0 auto !important;
+    max-width: 100% !important;
+    height: auto !important;
+    object-fit: contain !important;
+    align-self: center !important;
+  }
+  
+  .hon-hover-preview {
+    position: absolute !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: contain !important;
+  }
+  
+
+}
+
+@media (max-width: 1200px) {
+  .hon-scene-card {
+    position: absolute;
+    width: 100%;
+    max-width: 90vw;
+    transition: transform 0.3s ease, opacity 0.3s ease, z-index 0.3s step-end;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+    z-index: 10;
+    touch-action: pan-y;
+    min-width: 145px;
+  }
+  
+
+  .hon-scene-card.active {
+    z-index: 30;
+  }
+  
+  .hon-scene-card.inactive {
+    z-index: 20;
+    transform: scale(0.95) translateY(10px);
+    opacity: 0.9;
+  }
+  
+  .hon-scene-card.swiping {
+    transition: none;
+  }
+  
+  .hon-scene-card.inactive:not(.hon-winner):not(.hon-loser) {
+    visibility: hidden;
+    pointer-events: none;
+  }
+  
+  .hon-scene-card.hon-winner,
+  .hon-scene-card.hon-loser {
+    visibility: visible !important;
+  } 
+
+}
+
+.hon-scene-card {
+  transition: all 0.3s ease;
+  will-change: transform, opacity;
+}
+
+.hon-scene-card.hon-winner {
+  box-shadow: 0 0 20px rgba(76, 175, 80, 0.8);
+  transition: all 0.3s ease;
+}
+
+.hon-scene-card.hon-loser {
+  box-shadow: 0 0 20px rgba(244, 67, 54, 0.8);
+  transition: all 0.3s ease;
+}
+
+.hon-scene-card.hon-transition-out {
+  transition: opacity 0.8s cubic-bezier(0.4, 0, 0.2, 1), 
+              transform 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+  opacity: 0;
+}
+
+.hon-scene-card.hon-winner.hon-transition-out {
+  transform: scale(1.05) translateY(-20px);
+}
+
+.hon-scene-card.hon-loser.hon-transition-out {
+  transform: scale(0.9) translateY(20px);
+}
+
+
 
 .hon-image-rank-overlay {
   position: absolute;
@@ -3971,9 +4061,6 @@
   transition: opacity 0.2s ease;
   pointer-events: none;
 }
-
-
-
 
 .hon-meta-item strong {
   color: #888;
@@ -4599,6 +4686,61 @@
   }
 }
 
+/* === transitions.css === */
+/* Replace your CSS with this optimized version */
+.hon-log-entry {
+  margin-bottom: 4px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: background-color 0.2s;
+}
+
+/* Animation class for new entries only */
+.hon-log-entry.new-entry {
+  opacity: 0;
+  transform: translateY(10px);
+  animation: logEntryFadeIn 0.4s ease-out forwards;
+}
+
+@keyframes logEntryFadeIn {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Different log levels background colors */
+.hon-log-entry.hon-log-log {
+  background-color: rgba(30, 30, 30, 0.6);
+}
+
+.hon-log-entry.hon-log-warn {
+  background-color: rgba(255, 165, 0, 0.1);
+  border-left: 3px solid #ffa500;
+}
+
+.hon-log-entry.hon-log-error {
+  background-color: rgba(255, 0, 0, 0.1);
+  border-left: 3px solid #ff0000;
+}
+/* Grow */
+.hon-sidebar-subrow {
+  transition: transform 0.2s ease; 
+}
+
+.hon-sidebar-subrow:hover {
+  transform: scale(1.05); 
+}
+
+.hon-sidebar-row {
+  transition: transform 0.2s ease; /* Smooth transition for the scaling effect */
+}
+
+.hon-sidebar-row:hover {
+  transform: scale(1.05); /* Slightly increase the size on hover */
+}
+
+
 /* === ui-log.css === */
 .hon-event-log-container {
   position: absolute;
@@ -4856,6 +4998,59 @@
   border-color: #198754;
   color: #fff;
 }
+
+.hon-mode-toggle {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.hon-mode-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 12px 20px;
+  min-width: 0;
+  flex: 1;
+  max-width: 150px;
+  border: 2px solid #444;
+  background: transparent;
+  color: #aaa;
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 1rem;
+  transition: all 0.2s ease;
+  text-align: center;
+}
+
+.hon-mode-btn:hover {
+  border-color: #666;
+  color: #fff;
+}
+
+.hon-mode-btn.active {
+  background: #0d6efd;
+  border-color: #0d6efd;
+  color: #fff;
+}
+
+.hon-mode-desc {
+  font-size: 0.9rem;
+  margin-top: 4px;
+  opacity: 0.8;
+}
+
+.hon-mode-icon {
+  font-size: 1.3rem;
+}
+
+.hon-mode-title {
+  font-size: 1rem;
+}
+
 
 /* Quality group */
 .quality-group {
