@@ -1,6 +1,6 @@
 name: Ascension
-description: The Sakoto fork of the HotorNot plugin which adds a tier based rating system for stash entities. Features include real time dynamic and scaling matchmaking system, leaderboards, metrics, better ui, and better mobile integration.
-version: 1.1.1t
+description: "A comprehensive comparison tool that adds a tier based rating system for stash entities. Features include real time dynamic and scaling matchmaking system, leader-boards, metrics, better UI, and better mobile integration."
+version: 1.2.5
 url: 
 exec:
   - python
@@ -12,6 +12,9 @@ ui:
     - ascen-stats.js
   css:
     - ascension.css
+  assets:
+    /: snapshots
+    
 interface: raw
 
 tasks:
@@ -22,7 +25,7 @@ tasks:
       task: prime
 
   - name: "Wipe Performer Match History"
-    description: Deletes all Performer Acension history from custom fields. 
+    description: Deletes all Performer Ascension history from custom fields. 
     defaultArgs:
       mode: processAll
       task: wipe
@@ -34,7 +37,7 @@ tasks:
       task: reset
 
   - name: "Snapshot"
-    description: Writes all performer ratings, match history, and ledger to a json file. Example- DATE-TIME - Ascension Database Snapshot.json
+    description: Writes all ratings, match history, and ledger to a json file. Example- DATE-TIME - Ascension Database Snapshot.json
     defaultArgs:
       mode: processAll
       task: snapshotexport
