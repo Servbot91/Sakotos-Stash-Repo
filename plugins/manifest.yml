@@ -20,9 +20,9 @@
   metadata:
     description: Plugin for rolling dice
   version: 1.0.0
-  date: "2026-06-12 13:58:35"
+  date: "2026-06-14 01:32:34"
   path: https://github.com/Servbot91/Sakotos-Stash-Repo/raw/main/plugins/DiceR/plugins/DiceR.zip
-  sha256: 6f07d388194bc9cabb5690d6988ed509498346365df28a302599c42fd471e446
+  sha256: 159cdc62f49a2eefb86e8672145628405e6891e0426e65bddcc3d22a93fad801
 - id: SenpaiAddonPack
   name: Senpai Addon Pack
   metadata:
