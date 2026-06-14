@@ -1,3 +1,4 @@
+
 (function() {
   'use strict';
 
@@ -264,10 +265,9 @@
         historyCount: this.historySeen.size
       });
       
-      // Auto-save periodically to reduce I/O
-		if (this.recentSeen.size <= 10 || this.recentSeen.size % 5 === 0) {
-		  this.saveSeenData();
-		}
+      // Save immediately to ensure persistence, especially before navigation
+      // The save logic includes maintainSizeLimits and actual localStorage write
+      this.saveSeenData();
     }
 
     hasSeen(id) {
@@ -1129,3 +1129,4 @@ async function randomWithSamplingAndTracking(entity, idField, redirectPrefix, in
   });
 
 })();
+
