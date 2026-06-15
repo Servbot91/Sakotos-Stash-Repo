@@ -4,9 +4,9 @@
   metadata:
     description: The Sakoto fork of the HotorNot plugin which adds a tier based rating system for performers and images. Features include real time dynamic and scaling matchmaking system, leaderboards, metrics, better ui, and better mobile integration.
   version: 1.0900f916
-  date: "2026-06-13 17:16:48"
+  date: "2026-06-15 13:06:59"
   path: https://github.com/Servbot91/Sakotos-Stash-Repo/raw/main/plugins/Ascension/plugins/Ascension.zip
-  sha256: 48a50f46c8f196524d9ff892ee5f1ac8f6b59d36f327208081359fcbe92b0874
+  sha256: 4f8ad795c522934bfc61866a9b90c36230f702e45b03b4c3a2b5a0ca243f01f1
 - id: DeckViewer
   name: Deck Viewer
   metadata:
