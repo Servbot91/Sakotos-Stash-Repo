@@ -2045,6 +2045,27 @@
   });
 
   // ui-badge.js
+  async function getPluginSettings() {
+    try {
+      const response = await fetch("/graphql", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query: `{
+          configuration {
+            plugins
+          }
+        }`
+        })
+      });
+      const result = await response.json();
+      const pluginSettings = result.data.configuration.plugins.ascension;
+      return pluginSettings?.HideAscRankBadge === true;
+    } catch (e) {
+      console.error("Ascension: Could not fetch config", e);
+      return false;
+    }
+  }
   function debounce(func, wait) {
     let timeout;
     return function executedFunction(...args) {
@@ -2066,6 +2087,8 @@
     return window.location.pathname.includes("/performers/") && !window.location.pathname.endsWith("/performers");
   }
   function createBattleRankBadge(rank, total, rating, stats = null, isCompact = false) {
+    if (HIDE_ASC_RANK_BADGE)
+      return null;
     const badge = document.createElement("div");
     badge.className = isCompact ? "hon-battle-rank-badge hon-battle-rank-badge-compact" : "hon-battle-rank-badge";
     badge.id = "hon-battle-rank-badge";
@@ -2138,6 +2161,8 @@ Match Stats:`;
     return badge;
   }
   async function injectBattleRankBadgeInner() {
+    if (HIDE_ASC_RANK_BADGE)
+      return;
     const pathParts = window.location.pathname.split("/");
     const pIndex = pathParts.indexOf("performers");
     if (pIndex === -1 || !pathParts[pIndex + 1])
@@ -2162,7 +2187,9 @@ Match Stats:`;
             false
             // Not compact for single performer page
           );
-          ratingEl.append(badge);
+          if (badge) {
+            ratingEl.append(badge);
+          }
         }
       }
     } finally {
@@ -2189,6 +2216,15 @@ Match Stats:`;
     const ratingBanner = card.querySelector(".rating-banner");
     if (!ratingBanner)
       return false;
+    if (HIDE_ASC_RANK_BADGE) {
+      ratingBanner.style.visibility = "";
+      ratingBanner.style.height = "";
+      ratingBanner.style.overflow = "";
+      ratingBanner.style.padding = "";
+      ratingBanner.style.margin = "";
+      ratingBanner.style.border = "";
+      return false;
+    }
     try {
       ratingBanner.style.visibility = "hidden";
       ratingBanner.style.height = "0";
@@ -2227,9 +2263,19 @@ Match Stats:`;
         rankInfo.stats,
         isCompact
       );
-      ratingBanner.replaceWith(badge);
-      processedCards.add(cardId);
-      return true;
+      if (badge) {
+        ratingBanner.replaceWith(badge);
+        processedCards.add(cardId);
+        return true;
+      } else {
+        ratingBanner.style.visibility = "";
+        ratingBanner.style.height = "";
+        ratingBanner.style.overflow = "";
+        ratingBanner.style.padding = "";
+        ratingBanner.style.margin = "";
+        ratingBanner.style.border = "";
+        return false;
+      }
     } catch (error) {
       console.error(`Error processing performer ${performerId}:`, error);
       const ratingBanner2 = card.querySelector(".rating-banner");
@@ -2245,6 +2291,17 @@ Match Stats:`;
     }
   }
   async function replaceAllRatingBannersWithBadges() {
+    if (HIDE_ASC_RANK_BADGE) {
+      document.querySelectorAll(".rating-banner").forEach((banner) => {
+        banner.style.visibility = "";
+        banner.style.height = "";
+        banner.style.overflow = "";
+        banner.style.padding = "";
+        banner.style.margin = "";
+        banner.style.border = "";
+      });
+      return;
+    }
     const performerCards = document.querySelectorAll(".thumbnail-section:not(.processed)");
     if (!performerCards.length) {
       return;
@@ -2559,7 +2616,23 @@ Match Stats:`;
       }
     }, 800);
   }
-  var attachedListeners, observer, processedCards, allPerformersCache, isFetchingAllPerformers, performerQueue, debouncedInjectBattleRankBadge, lastPath;
+  async function initPlugin() {
+    HIDE_ASC_RANK_BADGE = await getPluginSettings();
+    setupNavigationListener();
+    setupMutationObserver();
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", () => {
+        injectBattleRankBadge();
+        replaceAllRatingBannersWithBadges();
+        setTimeout(setupScenePageTooltips, 1e3);
+      });
+    } else {
+      injectBattleRankBadge();
+      replaceAllRatingBannersWithBadges();
+      setTimeout(setupScenePageTooltips, 1e3);
+    }
+  }
+  var HIDE_ASC_RANK_BADGE, attachedListeners, observer, processedCards, allPerformersCache, isFetchingAllPerformers, performerQueue, debouncedInjectBattleRankBadge, lastPath;
   var init_ui_badge = __esm({
     "ui-badge.js"() {
       init_state();
@@ -2567,6 +2640,7 @@ Match Stats:`;
       init_rating_utils();
       init_battle_engine();
       init_rating_utils();
+      HIDE_ASC_RANK_BADGE = false;
       attachedListeners = /* @__PURE__ */ new Set();
       observer = null;
       processedCards = /* @__PURE__ */ new Set();
@@ -2575,19 +2649,7 @@ Match Stats:`;
       performerQueue = [];
       debouncedInjectBattleRankBadge = debounce(injectBattleRankBadgeInner, 300);
       lastPath = window.location.pathname;
-      setupNavigationListener();
-      setupMutationObserver();
-      if (document.readyState === "loading") {
-        document.addEventListener("DOMContentLoaded", () => {
-          injectBattleRankBadge();
-          replaceAllRatingBannersWithBadges();
-          setTimeout(setupScenePageTooltips, 1e3);
-        });
-      } else {
-        injectBattleRankBadge();
-        replaceAllRatingBannersWithBadges();
-        setTimeout(setupScenePageTooltips, 1e3);
-      }
+      initPlugin();
     }
   });
 
@@ -7208,14 +7270,16 @@ Match Stats:`;
                     tooltip.style.top = e2.pageY + 10 + "px";
                   };
                   opponentNameElement.addEventListener("mousemove", moveHandler);
-                  opponentNameElement.addEventListener("mouseleave", () => {
+                  const removeTooltip = () => {
                     opponentNameElement.removeEventListener("mousemove", moveHandler);
-                    setTimeout(() => {
-                      if (tooltip.parentNode) {
-                        tooltip.remove();
-                      }
-                    }, 100);
-                  });
+                    opponentNameElement.removeEventListener("mouseleave", removeTooltip);
+                    opponentNameElement.removeEventListener("click", removeTooltip);
+                    if (tooltip.parentNode) {
+                      tooltip.remove();
+                    }
+                  };
+                  opponentNameElement.addEventListener("mouseleave", removeTooltip);
+                  opponentNameElement.addEventListener("click", removeTooltip);
                 });
                 opponentNameElement.addEventListener("click", (e) => {
                   e.preventDefault();
