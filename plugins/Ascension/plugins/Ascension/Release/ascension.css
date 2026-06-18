@@ -4837,14 +4837,14 @@
 .hon-log-timestamp {
   color: #888;
   margin-right: 6px;
-  font-size: 9px;
+  font-size: 11px;
   white-space: nowrap;
 }
 
 .hon-log-message {
   color: #ddd;
   white-space: pre-wrap;
-  font-size: 10px;
+  font-size: 12px;
   word-break: break-word;
 }
 
