@@ -991,8 +991,8 @@
   function formatHeight(heightCm) {
     if (!heightCm)
       return null;
-    const totalInches = Math.round(heightCm * 0.393701);
-    const feet = Math.floor(totalInches / 12);
+    const totalInches = heightCm * 0.393701 + 0.5 | 0;
+    const feet = totalInches / 12 | 0;
     const inches = totalInches % 12;
     return `${feet}\u2032${inches}\u2033 (${heightCm} cm)`;
   }
@@ -1008,49 +1008,100 @@
   }
   function createSceneCard(scene, side, rank = null, gauntletStreak = null) {
     const file = scene.files?.[0] || {};
-    const performers = scene.performers?.map((p) => p.name).join(", ") || "No performers";
+    const performers = scene.performers?.length ? scene.performers.map((p) => p.name).join(", ") : "No performers";
     const studio = scene.studio?.name || "No studio";
-    const title = scene.title || file.path?.split(/[/\\]/).pop().replace(/\.[^/.]+$/, "") || `Scene #${scene.id}`;
+    let title = scene.title;
+    if (!title && file.path) {
+      const pathParts = file.path.split(/[/\\]/);
+      title = pathParts[pathParts.length - 1].replace(/\.[^/.]+$/, "");
+    }
+    title = title || `Scene #${scene.id}`;
     const screenshotPath = scene.paths?.screenshot;
     const previewPath = scene.paths?.preview;
     const stashRating = scene.rating100 ? (scene.rating100 / 10).toFixed(1) : "Unrated";
     const rankDisplay = rank != null ? `<span class="hon-scene-rank">${typeof rank === "number" ? "#" + rank : rank}</span>` : "";
     const streakDisplay = gauntletStreak ? `<div class="hon-streak-badge">${formatStreakDisplay(gauntletStreak)}</div>` : "";
     const dateDisplay = scene.date && scene.date !== "Unknown" ? `<div class="hon-meta-item"><strong>Date:</strong> ${scene.date}</div>` : "";
-    return `
-    <div class="hon-scene-card" data-scene-id="${scene.id}" data-side="${side}" data-rating="${scene.rating100 || 1}">
-      <div class="hon-scene-image-container" data-scene-url="/scenes/${scene.id}">
-        ${screenshotPath ? `<img class="hon-scene-image" src="${screenshotPath}" alt="${title}" loading="lazy" />` : `<div class="hon-scene-image hon-no-image">No Screenshot</div>`}
-        ${previewPath ? `<video class="hon-hover-preview" src="${previewPath}" loop playsinline></video>` : ""}
-        <div class="hon-scene-duration">${formatDuration(file.duration)}</div>
-        ${streakDisplay}
-        <div class="hon-click-hint">Click to open scene</div>
-      </div>
-      <div class="hon-scene-body" data-winner="${scene.id}">
-        <div class="hon-scene-info">
-          <div class="hon-scene-title-row"><h3 class="hon-scene-title">${title}</h3>${rankDisplay}</div>
-          <div class="hon-scene-meta">
-            <div class="hon-meta-item"><strong>Studio:</strong> ${studio}</div>
-            <div class="hon-meta-item"><strong>Performers:</strong> ${performers}</div>
-            <div class="hon-meta-item"><strong>Rating:</strong> ${stashRating}</div>
-            ${dateDisplay}
-            <div class="hon-meta-item"><strong>Duration:</strong> ${formatDuration(file.duration)}</div>
-            ${scene.director ? `<div class="hon-meta-item"><strong>Director:</strong> ${scene.director}</div>` : ""}
-            ${scene.tags && scene.tags.length > 0 ? `<div class="hon-meta-item"><strong>Tags:</strong> ${scene.tags.map((t) => t.name).join(", ")}</div>` : ""}
-          </div>
-        </div>
-        <div class="hon-choose-btn">\u2713 Choose This Scene</div>
-      </div>
-    </div>`;
+    const htmlParts = [];
+    htmlParts.push(
+      '<div class="hon-scene-card" data-scene-id="',
+      scene.id,
+      '" data-side="',
+      side,
+      '" data-rating="',
+      scene.rating100 || 1,
+      '">',
+      '<div class="hon-scene-image-container" data-scene-url="/scenes/',
+      scene.id,
+      '">'
+    );
+    if (screenshotPath) {
+      htmlParts.push('<img class="hon-scene-image" src="', screenshotPath, '" alt="', title, '" loading="lazy" />');
+    } else {
+      htmlParts.push('<div class="hon-scene-image hon-no-image">No Screenshot</div>');
+    }
+    if (previewPath) {
+      htmlParts.push('<video class="hon-hover-preview" src="', previewPath, '" loop playsinline muted></video>');
+    }
+    htmlParts.push(
+      '<div class="hon-scene-duration">',
+      formatDuration(file.duration),
+      "</div>",
+      streakDisplay,
+      '<div class="hon-click-hint">Click to open scene</div>',
+      "</div>",
+      '<div class="hon-scene-body" data-winner="',
+      scene.id,
+      '">',
+      '<div class="hon-scene-info">',
+      '<div class="hon-scene-title-row"><h3 class="hon-scene-title">',
+      title,
+      "</h3>",
+      rankDisplay,
+      "</div>",
+      '<div class="hon-scene-meta">'
+    );
+    htmlParts.push(
+      '<div class="hon-meta-item"><strong>Studio:</strong> ',
+      studio,
+      "</div>",
+      '<div class="hon-meta-item"><strong>Performers:</strong> ',
+      performers,
+      "</div>",
+      '<div class="hon-meta-item"><strong>Rating:</strong> ',
+      stashRating,
+      "</div>"
+    );
+    if (dateDisplay)
+      htmlParts.push(dateDisplay);
+    htmlParts.push(
+      '<div class="hon-meta-item"><strong>Duration:</strong> ',
+      formatDuration(file.duration),
+      "</div>"
+    );
+    if (scene.director) {
+      htmlParts.push('<div class="hon-meta-item"><strong>Director:</strong> ', scene.director, "</div>");
+    }
+    if (scene.tags?.length) {
+      const tags = scene.tags.map((t) => t.name).join(", ");
+      htmlParts.push('<div class="hon-meta-item"><strong>Tags:</strong> ', tags, "</div>");
+    }
+    htmlParts.push(
+      "</div></div>",
+      '<div class="hon-choose-btn">\u2713 Choose This Scene</div>',
+      "</div></div>"
+    );
+    return htmlParts.join("");
   }
   function createPerformerCard(performer, side, rank = null, gauntletStreak = null) {
     const name = performer.name || `Performer #${performer.id}`;
-    const imagePath = performer.image_path || null;
+    const imagePath = performer.image_path;
     const rawRating = performer.rating100 ?? 1;
-    const stashRating = performer.rating100 !== null ? (rawRating / 10).toFixed(1) : "Unrated";
+    const isRated = performer.rating100 !== null;
+    const stashRating = isRated ? (rawRating / 10).toFixed(1) : "Unrated";
     let tierClass = "";
     let tierDisplay = "";
-    if (performer.rating100 !== null) {
+    if (isRated) {
       const tier = getRatingTier(rawRating);
       const tierColor = getTierColor2(tier);
       tierDisplay = `<span style="font-weight: bold; color: ${tierColor}">${tier}</span> | `;
@@ -1103,22 +1154,39 @@
     if (performer.fake_tits) {
       metaItems.push(`<div class="hon-meta-item"><strong>Fake Tits:</strong> ${performer.fake_tits}</div>`);
     }
-    if (performer.tags && performer.tags.length > 0) {
-      const tagNames = performer.tags.map((tag) => tag.name || tag);
-      const displayedTags = tagNames.slice(0, 3).join(", ");
-      const remainingCount = Math.max(0, tagNames.length - 3);
-      if (tagNames.length <= 3) {
-        metaItems.push(`<div class="hon-meta-item"><strong>Tags:</strong> ${displayedTags}</div>`);
+    if (performer.tags?.length) {
+      const tags = performer.tags;
+      if (tags.length <= 3) {
+        let tagString = "";
+        for (let i = 0; i < tags.length; i++) {
+          if (i > 0)
+            tagString += ", ";
+          tagString += tags[i].name || tags[i];
+        }
+        metaItems.push(`<div class="hon-meta-item"><strong>Tags:</strong> ${tagString}</div>`);
       } else {
-        const allTagsHtml = tagNames.join(", ");
+        let displayedString = "";
+        let fullString = "";
+        for (let i = 0; i < tags.length; i++) {
+          const tagName = tags[i].name || tags[i];
+          if (i < 3) {
+            if (i > 0)
+              displayedString += ", ";
+            displayedString += tagName;
+          }
+          if (i > 0)
+            fullString += ", ";
+          fullString += tagName;
+        }
+        const remainingCount = tags.length - 3;
         metaItems.push(`
-        <div class="hon-meta-item hon-tags-container">
-          <strong>Tags:</strong> 
-          <span class="hon-tags-displayed">${displayedTags}</span>
-          <span class="hon-tags-ellipsis">...</span>
-          <span class="hon-tags-more" style="color: #007bff; cursor: pointer; text-decoration: underline;">(+${remainingCount} more)</span>
-          <span class="hon-tags-expanded" style="display:none;">${allTagsHtml}</span>
-        </div>`);
+		  <div class="hon-meta-item hon-tags-container">
+			<strong>Tags:</strong> 
+			<span class="hon-tags-displayed">${displayedString}</span>
+			<span class="hon-tags-ellipsis">...</span>
+			<span class="hon-tags-more" style="color: #007bff; cursor: pointer; text-decoration: underline;" data-tags-expanded="false">(+${remainingCount} more)</span>
+			<span class="hon-tags-expanded" style="display:none;">${fullString}</span>
+		  </div>`);
       }
     }
     const minMetaItems = 6;
@@ -1283,29 +1351,34 @@
       body: JSON.stringify({ query, variables })
     });
     const result = await response.json();
-    if (result.errors) {
-      const errorMessages = result.errors.map((error) => error.message).join("; ");
-      throw new Error(`GraphQL Errors: ${errorMessages}`);
+    if (result.errors && result.errors.length > 0) {
+      if (result.errors.length === 1) {
+        throw new Error(`GraphQL Error: ${result.errors[0].message}`);
+      }
+      const errorMessage = result.errors.map((e) => e.message).join("; ");
+      throw new Error(`GraphQL Errors: ${errorMessage}`);
     }
     return result.data;
   }
   async function fetchAllItems2(queryTemplate, variablesBase = {}, pageSize = 1e3) {
     const allItems = [];
     let currentPage = 1;
+    const baseFilter = variablesBase.filter || {};
     while (true) {
       const variables = {
         ...variablesBase,
-        filter: {
-          ...variablesBase.filter || {},
+        filter: Object.assign({}, baseFilter, {
           per_page: pageSize,
           page: currentPage
-        }
+        })
       };
       const result = await graphqlQuery(queryTemplate, variables);
-      const items = result.findPerformers?.performers || result.findImages?.images || [];
+      const findPerformers = result.findPerformers;
+      const findImages = result.findImages;
+      const items = findPerformers?.performers || findImages?.images || [];
       if (items.length === 0)
         break;
-      allItems.push(...items);
+      allItems.push.apply(allItems, items);
       if (items.length < pageSize)
         break;
       currentPage++;
@@ -1313,17 +1386,27 @@
     return allItems;
   }
   function sortPerformersByRating(performers) {
+    const performerStats = /* @__PURE__ */ new Map();
     return performers.sort((a, b) => {
       const ratingDiff = (b.rating100 ?? 1) - (a.rating100 ?? 1);
       if (ratingDiff !== 0)
         return ratingDiff;
-      const statsA = parsePerformerEloData(a);
-      const statsB = parsePerformerEloData(b);
+      if (!performerStats.has(a.id)) {
+        performerStats.set(a.id, parsePerformerEloData(a));
+      }
+      if (!performerStats.has(b.id)) {
+        performerStats.set(b.id, parsePerformerEloData(b));
+      }
+      const statsA = performerStats.get(a.id);
+      const statsB = performerStats.get(b.id);
       const matchCountDiff = (statsB.total_matches || 0) - (statsA.total_matches || 0);
       if (matchCountDiff !== 0)
         return matchCountDiff;
-      const nameA = a.name?.toLowerCase() || "";
-      const nameB = b.name?.toLowerCase() || "";
+      if (a.name && b.name) {
+        return a.name.localeCompare(b.name);
+      }
+      const nameA = a.name || "";
+      const nameB = b.name || "";
       return nameA.localeCompare(nameB);
     });
   }
@@ -2066,6 +2149,33 @@
       return false;
     }
   }
+  function cleanup() {
+    if (observer) {
+      observer.disconnect();
+      observer = null;
+    }
+    if (attachedListeners.has("navigation")) {
+      window.removeEventListener("popstate", handleNavigation);
+      if (pushStateOriginal) {
+        history.pushState = pushStateOriginal;
+      }
+      attachedListeners.delete("navigation");
+    }
+    allPerformersCache = null;
+    performerQueue = [];
+    isFetchingAllPerformers = false;
+    window._honBadgeInjectionInProgress = false;
+    cleanupFunctions.forEach((fn) => {
+      try {
+        fn();
+      } catch (e) {
+        console.warn("Cleanup function error:", e);
+      }
+    });
+    cleanupFunctions = [];
+    document.querySelectorAll(".hon-rating-overlay").forEach((el) => el.remove());
+    document.querySelectorAll(".hon-tier-change-notification").forEach((el) => el.remove());
+  }
   function debounce(func, wait) {
     let timeout;
     return function executedFunction(...args) {
@@ -2202,8 +2312,7 @@ Match Stats:`;
     debouncedInjectBattleRankBadge();
   }
   async function processPerformerCard(card) {
-    const cardId = card.querySelector("a[href^='/performers/']")?.href;
-    if (!cardId || processedCards.has(cardId))
+    if (processedCards.has(card))
       return false;
     if (isOnScenePage())
       return false;
@@ -2265,7 +2374,7 @@ Match Stats:`;
       );
       if (badge) {
         ratingBanner.replaceWith(badge);
-        processedCards.add(cardId);
+        processedCards.add(card);
         return true;
       } else {
         ratingBanner.style.visibility = "";
@@ -2547,10 +2656,6 @@ Match Stats:`;
     if (lastPath !== window.location.pathname) {
       lastPath = window.location.pathname;
       injectBattleRankBadge();
-      processedCards.clear();
-      document.querySelectorAll(".thumbnail-section.processed").forEach((card) => {
-        card.classList.remove("processed");
-      });
       replaceAllRatingBannersWithBadges();
       setTimeout(setupScenePageTooltips, 500);
     }
@@ -2558,10 +2663,14 @@ Match Stats:`;
   function setupNavigationListener() {
     if (attachedListeners.has("navigation")) {
       window.removeEventListener("popstate", handleNavigation);
+      if (pushStateOriginal) {
+        history.pushState = pushStateOriginal;
+      }
+      attachedListeners.delete("navigation");
     }
-    let pushState = history.pushState;
+    pushStateOriginal = history.pushState;
     history.pushState = function() {
-      pushState.apply(history, arguments);
+      pushStateOriginal.apply(history, arguments);
       setTimeout(handleNavigation, 0);
     };
     window.addEventListener("popstate", handleNavigation);
@@ -2617,6 +2726,7 @@ Match Stats:`;
     }, 800);
   }
   async function initPlugin() {
+    cleanup();
     HIDE_ASC_RANK_BADGE = await getPluginSettings();
     setupNavigationListener();
     setupMutationObserver();
@@ -2632,7 +2742,7 @@ Match Stats:`;
       setTimeout(setupScenePageTooltips, 1e3);
     }
   }
-  var HIDE_ASC_RANK_BADGE, attachedListeners, observer, processedCards, allPerformersCache, isFetchingAllPerformers, performerQueue, debouncedInjectBattleRankBadge, lastPath;
+  var HIDE_ASC_RANK_BADGE, attachedListeners, observer, processedCards, allPerformersCache, isFetchingAllPerformers, performerQueue, pushStateOriginal, cleanupFunctions, debouncedInjectBattleRankBadge, lastPath;
   var init_ui_badge = __esm({
     "ui-badge.js"() {
       init_state();
@@ -2643,10 +2753,16 @@ Match Stats:`;
       HIDE_ASC_RANK_BADGE = false;
       attachedListeners = /* @__PURE__ */ new Set();
       observer = null;
-      processedCards = /* @__PURE__ */ new Set();
+      processedCards = /* @__PURE__ */ new WeakSet();
       allPerformersCache = null;
       isFetchingAllPerformers = false;
       performerQueue = [];
+      pushStateOriginal = null;
+      cleanupFunctions = [];
+      window.addEventListener("beforeunload", cleanup);
+      cleanupFunctions.push(() => {
+        window.removeEventListener("beforeunload", cleanup);
+      });
       debouncedInjectBattleRankBadge = debounce(injectBattleRankBadgeInner, 300);
       lastPath = window.location.pathname;
       initPlugin();
@@ -2830,6 +2946,9 @@ Match Stats:`;
     state.gauntletChampion = performer;
     state.gauntletWins = 0;
     state.gauntletFalling = false;
+    const performerName = performer.name || `Performer #${performer.id}`;
+    const performerRating = performer.rating100 ? (performer.rating100 / 10).toFixed(1) : "Unrated";
+    console.log(`[Ascension] Champion Selected: ${performerName} (ID: ${performer.id}) | Rating: ${performerRating}`);
     const sel = document.getElementById("hon-performer-selection");
     const comp = document.getElementById("hon-comparison-area");
     const actions = document.querySelector(".hon-actions");
@@ -3128,13 +3247,13 @@ Match Stats:`;
       winnerCard.classList.add("hon-transition-out");
       if (loserCard)
         loserCard.classList.add("hon-transition-out");
-    }, 800);
+    }, 400);
     setTimeout(() => {
       const isVictoryVisible = document.querySelector(".hon-victory-screen");
       if (!isVictoryVisible) {
         loadNewPair();
       }
-    }, 1300);
+    }, 800);
   }
   var init_match_handler = __esm({
     "match-handler.js"() {
@@ -3168,12 +3287,23 @@ Match Stats:`;
     if (area._battleCleanup) {
       area._battleCleanup();
     }
-    const cleanupFunctions = [];
+    const cleanupFunctions2 = [];
     let carouselInstance = null;
+    let autoPlayTimeout = null;
+    let focusTimeout = null;
+    let clickTimeout = null;
+    let activeCard = null;
+    let activeVideo = null;
+    let mobileBlurHandler = null;
+    const clearAllTimers = () => {
+      clearTimeout(autoPlayTimeout);
+      clearTimeout(focusTimeout);
+      clearTimeout(clickTimeout);
+      autoPlayTimeout = null;
+      focusTimeout = null;
+      clickTimeout = null;
+    };
     if (isMobile()) {
-      let autoPlayTimeout;
-      let activeCard = null;
-      let activeVideo = null;
       const clearAutoPlay = () => {
         if (autoPlayTimeout) {
           clearTimeout(autoPlayTimeout);
@@ -3219,13 +3349,13 @@ Match Stats:`;
           activeCard = null;
         }
       };
+      mobileBlurHandler = handleBlur;
       const container = area.querySelector(".hon-vs-container");
       if (container) {
         const cards = Array.from(container.querySelectorAll(".hon-scene-card"));
         if (cards.length >= 2) {
           const carousel = enableCardCarousel(container, cards);
           carouselInstance = carousel;
-          let clickTimeout;
           cards.forEach((card, index) => {
             const clickHandler = (e) => {
               if (clickTimeout) {
@@ -3240,17 +3370,19 @@ Match Stats:`;
             const sceneBody = card.querySelector(".hon-scene-body");
             if (sceneBody) {
               sceneBody.addEventListener("click", clickHandler);
-              cleanupFunctions.push(() => sceneBody.removeEventListener("click", clickHandler));
+              cleanupFunctions2.push(() => sceneBody.removeEventListener("click", clickHandler));
             }
-            card.addEventListener("focus", () => handleFocus(card));
-            card.addEventListener("blur", handleBlur);
-            cleanupFunctions.push(() => {
-              card.removeEventListener("focus", () => handleFocus(card));
-              card.removeEventListener("blur", handleBlur);
+            const focusHandler = () => handleFocus(card);
+            const blurHandler = handleBlur;
+            card.addEventListener("focus", focusHandler);
+            card.addEventListener("blur", blurHandler);
+            cleanupFunctions2.push(() => {
+              card.removeEventListener("focus", focusHandler);
+              card.removeEventListener("blur", blurHandler);
             });
           });
           if (cards.length > 0) {
-            setTimeout(() => {
+            focusTimeout = setTimeout(() => {
               handleFocus(cards[0]);
             }, 100);
           }
@@ -3260,9 +3392,9 @@ Match Stats:`;
       const sceneBodies = area.querySelectorAll(".hon-scene-body");
       sceneBodies.forEach((body) => {
         const clickHandler = (e) => handleChooseItem(e);
-        body.onclick = clickHandler;
-        cleanupFunctions.push(() => {
-          body.onclick = null;
+        body.addEventListener("click", clickHandler);
+        cleanupFunctions2.push(() => {
+          body.removeEventListener("click", clickHandler);
         });
       });
       const cards = area.querySelectorAll(".hon-scene-card");
@@ -3289,11 +3421,11 @@ Match Stats:`;
           video.pause();
           video.currentTime = 0;
         };
-        card.onmouseenter = mouseEnterHandler;
-        card.onmouseleave = mouseLeaveHandler;
-        cleanupFunctions.push(() => {
-          card.onmouseenter = null;
-          card.onmouseleave = null;
+        card.addEventListener("mouseenter", mouseEnterHandler);
+        card.addEventListener("mouseleave", mouseLeaveHandler);
+        cleanupFunctions2.push(() => {
+          card.removeEventListener("mouseenter", mouseEnterHandler);
+          card.removeEventListener("mouseleave", mouseLeaveHandler);
         });
       });
     }
@@ -3304,11 +3436,21 @@ Match Stats:`;
         const sceneUrl = sceneImageContainer.dataset.sceneUrl;
         const imageContainerClickHandler = (e) => {
           e.stopPropagation();
-          window.open(sceneUrl, "_blank");
+          const link = document.createElement("a");
+          link.href = sceneUrl;
+          link.target = "_blank";
+          link.rel = "noopener noreferrer";
+          link.style.display = "none";
+          document.body.appendChild(link);
+          link.click();
+          setTimeout(() => {
+            if (link.parentNode)
+              link.parentNode.removeChild(link);
+          }, 0);
         };
         sceneImageContainer.style.cursor = "pointer";
         sceneImageContainer.addEventListener("click", imageContainerClickHandler);
-        cleanupFunctions.push(() => sceneImageContainer.removeEventListener("click", imageContainerClickHandler));
+        cleanupFunctions2.push(() => sceneImageContainer.removeEventListener("click", imageContainerClickHandler));
       }
     });
     const tagElements = area.querySelectorAll(".hon-tags-more");
@@ -3328,17 +3470,23 @@ Match Stats:`;
         if (expandedTags)
           expandedTags.style.display = "inline";
       };
-      tagElement.onclick = clickHandler;
-      cleanupFunctions.push(() => {
-        tagElement.onclick = null;
+      tagElement.addEventListener("click", clickHandler);
+      cleanupFunctions2.push(() => {
+        tagElement.removeEventListener("click", clickHandler);
       });
     });
     area._battleCleanup = () => {
+      if (mobileBlurHandler) {
+        mobileBlurHandler();
+      }
+      clearAllTimers();
       if (carouselInstance && typeof carouselInstance.destroy === "function") {
         carouselInstance.destroy();
         carouselInstance = null;
       }
-      cleanupFunctions.forEach((cleanup2) => cleanup2());
+      activeCard = null;
+      activeVideo = null;
+      cleanupFunctions2.forEach((cleanup3) => cleanup3());
       delete area._battleCleanup;
     };
   }
@@ -3385,17 +3533,23 @@ Match Stats:`;
       undoBtn.textContent = "\u21A9";
     }
     if ((state.currentMode === "gauntlet" || state.currentMode === "champion") && state.battleType === "performers" && !state.gauntletChampion && !state.gauntletFalling) {
+      if (area._battleCleanup)
+        area._battleCleanup();
       showPerformerSelection();
       return;
     }
     try {
       const result = await fetchPair();
       if (result.isVictory) {
+        if (area._battleCleanup)
+          area._battleCleanup();
         area.innerHTML = createVictoryScreen(result.items[0], state.battleType, state.gauntletWins, state.totalItemsCount);
         attachVictoryHandlers(area);
         return;
       }
       if (result.isPlacement) {
+        if (area._battleCleanup)
+          area._battleCleanup();
         showPlacementScreen(result.items[0], result.placementRank, result.placementRating);
         return;
       }
@@ -3405,16 +3559,16 @@ Match Stats:`;
       const container = area.querySelector(".hon-vs-container");
       if (container) {
         container.innerHTML = `
-		${renderCard(left, "left", result.ranks[0])}
-		${renderCard(right, "right", result.ranks[1])}
-	  `;
+        ${renderCard(left, "left", result.ranks[0])}
+        ${renderCard(right, "right", result.ranks[1])}
+      `;
       } else {
         area.innerHTML = `
-		<div class="hon-vs-container">
-		  ${renderCard(left, "left", result.ranks[0])}
-		  ${renderCard(right, "right", result.ranks[1])}
-		</div>
-	  `;
+        <div class="hon-vs-container">
+          ${renderCard(left, "left", result.ranks[0])}
+          ${renderCard(right, "right", result.ranks[1])}
+        </div>
+      `;
       }
       attachBattleListeners(area);
       if (isMobile()) {
@@ -3437,13 +3591,21 @@ Match Stats:`;
   function attachVictoryHandlers(area) {
     const btn = area.querySelector("#hon-new-gauntlet");
     if (btn) {
-      btn.onclick = () => {
+      if (btn._victoryCleanup) {
+        btn._victoryCleanup();
+      }
+      const clickHandler = () => {
         resetBattleState();
         if (state.currentMode === "gauntlet" && state.battleType === "performers") {
           Promise.resolve().then(() => (init_gauntlet_selection(), gauntlet_selection_exports)).then((m) => m.showPerformerSelection());
         } else {
           loadNewPair();
         }
+      };
+      btn.addEventListener("click", clickHandler);
+      btn._victoryCleanup = () => {
+        btn.removeEventListener("click", clickHandler);
+        delete btn._victoryCleanup;
       };
     }
   }
@@ -3650,8 +3812,13 @@ Match Stats:`;
     }
   }
   function getTierFilteredPerformers(allPerformers, focusTier) {
-    if (focusTier === "any" || focusTier === "newcomers") {
+    if (focusTier === "any")
       return allPerformers;
+    if (focusTier === "newcomers") {
+      return allPerformers.filter((p) => {
+        const stats = parsePerformerEloData(p);
+        return stats.total_matches < 6;
+      });
     }
     return allPerformers.filter((p) => {
       const tier = getRatingTier(p.rating100 || 1);
@@ -3725,6 +3892,20 @@ Match Stats:`;
     state.tierRotation.sessionMatches++;
     return state.tierRotation.focusTier || "any";
   }
+  function applyTemporaryWeightBoost(performers) {
+    console.log("[Ascension] Applying temporary weight boost to increase performer pool");
+    const boostedPerformers = performers.map((p) => {
+      const currentWeight = p.weight || 0;
+      const boostedWeight = Math.max(1, currentWeight + 2);
+      return {
+        ...p,
+        boosted: true,
+        originalWeight: currentWeight,
+        weight: boostedWeight
+      };
+    });
+    return boostedPerformers;
+  }
   async function fetchSwissPairPerformers() {
     if (!state.sampleCounter)
       state.sampleCounter = 0;
@@ -3776,13 +3957,6 @@ Match Stats:`;
     };
     async function performWeightedSelection(sampledPerformers, targetFocusTier) {
       const avgMatches = calculateAverageMatches(sampledPerformers);
-      const tierMap = /* @__PURE__ */ new Map();
-      sampledPerformers.forEach((p) => {
-        const tier = getRatingTier(p.rating100 || 1);
-        if (!tierMap.has(tier))
-          tierMap.set(tier, []);
-        tierMap.get(tier).push(p);
-      });
       let tierFilteredPerformers = sampledPerformers;
       if (targetFocusTier !== "any") {
         tierFilteredPerformers = getTierFilteredPerformers(sampledPerformers, targetFocusTier);
@@ -3956,28 +4130,39 @@ Match Stats:`;
       }
     }
     if (!pairingResult) {
-      console.warn("[Ascension] Failed to create match even with 'any' tier fallback. Using basic random fallback.");
+      console.warn("[Ascension] Failed to create match even with 'any' tier fallback. Applying temporary weight boost.");
+      const boostedPerformers = applyTemporaryWeightBoost(performers);
+      const boostedPairingResult = await performWeightedSelection(boostedPerformers, "any");
+      if (boostedPairingResult) {
+        console.log("[Ascension] Successfully created match using temporary weight boost.");
+        return boostedPairingResult;
+      }
+      console.warn("[Ascension] Temporary weight boost failed. Using basic random fallback.");
       return { items: await fetchRandomPerformers(2), ranks: [null, null] };
     }
     return pairingResult;
   }
   function getMatchCountDistributionBoost(performer, allPerformers) {
     const stats = parsePerformerEloData(performer);
-    const matches = stats.total_matches || 0;
-    const matchCounts = allPerformers.map((p) => {
+    const targetMatches = stats.total_matches || 0;
+    let fewerCount = 0;
+    const totalPerformers = allPerformers.length;
+    for (const p of allPerformers) {
       const s = parsePerformerEloData(p);
-      return s.total_matches || 0;
-    }).sort((a, b) => a - b);
-    const percentile = matchCounts.filter((m) => m < matches).length / matchCounts.length * 100;
-    if (percentile < 10) {
-      return 1.5;
-    } else if (percentile < 25) {
-      return 1.3;
-    } else if (percentile < 50) {
-      return 1.1;
-    } else if (percentile > 90) {
-      return 0.7;
+      const matches = s.total_matches || 0;
+      if (matches < targetMatches) {
+        fewerCount++;
+      }
     }
+    const percentile = fewerCount / totalPerformers * 100;
+    if (percentile < 10)
+      return 1.5;
+    else if (percentile < 25)
+      return 1.3;
+    else if (percentile < 50)
+      return 1.1;
+    else if (percentile > 90)
+      return 0.7;
     return 1;
   }
   function getSessionMatchPenalty(performerId) {
@@ -3999,24 +4184,27 @@ Match Stats:`;
       state.sessionMatchCounts = {};
     }
     state.sessionMatchCounts[performerId] = (state.sessionMatchCounts[performerId] || 0) + 1;
+    const keys = Object.keys(state.sessionMatchCounts);
+    if (keys.length > MAX_SESSION_MATCH_COUNTS) {
+      const sortedByCount = keys.sort((a, b) => state.sessionMatchCounts[a] - state.sessionMatchCounts[b]);
+      const toRemove = Math.ceil(keys.length * 0.2);
+      for (let i = 0; i < toRemove; i++) {
+        delete state.sessionMatchCounts[sortedByCount[i]];
+      }
+    }
   }
   function getPerformerRankInList(performer, allPerformers) {
     if (!performer || performer.rating100 === null || performer.rating100 === 1)
       return null;
-    const sorted = allPerformers.filter((p) => p.rating100 !== null && p.rating100 > 1).sort((a, b) => (b.rating100 || 0) - (a.rating100 || 0));
-    let low = 0;
-    let high = sorted.length - 1;
-    while (low <= high) {
-      const mid = Math.floor((low + high) / 2);
-      if (sorted[mid].id === performer.id) {
-        return mid + 1;
-      } else if ((sorted[mid].rating100 || 0) > (performer.rating100 || 0)) {
-        low = mid + 1;
-      } else {
-        high = mid - 1;
+    const targetRating = performer.rating100 || 0;
+    let rank = 1;
+    for (const p of allPerformers) {
+      if (p.id !== performer.id && // Don't count self
+      p.rating100 !== null && p.rating100 > 1 && (p.rating100 || 0) > targetRating) {
+        rank++;
       }
     }
-    return null;
+    return rank;
   }
   async function fetchGauntletPairPerformers() {
     const gender = state.gauntletChampion?.gender || state.selectedGenders[0];
@@ -4046,20 +4234,40 @@ Match Stats:`;
     return handleMatchmakingLogic(performers, "performers");
   }
   function handleMatchmakingLogic(list, type) {
+    if (!state.totalItemsCount || state.totalItemsCount !== list.length) {
+      state.totalItemsCount = list.length;
+    }
     if (!state.gauntletChampion) {
       console.warn("[Ascension] No champion selected, picking a random starter.");
       const randomStarter = list[Math.floor(Math.random() * list.length)];
-      let candidate = list.find((i) => i.id !== randomStarter.id);
+      const starterRating = randomStarter.rating100 || 1;
+      const isStarterUnrated = starterRating <= 1;
+      let candidate = list.find((i) => {
+        const candidateRating = i.rating100 || 1;
+        const isCandidateUnrated = candidateRating <= 1;
+        if (isStarterUnrated && isCandidateUnrated) {
+          return false;
+        }
+        return i.id !== randomStarter.id;
+      });
       if (state.seenPairs && state.seenPairs.size > 0) {
-        const candidates = list.filter(
-          (i) => i.id !== randomStarter.id && !hasBeenRecentlyPaired(randomStarter.id, i.id)
-        );
+        const candidates = list.filter((i) => {
+          const candidateRating = i.rating100 || 1;
+          const isCandidateUnrated = candidateRating <= 1;
+          if (isStarterUnrated && isCandidateUnrated) {
+            return false;
+          }
+          return i.id !== randomStarter.id && !hasBeenRecentlyPaired(randomStarter.id, i.id);
+        });
         if (candidates.length > 0) {
           candidate = candidates[Math.floor(Math.random() * candidates.length)];
         }
       }
+      if (!candidate) {
+        candidate = list.find((i) => i.id !== randomStarter.id);
+      }
       return {
-        items: [randomStarter, candidate || list.find((i) => i.id !== randomStarter.id)],
+        items: [randomStarter, candidate],
         ranks: [null, null],
         isVictory: false
       };
@@ -4067,28 +4275,28 @@ Match Stats:`;
     if (state.gauntletFalling && state.gauntletFallingItem) {
       const fallingItem = state.gauntletFallingItem;
       const fallingRating = fallingItem.rating100 || 1;
-      let potentialOpponents2 = list.filter(
-        (item) => item.id !== fallingItem.id && (item.rating100 || 1) < fallingRating && !state.gauntletDefeated.includes(item.id) && !state.skippedIds.includes(item.id) && !hasBeenRecentlyPaired(fallingItem.id, item.id)
-      );
+      const isFallingUnrated = fallingRating <= 1;
+      let potentialOpponents2 = list.filter((item) => {
+        const itemRating = item.rating100 || 1;
+        const isItemUnrated = itemRating <= 1;
+        if (isFallingUnrated && isItemUnrated) {
+          return false;
+        }
+        return item.id !== fallingItem.id && itemRating < fallingRating && !state.gauntletDefeated.includes(item.id) && !state.skippedIds.includes(item.id) && !hasBeenRecentlyPaired(fallingItem.id, item.id);
+      });
       potentialOpponents2.sort((a, b) => (b.rating100 || 1) - (a.rating100 || 1));
       if (potentialOpponents2.length === 0) {
-        potentialOpponents2 = list.filter(
-          (item) => item.id !== fallingItem.id && !hasBeenRecentlyPaired(fallingItem.id, item.id)
-        );
-        if (potentialOpponents2.length === 0) {
-          const fallback = list.find((i) => i.id !== fallingItem.id);
-          return {
-            items: [fallingItem, fallback],
-            ranks: [null, null],
-            isVictory: false
-          };
-        }
+        const lowestRank = list.length;
+        const currentFallingRank = list.findIndex((i) => i.id === fallingItem.id) + 1;
+        return {
+          items: [fallingItem],
+          placementRank: lowestRank,
+          placementRating: fallingItem.rating100 || 1,
+          isPlacement: true
+        };
       }
       const nextOpponent2 = potentialOpponents2[0];
-      const pairKey2 = [fallingItem.id, nextOpponent2.id].sort().join("-");
-      if (state.seenPairs) {
-        state.seenPairs.add(pairKey2);
-      }
+      trackSeenPair(fallingItem.id, nextOpponent2.id);
       const fallingRank = list.findIndex((i) => i.id === fallingItem.id) + 1;
       const opponentRank = list.findIndex((i) => i.id === nextOpponent2.id) + 1;
       return {
@@ -4119,15 +4327,32 @@ Match Stats:`;
     }
     const randomIdx = Math.floor(Math.random() * filteredOpponents.length);
     const nextOpponent = filteredOpponents[randomIdx];
-    const pairKey = [state.gauntletChampion.id, nextOpponent.id].sort().join("-");
-    if (state.seenPairs) {
-      state.seenPairs.add(pairKey);
-    }
+    trackSeenPair(state.gauntletChampion.id, nextOpponent.id);
+    capSkippedIds();
     return {
       items: [state.gauntletChampion, nextOpponent],
       ranks: [champIdx + 1, list.indexOf(nextOpponent) + 1],
       isVictory: false
     };
+  }
+  function trackSeenPair(id1, id2) {
+    if (!state.seenPairs) {
+      state.seenPairs = /* @__PURE__ */ new Set();
+    }
+    const pairKey = [id1, id2].sort().join("-");
+    state.seenPairs.add(pairKey);
+    while (state.seenPairs.size > MAX_SEEN_PAIRS) {
+      const [first] = state.seenPairs;
+      state.seenPairs.delete(first);
+    }
+  }
+  function capSkippedIds() {
+    if (!state.skippedIds) {
+      state.skippedIds = [];
+    }
+    while (state.skippedIds.length > MAX_SKIPPED_IDS) {
+      state.skippedIds.shift();
+    }
   }
   function hasBeenRecentlyPaired(id1, id2) {
     if (!state.seenPairs)
@@ -4135,7 +4360,7 @@ Match Stats:`;
     const pairKey = [id1, id2].sort().join("-");
     return state.seenPairs.has(pairKey);
   }
-  var RECENT_PERFORMER_COOLDOWN;
+  var MAX_SEEN_PAIRS, MAX_SKIPPED_IDS, MAX_SESSION_MATCH_COUNTS, RECENT_PERFORMER_COOLDOWN;
   var init_battle_engine = __esm({
     "battle-engine.js"() {
       init_api_client();
@@ -4147,6 +4372,9 @@ Match Stats:`;
       init_match_handler();
       init_ui_swipe();
       init_rating_utils();
+      MAX_SEEN_PAIRS = 500;
+      MAX_SKIPPED_IDS = 100;
+      MAX_SESSION_MATCH_COUNTS = 500;
       RECENT_PERFORMER_COOLDOWN = 50;
     }
   });
@@ -4364,9 +4592,15 @@ Match Stats:`;
       };
       return tierValues[b] - tierValues[a];
     });
-    const allTiersSorted = [...processedPerformers].sort(
-      (a, b) => (b.compositeScore || 0) - (a.compositeScore || 0)
-    );
+    const allTiersSorted = [...processedPerformers].sort((a, b) => {
+      if (a.total_matches === 0 && b.total_matches === 0)
+        return 0;
+      if (a.total_matches === 0)
+        return 1;
+      if (b.total_matches === 0)
+        return -1;
+      return (b.compositeScore || 0) - (a.compositeScore || 0);
+    });
     const allTiersGroup = {
       "All Tier Performers": allTiersSorted
     };
@@ -4417,11 +4651,12 @@ Match Stats:`;
         const numericRating = isUnrated ? 1 : parseFloat(p.rating) * 10;
         const performerTier = getRatingTier(numericRating);
         const ratingColor = getTierColor2(performerTier);
+        const compositeDisplay = p.total_matches > 0 ? p.compositeScore?.toFixed(1) || "0.0" : "N/A";
         return `
         <tr data-rank="${p.rank}" 
             data-rating="${p.rating}" 
             data-raw-rating="${p.rawRating || 1}"
-            data-composite-score="${p.compositeScore || 0}"
+            data-composite-score="${p.total_matches > 0 ? p.compositeScore || 0 : ""}"
             data-matches="${p.total_matches}" 
             data-wins="${p.wins}" 
             data-losses="${p.losses}" 
@@ -4443,7 +4678,7 @@ Match Stats:`;
           <td class="hon-stats-rating" style="color: ${ratingColor}; font-weight: bold;">
             ${p.rating}
           </td>
-          <td class="hon-stats-composite">${p.compositeScore?.toFixed(1) || "0.0"}</td>
+          <td class="hon-stats-composite">${compositeDisplay}</td>
           <td>${p.total_matches}</td>
           <td class="hon-stats-positive">${p.wins}</td>
           <td class="hon-stats-negative">${p.losses}</td>
@@ -4586,11 +4821,12 @@ Match Stats:`;
         const numericRating = isUnrated ? 1 : parseFloat(p.rating) * 10;
         const performerTier = getRatingTier(numericRating);
         const ratingColor = getTierColor2(performerTier);
+        const compositeDisplay = p.total_matches > 0 ? p.compositeScore?.toFixed(1) || "0.0" : "N/A";
         return `
         <tr data-rank="${p.rank}" 
             data-rating="${p.rating}" 
             data-raw-rating="${p.rawRating || 1}"
-            data-composite-score="${p.compositeScore || 0}"
+            data-composite-score="${p.total_matches > 0 ? p.compositeScore || 0 : ""}"
             data-matches="${p.total_matches}" 
             data-wins="${p.wins}" 
             data-losses="${p.losses}" 
@@ -4612,7 +4848,7 @@ Match Stats:`;
           <td class="hon-stats-rating" style="color: ${ratingColor}; font-weight: bold;">
             ${p.rating}
           </td>
-          <td class="hon-stats-composite">${p.compositeScore?.toFixed(1) || "0.0"}</td>
+          <td class="hon-stats-composite">${compositeDisplay}</td>
           <td>${p.total_matches}</td>
           <td class="hon-stats-positive">${p.wins}</td>
           <td class="hon-stats-negative">${p.losses}</td>
@@ -4693,6 +4929,14 @@ Match Stats:`;
             aValue = parseFloat(a.dataset.rawRating || 1);
             bValue = parseFloat(b.dataset.rawRating || 1);
           } else if (sortType === "composite") {
+            const aHasMatches = parseInt(a.dataset.matches) > 0;
+            const bHasMatches = parseInt(b.dataset.matches) > 0;
+            if (!aHasMatches && !bHasMatches)
+              return 0;
+            if (!aHasMatches)
+              return isAscending ? 1 : -1;
+            if (!bHasMatches)
+              return isAscending ? -1 : 1;
             aValue = parseFloat(a.dataset.compositeScore || 0);
             bValue = parseFloat(b.dataset.compositeScore || 0);
           } else if (sortType === "name" || sortType === "country" || sortType === "gender") {
@@ -5118,6 +5362,435 @@ Match Stats:`;
     }
   });
 
+  // ui-event-log.js
+  function initEventLog() {
+    console.log = function(...args) {
+      originalConsoleLog.apply(console, args);
+      captureLogEntry("log", args);
+    };
+    console.warn = function(...args) {
+      originalConsoleWarn.apply(console, args);
+      captureLogEntry("warn", args);
+    };
+    console.error = function(...args) {
+      originalConsoleError.apply(console, args);
+      captureLogEntry("error", args);
+    };
+    createEventLogUI();
+  }
+  function captureLogEntry(level, args) {
+    const fullMessage = args.map((arg) => {
+      if (typeof arg === "object" && arg !== null) {
+        try {
+          return JSON.stringify(arg);
+        } catch (e) {
+          return String(arg);
+        }
+      }
+      return String(arg);
+    }).join(" ");
+    if (!fullMessage.includes("[Ascension]") && !fullMessage.includes("[HotOrNot]")) {
+      return;
+    }
+    const readableMessage = extractReadableContent(args);
+    let tierInfo = null;
+    if (readableMessage.includes("Tier Selection:")) {
+      const tierMatch = readableMessage.match(/Tier Selection: ([\w\-]+)/);
+      if (tierMatch && tierMatch[1]) {
+        tierInfo = tierMatch[1];
+      }
+    }
+    const entry = {
+      id: Date.now() + Math.random(),
+      timestamp: /* @__PURE__ */ new Date(),
+      level,
+      message: readableMessage,
+      formattedMessage: readableMessage,
+      tierInfo
+      // Add tier info for color coding
+    };
+    eventLogEntries.push(entry);
+    if (eventLogEntries.length > MAX_LOG_ENTRIES) {
+      eventLogEntries.splice(0, eventLogEntries.length - MAX_LOG_ENTRIES);
+    }
+    updateEventLogDisplay();
+  }
+  function saveEventLogState(state2) {
+    try {
+      localStorage.setItem(EVENT_LOG_STORAGE_KEY, JSON.stringify(state2));
+    } catch (e) {
+      console.warn("[Ascension] Failed to save event log state:", e);
+    }
+  }
+  function loadEventLogState() {
+    try {
+      const data = localStorage.getItem(EVENT_LOG_STORAGE_KEY);
+      return data ? JSON.parse(data) : {};
+    } catch (e) {
+      console.warn("[Ascension] Failed to load event log state:", e);
+      return {};
+    }
+  }
+  function extractReadableContent(args) {
+    let cleanParts = [];
+    for (let i = 0; i < args.length; i++) {
+      const arg = args[i];
+      if (arg === "%c" || typeof arg === "string" && (arg.startsWith("color:") || arg.startsWith("font-weight:") || arg.startsWith("background:"))) {
+        continue;
+      }
+      if (typeof arg === "object" && arg !== null) {
+        try {
+          cleanParts.push(JSON.stringify(arg));
+        } catch (e) {
+          cleanParts.push(String(arg));
+        }
+      } else {
+        cleanParts.push(String(arg));
+      }
+    }
+    let result = cleanParts.join(" ").replace(/%c/g, "").replace(/\s+/g, " ").trim();
+    return result;
+  }
+  function createEventLogUI() {
+    if (document.getElementById("hon-event-log")) {
+      return;
+    }
+    const logContainer = document.createElement("div");
+    logContainer.id = "hon-event-log";
+    logContainer.className = "hon-event-log-container";
+    logContainer.innerHTML = `
+    <div class="hon-event-log-header">
+      <span class="hon-event-log-title">\u{1F4D1} Log</span>
+      <div class="hon-event-log-controls">
+        <button id="hon-event-log-export" class="hon-event-log-btn" title="Export Log">\u{1F4BE}</button>
+        <button id="hon-event-log-clear" class="hon-event-log-btn" title="Clear Log">\u{1F5D1}\uFE0F</button>
+        <button id="hon-event-log-toggle" class="hon-event-log-btn" title="Toggle Visibility">\u{1F441}\uFE0F</button>
+        <button id="hon-event-log-close" class="hon-event-log-btn" title="Close Log">\u2715</button>
+      </div>
+    </div>
+    <div class="hon-event-log-content" id="hon-event-log-content"></div>
+    <div class="hon-event-log-resize-handle" id="hon-event-log-resize"></div>
+    <div class="hon-event-log-resize-handle-horizontal" id="hon-event-log-resize-horizontal"></div>
+  `;
+    const savedState = loadEventLogState();
+    if (savedState.height) {
+      logContainer.style.height = savedState.height;
+    }
+    if (savedState.width) {
+      logContainer.style.width = savedState.width;
+    }
+    waitForModalAndInject(logContainer);
+  }
+  function waitForModalAndInject(logContainer) {
+    const checkInterval = setInterval(() => {
+      const pluginLayout = document.querySelector(".hon-plugin-layout");
+      if (pluginLayout) {
+        const isMobileView = window.innerWidth <= 768;
+        if (isMobileView) {
+          pluginLayout.appendChild(logContainer);
+        } else {
+          pluginLayout.appendChild(logContainer);
+        }
+        setupEventLogEventListeners();
+        updateEventLogDisplay();
+        clearInterval(checkInterval);
+        if (!isMobileView) {
+          setupLayoutConstraints(pluginLayout, logContainer);
+        }
+      }
+    }, 100);
+    setTimeout(() => clearInterval(checkInterval), 5e3);
+  }
+  function setupLayoutConstraints(pluginLayout, logContainer) {
+    if (layoutObserver) {
+      layoutObserver.disconnect();
+    }
+    layoutObserver = new ResizeObserver(() => {
+      constrainEventLogPosition(pluginLayout, logContainer);
+    });
+    layoutObserver.observe(pluginLayout);
+    constrainEventLogPosition(pluginLayout, logContainer);
+  }
+  function constrainEventLogPosition(pluginLayout, logContainer) {
+    if (!pluginLayout || !logContainer)
+      return;
+    const rect = pluginLayout.getBoundingClientRect();
+    const logRect = logContainer.getBoundingClientRect();
+    const sidebar = pluginLayout.querySelector(".hon-sidebar");
+    const mainContent = pluginLayout.querySelector(".hon-main-plugin-content");
+    if (sidebar && mainContent) {
+      const sidebarRect = sidebar.getBoundingClientRect();
+      const mainRect = mainContent.getBoundingClientRect();
+      const maxWidth = mainRect.left - rect.left - 20;
+      if (maxWidth > 100) {
+        logContainer.style.maxWidth = `${maxWidth}px`;
+      }
+    }
+  }
+  function setupEventLogEventListeners() {
+    const exportBtn = document.getElementById("hon-event-log-export");
+    const clearBtn = document.getElementById("hon-event-log-clear");
+    const toggleBtn = document.getElementById("hon-event-log-toggle");
+    const closeBtn = document.getElementById("hon-event-log-close");
+    const resizeHandle = document.getElementById("hon-event-log-resize");
+    const horizontalResizeHandle = document.getElementById("hon-event-log-resize-horizontal");
+    if (exportBtn) {
+      exportBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        exportLogEntries();
+      });
+    }
+    if (clearBtn) {
+      clearBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        eventLogEntries = [];
+        updateEventLogDisplay();
+      });
+    }
+    if (toggleBtn) {
+      toggleBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const content = document.querySelector(".hon-event-log-content");
+        const isVisible = content.style.display !== "none";
+        content.style.display = isVisible ? "none" : "block";
+        toggleBtn.textContent = isVisible ? "\u{1F441}\uFE0F" : "\u{1F6AB}";
+        toggleBtn.title = isVisible ? "Show Log" : "Hide Log";
+        saveEventLogState({ closed: !isVisible });
+      });
+    }
+    if (closeBtn) {
+      closeBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const logContainer = document.getElementById("hon-event-log");
+        if (logContainer) {
+          logContainer.style.display = "none";
+        }
+      });
+    }
+    if (resizeHandle) {
+      setupResizeHandler(resizeHandle);
+    }
+    if (horizontalResizeHandle) {
+      setupResizeHandler(horizontalResizeHandle);
+    }
+  }
+  function setupResizeHandler(resizeHandle) {
+    let isResizing = false;
+    resizeHandle.addEventListener("mousedown", (e) => {
+      isResizing = true;
+      e.preventDefault();
+      e.stopPropagation();
+      const logContainer = document.getElementById("hon-event-log");
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const startWidth = parseInt(document.defaultView.getComputedStyle(logContainer).width, 10);
+      const startHeight = parseInt(document.defaultView.getComputedStyle(logContainer).height, 10);
+      const isHorizontalResize = e.target.classList.contains("hon-event-log-resize-handle-horizontal");
+      const doDrag = (e2) => {
+        if (!isResizing)
+          return;
+        e2.preventDefault();
+        if (isHorizontalResize) {
+          const newWidth = startWidth + (e2.clientX - startX);
+          const clampedWidth = Math.max(200, Math.min(800, newWidth));
+          logContainer.style.width = clampedWidth + "px";
+        } else {
+          const newHeight = startHeight - (e2.clientY - startY);
+          const clampedHeight = Math.max(100, Math.min(500, newHeight));
+          logContainer.style.height = clampedHeight + "px";
+        }
+      };
+      const stopDrag = () => {
+        isResizing = false;
+        document.removeEventListener("mousemove", doDrag);
+        document.removeEventListener("mouseup", stopDrag);
+        const logContainer2 = document.getElementById("hon-event-log");
+        if (logContainer2) {
+          saveEventLogState({
+            height: logContainer2.style.height,
+            width: logContainer2.style.width
+          });
+        }
+      };
+      document.addEventListener("mousemove", doDrag);
+      document.addEventListener("mouseup", stopDrag);
+    });
+  }
+  function exportLogEntries() {
+    if (eventLogEntries.length === 0) {
+      alert("No log entries to export");
+      return;
+    }
+    const logText = eventLogEntries.map((entry) => {
+      const timeString = entry.timestamp.toLocaleString();
+      const level = entry.level.toUpperCase();
+      let message = entry.message;
+      message = message.replace(
+        /(\[Ascension\] (?:Match|CROSS-TIER): )([^(]+)(\s+\([^)]+\))/g,
+        "$1PerformerA$3"
+      );
+      message = message.replace(
+        /(vs\s+)([^(]+)(\s+\([^)]+\))/g,
+        "$1PerformerB$3"
+      );
+      message = message.replace(
+        /(\[Ascension\] Updating: )(.+?)\s*\(ID: (\d+)\)/g,
+        "$1Scene (ID: $3)"
+      );
+      message = message.replace(
+        /(\[Ascension\] Champion Selected: )([^(]+)(\s+\([^)]+\))/g,
+        "$1PerformerA$3"
+      );
+      return `[${timeString}] ${level}: ${message}`;
+    }).join("\n");
+    const blob = new Blob([logText], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const fileName = `battle-log-${(/* @__PURE__ */ new Date()).toISOString().slice(0, 19).replace(/:/g, "-")}.txt`;
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 100);
+    addEventLog(`Log exported to file: ${fileName}`, "log");
+  }
+  function updateEventLogDisplay() {
+    const content = document.getElementById("hon-event-log-content");
+    if (!content)
+      return;
+    const isScrolledToBottom = content.scrollHeight - content.clientHeight <= content.scrollTop + 1;
+    const existingEntriesCount = content.querySelectorAll(".hon-log-entry").length;
+    const newEntriesCount = eventLogEntries.length;
+    const allEntriesHTML = eventLogEntries.map((entry, index) => {
+      const timeString = entry.timestamp.toLocaleTimeString();
+      const levelClass = `hon-log-${entry.level}`;
+      const isNewEntry = index >= existingEntriesCount;
+      const animationClass = isNewEntry ? "new-entry" : "";
+      let messageText = entry.formattedMessage.replace(/%c/g, "").trim();
+      let messageHtml = messageText;
+      messageHtml = messageHtml.replace(
+        /\[Ascension\]/g,
+        '[<span style="color: #1cb4d6; font-weight: bold;">Ascension</span>]'
+      );
+      messageHtml = messageHtml.replace(/\bWIN\b/g, '<span style="color: #4CAF50; font-weight: bold;">WIN</span>').replace(/\bLOSS\b/g, '<span style="color: #F44336; font-weight: bold;">LOSS</span>').replace(/\bDRAW\b/g, '<span style="color: #9E9E9E; font-weight: bold;">DRAW</span>');
+      messageHtml = messageHtml.replace(
+        /\(\s*ID\s*:\s*(\d+)\s*\)/g,
+        '(<span style="color: #1cb4d6;">ID: $1</span>)'
+      );
+      messageHtml = messageHtml.replace(
+        /\(\s*w\s*:\s*([\d\.]+)\s*\)/g,
+        '(w: <span style="color: #FF69B4; font-weight: bold;">$1</span>)'
+      );
+      messageHtml = messageHtml.replace(
+        /\[([\d\.]+)\]/g,
+        '[<span style="color: #1cb4d6;">$1</span>]'
+      );
+      messageHtml = messageHtml.replace(
+        /\bvs\b/g,
+        '<span style="color: #888;">vs</span>'
+      );
+      messageHtml = messageHtml.replace(
+        /Weight\s*:/g,
+        '<span style="color: #888;">Weight:</span>'
+      );
+      messageHtml = messageHtml.replace(
+        /Total Match Count\s*:/g,
+        '<span style="color: #888;">Total Match Count:</span>'
+      );
+      messageHtml = messageHtml.replace(
+        /\b(\d+\.\d+)\b/g,
+        '<span style="color: #FF69B4; font-weight: bold;">$1</span>'
+      );
+      messageHtml = messageHtml.replace(
+        /(CROSS-TIER:)/g,
+        '<span style="color: #E91E63; font-weight: bold;">$1</span>'
+      );
+      if (entry.tierInfo) {
+        let tierColor = "#00ff00";
+        if (entry.tierInfo !== "newcomers" && entry.tierInfo !== "any") {
+          const tierColors = {
+            "S-Tier": "#eb9834",
+            "A-Tier": "#e014aa",
+            "B-Tier": "#7f1e82",
+            "C-Tier": "#14bbe0",
+            "D-Tier": "#92e014",
+            "F-Tier": "#808080"
+          };
+          tierColor = tierColors[entry.tierInfo] || tierColor;
+        }
+        const tierRegex = new RegExp(`(Tier Selection:)\\s+(${entry.tierInfo})`);
+        messageHtml = messageHtml.replace(
+          tierRegex,
+          `$1 <span style="color: ${tierColor}; font-weight: bold;">$2</span>`
+        );
+      }
+      return `
+      <div class="hon-log-entry ${levelClass} ${animationClass}" data-entry-id="${entry.id}">
+        <span class="hon-log-timestamp">${timeString}</span>
+        <span class="hon-log-message">${messageHtml}</span>
+      </div>
+    `;
+    }).join("");
+    content.innerHTML = allEntriesHTML;
+    if (isScrolledToBottom) {
+      content.scrollTop = content.scrollHeight;
+    }
+    setTimeout(() => {
+      const newEntries = content.querySelectorAll(".new-entry");
+      newEntries.forEach((entry) => {
+        entry.classList.remove("new-entry");
+      });
+    }, 400);
+  }
+  function addEventLog(message, level = "log") {
+    const entry = {
+      id: Date.now() + Math.random(),
+      timestamp: /* @__PURE__ */ new Date(),
+      level,
+      message: `[Ascension] ${message}`,
+      formattedMessage: message
+    };
+    eventLogEntries.push(entry);
+    if (eventLogEntries.length > MAX_LOG_ENTRIES) {
+      eventLogEntries.splice(0, eventLogEntries.length - MAX_LOG_ENTRIES);
+    }
+    updateEventLogDisplay();
+  }
+  function destroyEventLog() {
+    console.log = originalConsoleLog;
+    console.warn = originalConsoleWarn;
+    console.error = originalConsoleError;
+    const logContainer = document.getElementById("hon-event-log");
+    if (logContainer) {
+      logContainer.remove();
+    }
+    eventLogEntries = [];
+    if (layoutObserver) {
+      layoutObserver.disconnect();
+      layoutObserver = null;
+    }
+    try {
+      localStorage.removeItem(EVENT_LOG_STORAGE_KEY);
+    } catch (e) {
+      console.warn("[Ascension] Failed to clear event log state:", e);
+    }
+  }
+  var eventLogEntries, MAX_LOG_ENTRIES, originalConsoleLog, originalConsoleWarn, originalConsoleError, layoutObserver, EVENT_LOG_STORAGE_KEY;
+  var init_ui_event_log = __esm({
+    "ui-event-log.js"() {
+      eventLogEntries = [];
+      MAX_LOG_ENTRIES = 100;
+      originalConsoleLog = console.log;
+      originalConsoleWarn = console.warn;
+      originalConsoleError = console.error;
+      layoutObserver = null;
+      EVENT_LOG_STORAGE_KEY = "hon-event-log-state";
+    }
+  });
+
   // ui-sidebar.js
   var ui_sidebar_exports = {};
   __export(ui_sidebar_exports, {
@@ -5213,6 +5886,13 @@ Match Stats:`;
       row.addEventListener("click", async (e) => {
         e.stopPropagation();
         const mode = row.dataset.mode;
+        const modeNames = {
+          "swiss": "Head to Head",
+          "gauntlet": "Placement Mode",
+          "champion": "Champion Mode",
+          "scenes": "Scene Mode"
+        };
+        addEventLog(`User changed mode to: ${modeNames[mode] || mode}`, "log");
         state.currentMode = mode;
         try {
           localStorage.setItem("hotornot_selected_mode", mode);
@@ -5323,368 +6003,7 @@ Match Stats:`;
       init_state();
       init_ui_dashboard();
       init_ui_swipe();
-    }
-  });
-
-  // ui-event-log.js
-  function initEventLog() {
-    console.log = function(...args) {
-      originalConsoleLog.apply(console, args);
-      captureLogEntry("log", args);
-    };
-    console.warn = function(...args) {
-      originalConsoleWarn.apply(console, args);
-      captureLogEntry("warn", args);
-    };
-    console.error = function(...args) {
-      originalConsoleError.apply(console, args);
-      captureLogEntry("error", args);
-    };
-    createEventLogUI();
-  }
-  function captureLogEntry(level, args) {
-    const fullMessage = args.map((arg) => {
-      if (typeof arg === "object" && arg !== null) {
-        try {
-          return JSON.stringify(arg);
-        } catch (e) {
-          return String(arg);
-        }
-      }
-      return String(arg);
-    }).join(" ");
-    if (!fullMessage.includes("[Ascension]") && !fullMessage.includes("[HotOrNot]")) {
-      return;
-    }
-    const readableMessage = extractReadableContent(args);
-    let tierInfo = null;
-    if (readableMessage.includes("Tier Selection:")) {
-      const tierMatch = readableMessage.match(/Tier Selection: ([\w\-]+)/);
-      if (tierMatch && tierMatch[1]) {
-        tierInfo = tierMatch[1];
-      }
-    }
-    const entry = {
-      id: Date.now() + Math.random(),
-      timestamp: /* @__PURE__ */ new Date(),
-      level,
-      message: readableMessage,
-      formattedMessage: readableMessage,
-      tierInfo
-      // Add tier info for color coding
-    };
-    eventLogEntries.push(entry);
-    if (eventLogEntries.length > MAX_LOG_ENTRIES) {
-      eventLogEntries.splice(0, eventLogEntries.length - MAX_LOG_ENTRIES);
-    }
-    updateEventLogDisplay();
-  }
-  function saveEventLogState(state2) {
-    try {
-      localStorage.setItem(EVENT_LOG_STORAGE_KEY, JSON.stringify(state2));
-    } catch (e) {
-      console.warn("[Ascension] Failed to save event log state:", e);
-    }
-  }
-  function loadEventLogState() {
-    try {
-      const data = localStorage.getItem(EVENT_LOG_STORAGE_KEY);
-      return data ? JSON.parse(data) : {};
-    } catch (e) {
-      console.warn("[Ascension] Failed to load event log state:", e);
-      return {};
-    }
-  }
-  function extractReadableContent(args) {
-    let cleanParts = [];
-    for (let i = 0; i < args.length; i++) {
-      const arg = args[i];
-      if (arg === "%c" || typeof arg === "string" && (arg.startsWith("color:") || arg.startsWith("font-weight:") || arg.startsWith("background:"))) {
-        continue;
-      }
-      if (typeof arg === "object" && arg !== null) {
-        try {
-          cleanParts.push(JSON.stringify(arg));
-        } catch (e) {
-          cleanParts.push(String(arg));
-        }
-      } else {
-        cleanParts.push(String(arg));
-      }
-    }
-    let result = cleanParts.join(" ").replace(/%c/g, "").replace(/\s+/g, " ").trim();
-    return result;
-  }
-  function createEventLogUI() {
-    if (document.getElementById("hon-event-log")) {
-      return;
-    }
-    const logContainer = document.createElement("div");
-    logContainer.id = "hon-event-log";
-    logContainer.className = "hon-event-log-container";
-    logContainer.innerHTML = `
-    <div class="hon-event-log-header">
-      <span class="hon-event-log-title">\u{1F3AE} Battle Log</span>
-      <div class="hon-event-log-controls">
-        <button id="hon-event-log-clear" class="hon-event-log-btn" title="Clear Log">\u{1F5D1}\uFE0F</button>
-        <button id="hon-event-log-toggle" class="hon-event-log-btn" title="Toggle Visibility">\u{1F441}\uFE0F</button>
-        <button id="hon-event-log-close" class="hon-event-log-btn" title="Close Log">\u2715</button>
-      </div>
-    </div>
-    <div class="hon-event-log-content" id="hon-event-log-content"></div>
-    <div class="hon-event-log-resize-handle" id="hon-event-log-resize"></div>
-    <div class="hon-event-log-resize-handle-horizontal" id="hon-event-log-resize-horizontal"></div>
-  `;
-    const savedState = loadEventLogState();
-    if (savedState.height) {
-      logContainer.style.height = savedState.height;
-    }
-    if (savedState.width) {
-      logContainer.style.width = savedState.width;
-    }
-    waitForModalAndInject(logContainer);
-  }
-  function waitForModalAndInject(logContainer) {
-    const checkInterval = setInterval(() => {
-      const pluginLayout = document.querySelector(".hon-plugin-layout");
-      if (pluginLayout) {
-        const isMobileView = window.innerWidth <= 768;
-        if (isMobileView) {
-          pluginLayout.appendChild(logContainer);
-        } else {
-          pluginLayout.appendChild(logContainer);
-        }
-        setupEventLogEventListeners();
-        updateEventLogDisplay();
-        clearInterval(checkInterval);
-        if (!isMobileView) {
-          setupLayoutConstraints(pluginLayout, logContainer);
-        }
-      }
-    }, 100);
-    setTimeout(() => clearInterval(checkInterval), 5e3);
-  }
-  function setupLayoutConstraints(pluginLayout, logContainer) {
-    if (layoutObserver) {
-      layoutObserver.disconnect();
-    }
-    layoutObserver = new ResizeObserver(() => {
-      constrainEventLogPosition(pluginLayout, logContainer);
-    });
-    layoutObserver.observe(pluginLayout);
-    constrainEventLogPosition(pluginLayout, logContainer);
-  }
-  function constrainEventLogPosition(pluginLayout, logContainer) {
-    if (!pluginLayout || !logContainer)
-      return;
-    const rect = pluginLayout.getBoundingClientRect();
-    const logRect = logContainer.getBoundingClientRect();
-    const sidebar = pluginLayout.querySelector(".hon-sidebar");
-    const mainContent = pluginLayout.querySelector(".hon-main-plugin-content");
-    if (sidebar && mainContent) {
-      const sidebarRect = sidebar.getBoundingClientRect();
-      const mainRect = mainContent.getBoundingClientRect();
-      const maxWidth = mainRect.left - rect.left - 20;
-      if (maxWidth > 100) {
-        logContainer.style.maxWidth = `${maxWidth}px`;
-      }
-    }
-  }
-  function setupEventLogEventListeners() {
-    const clearBtn = document.getElementById("hon-event-log-clear");
-    const toggleBtn = document.getElementById("hon-event-log-toggle");
-    const closeBtn = document.getElementById("hon-event-log-close");
-    const resizeHandle = document.getElementById("hon-event-log-resize");
-    const horizontalResizeHandle = document.getElementById("hon-event-log-resize-horizontal");
-    if (clearBtn) {
-      clearBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        eventLogEntries = [];
-        updateEventLogDisplay();
-      });
-    }
-    if (toggleBtn) {
-      toggleBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const content = document.querySelector(".hon-event-log-content");
-        const isVisible = content.style.display !== "none";
-        content.style.display = isVisible ? "none" : "block";
-        toggleBtn.textContent = isVisible ? "\u{1F441}\uFE0F" : "\u{1F6AB}";
-        toggleBtn.title = isVisible ? "Show Log" : "Hide Log";
-        saveEventLogState({ closed: !isVisible });
-      });
-    }
-    if (closeBtn) {
-      closeBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const logContainer = document.getElementById("hon-event-log");
-        if (logContainer) {
-          logContainer.style.display = "none";
-        }
-      });
-    }
-    if (resizeHandle) {
-      setupResizeHandler(resizeHandle);
-    }
-    if (horizontalResizeHandle) {
-      setupResizeHandler(horizontalResizeHandle);
-    }
-  }
-  function setupResizeHandler(resizeHandle) {
-    let isResizing = false;
-    resizeHandle.addEventListener("mousedown", (e) => {
-      isResizing = true;
-      e.preventDefault();
-      e.stopPropagation();
-      const logContainer = document.getElementById("hon-event-log");
-      const startX = e.clientX;
-      const startY = e.clientY;
-      const startWidth = parseInt(document.defaultView.getComputedStyle(logContainer).width, 10);
-      const startHeight = parseInt(document.defaultView.getComputedStyle(logContainer).height, 10);
-      const isHorizontalResize = e.target.classList.contains("hon-event-log-resize-handle-horizontal");
-      const doDrag = (e2) => {
-        if (!isResizing)
-          return;
-        e2.preventDefault();
-        if (isHorizontalResize) {
-          const newWidth = startWidth + (e2.clientX - startX);
-          const clampedWidth = Math.max(200, Math.min(800, newWidth));
-          logContainer.style.width = clampedWidth + "px";
-        } else {
-          const newHeight = startHeight - (e2.clientY - startY);
-          const clampedHeight = Math.max(100, Math.min(500, newHeight));
-          logContainer.style.height = clampedHeight + "px";
-        }
-      };
-      const stopDrag = () => {
-        isResizing = false;
-        document.removeEventListener("mousemove", doDrag);
-        document.removeEventListener("mouseup", stopDrag);
-        const logContainer2 = document.getElementById("hon-event-log");
-        if (logContainer2) {
-          saveEventLogState({
-            height: logContainer2.style.height,
-            width: logContainer2.style.width
-          });
-        }
-      };
-      document.addEventListener("mousemove", doDrag);
-      document.addEventListener("mouseup", stopDrag);
-    });
-  }
-  function updateEventLogDisplay() {
-    const content = document.getElementById("hon-event-log-content");
-    if (!content)
-      return;
-    const isScrolledToBottom = content.scrollHeight - content.clientHeight <= content.scrollTop + 1;
-    const existingEntriesCount = content.querySelectorAll(".hon-log-entry").length;
-    const newEntriesCount = eventLogEntries.length;
-    const allEntriesHTML = eventLogEntries.map((entry, index) => {
-      const timeString = entry.timestamp.toLocaleTimeString();
-      const levelClass = `hon-log-${entry.level}`;
-      const isNewEntry = index >= existingEntriesCount;
-      const animationClass = isNewEntry ? "new-entry" : "";
-      let messageText = entry.formattedMessage.replace(/%c/g, "").trim();
-      let messageHtml = messageText;
-      messageHtml = messageHtml.replace(
-        /\[Ascension\]/g,
-        '[<span style="color: #1cb4d6; font-weight: bold;">Ascension</span>]'
-      );
-      messageHtml = messageHtml.replace(/\bWIN\b/g, '<span style="color: #4CAF50; font-weight: bold;">WIN</span>').replace(/\bLOSS\b/g, '<span style="color: #F44336; font-weight: bold;">LOSS</span>').replace(/\bDRAW\b/g, '<span style="color: #9E9E9E; font-weight: bold;">DRAW</span>');
-      messageHtml = messageHtml.replace(
-        /\(\s*ID\s*:\s*(\d+)\s*\)/g,
-        '(<span style="color: #1cb4d6;">ID: $1</span>)'
-      );
-      messageHtml = messageHtml.replace(
-        /\(\s*w\s*:\s*([\d\.]+)\s*\)/g,
-        '(w: <span style="color: #FF69B4; font-weight: bold;">$1</span>)'
-      );
-      messageHtml = messageHtml.replace(
-        /\[([\d\.]+)\]/g,
-        '[<span style="color: #1cb4d6;">$1</span>]'
-      );
-      messageHtml = messageHtml.replace(
-        /\bvs\b/g,
-        '<span style="color: #888;">vs</span>'
-      );
-      messageHtml = messageHtml.replace(
-        /Weight\s*:/g,
-        '<span style="color: #888;">Weight:</span>'
-      );
-      messageHtml = messageHtml.replace(
-        /Total Match Count\s*:/g,
-        '<span style="color: #888;">Total Match Count:</span>'
-      );
-      messageHtml = messageHtml.replace(
-        /\b(\d+\.\d+)\b/g,
-        '<span style="color: #FF69B4; font-weight: bold;">$1</span>'
-      );
-      if (entry.tierInfo) {
-        let tierColor = "#00ff00";
-        if (entry.tierInfo !== "newcomers" && entry.tierInfo !== "any") {
-          const tierColors = {
-            "S-Tier": "#eb9834",
-            "A-Tier": "#e014aa",
-            "B-Tier": "#7f1e82",
-            "C-Tier": "#14bbe0",
-            "D-Tier": "#92e014",
-            "F-Tier": "#808080"
-          };
-          tierColor = tierColors[entry.tierInfo] || tierColor;
-        }
-        const tierRegex = new RegExp(`(Tier Selection:)\\s+(${entry.tierInfo})`);
-        messageHtml = messageHtml.replace(
-          tierRegex,
-          `$1 <span style="color: ${tierColor}; font-weight: bold;">$2</span>`
-        );
-      }
-      return `
-      <div class="hon-log-entry ${levelClass} ${animationClass}" data-entry-id="${entry.id}">
-        <span class="hon-log-timestamp">${timeString}</span>
-        <span class="hon-log-message">${messageHtml}</span>
-      </div>
-    `;
-    }).join("");
-    content.innerHTML = allEntriesHTML;
-    if (isScrolledToBottom) {
-      content.scrollTop = content.scrollHeight;
-    }
-    setTimeout(() => {
-      const newEntries = content.querySelectorAll(".new-entry");
-      newEntries.forEach((entry) => {
-        entry.classList.remove("new-entry");
-      });
-    }, 400);
-  }
-  function destroyEventLog() {
-    console.log = originalConsoleLog;
-    console.warn = originalConsoleWarn;
-    console.error = originalConsoleError;
-    const logContainer = document.getElementById("hon-event-log");
-    if (logContainer) {
-      logContainer.remove();
-    }
-    eventLogEntries = [];
-    if (layoutObserver) {
-      layoutObserver.disconnect();
-      layoutObserver = null;
-    }
-    try {
-      localStorage.removeItem(EVENT_LOG_STORAGE_KEY);
-    } catch (e) {
-      console.warn("[Ascension] Failed to clear event log state:", e);
-    }
-  }
-  var eventLogEntries, MAX_LOG_ENTRIES, originalConsoleLog, originalConsoleWarn, originalConsoleError, layoutObserver, EVENT_LOG_STORAGE_KEY;
-  var init_ui_event_log = __esm({
-    "ui-event-log.js"() {
-      eventLogEntries = [];
-      MAX_LOG_ENTRIES = 100;
-      originalConsoleLog = console.log;
-      originalConsoleWarn = console.warn;
-      originalConsoleError = console.error;
-      layoutObserver = null;
-      EVENT_LOG_STORAGE_KEY = "hon-event-log-state";
+      init_ui_event_log();
     }
   });
 
@@ -6430,22 +6749,40 @@ Match Stats:`;
       return [];
     }
   }
+  function calculateCompositeScore(performer) {
+    const stats = parsePerformerStats(performer);
+    if (!stats)
+      return 0;
+    const rating = (performer.rating || 0) / 100;
+    const winRate = stats.total_matches > 0 ? stats.wins / stats.total_matches : 0;
+    const winMargin = stats.total_margin || 0;
+    const totalMatches = stats.total_matches || 0;
+    return rating / 100 + winRate * 0.5 + winMargin / 1e3 + totalMatches / 1e4;
+  }
   function calculateMetrics(performers) {
     let totalMatches = 0;
     let totalWins = 0;
     let totalLosses = 0;
     let totalDraws = 0;
-    let highestRating = 0;
-    let highestRatedPerformer = null;
     let mostActivePerformer = null;
     let maxMatches = 0;
     let longestStreak = 0;
     let currentStreak = 0;
     const countryRatings = {};
+    let totalPerformersWithMatches = 0;
+    let totalMatchCount = 0;
+    let totalRatedPerformers = 0;
+    let highestCompositeScore = 0;
+    let highestRatedPerformer = null;
     performers.forEach((p) => {
       const stats = parsePerformerStats(p);
       if (stats) {
-        totalMatches += stats.total_matches || 0;
+        const matches2 = stats.total_matches || 0;
+        if (matches2 > 0) {
+          totalPerformersWithMatches++;
+          totalMatchCount += matches2;
+        }
+        totalMatches += matches2;
         totalWins += stats.wins || 0;
         totalLosses += stats.losses || 0;
         totalDraws += stats.draws || 0;
@@ -6456,9 +6793,12 @@ Match Stats:`;
           currentStreak = stats.current_streak || 0;
         }
       }
-      const rating = p.rating || 0;
-      if (rating > highestRating) {
-        highestRating = rating;
+      if (p.rating && p.rating > 0) {
+        totalRatedPerformers++;
+      }
+      const compositeScore = calculateCompositeScore(p);
+      if (compositeScore > highestCompositeScore) {
+        highestCompositeScore = compositeScore;
         highestRatedPerformer = p;
       }
       const matches = stats ? stats.total_matches || 0 : 0;
@@ -6470,7 +6810,7 @@ Match Stats:`;
         if (!countryRatings[p.country]) {
           countryRatings[p.country] = { totalRating: 0, count: 0 };
         }
-        countryRatings[p.country].totalRating += rating;
+        countryRatings[p.country].totalRating += p.rating || 0;
         countryRatings[p.country].count += 1;
       }
     });
@@ -6478,24 +6818,24 @@ Match Stats:`;
     let highestCountryAverage = 0;
     for (const [countryCode, data] of Object.entries(countryRatings)) {
       if (data.count >= 5) {
-        const average = data.totalRating / data.count;
+        const average = data.totalRating / data.count / 100;
         if (average > highestCountryAverage) {
           highestCountryAverage = average;
           highestRatedCountry = countryCode;
         }
       }
     }
+    const averageMatchesPerPerformer = totalPerformersWithMatches > 0 ? (totalMatchCount / totalPerformersWithMatches).toFixed(1) : "0.0";
     return {
       totalMatches,
       totalWins,
       totalLosses,
       totalDraws,
-      highestRating,
       highestRatedPerformer,
       mostActivePerformer,
       longestStreak,
-      currentStreak,
-      winRate: totalMatches > 0 ? (totalWins / totalMatches * 100).toFixed(1) : "0.0",
+      totalRatedPerformers,
+      averageMatchesPerPerformer,
       highestRatedCountry,
       highestCountryAverage: highestCountryAverage.toFixed(1)
     };
@@ -8101,13 +8441,14 @@ Match Stats:`;
     createStatElement(rowOne, metrics.totalWins, "Wins", "Total wins across all performers");
     createStatElement(rowOne, metrics.totalLosses, "Losses", "Total losses across all performers");
     createStatElement(rowOne, metrics.totalDraws, "Draws", "Total draws across all performers");
-    createStatElement(rowOne, `${metrics.winRate}%`, "Win Rate", "Overall win percentage");
+    createStatElement(rowOne, metrics.averageMatchesPerPerformer, "Avg Matches/Performer", "Average matches per performer (excluding 0-match performers)");
     const highestRatedName = metrics.highestRatedPerformer ? metrics.highestRatedPerformer.name : "N/A";
+    const highestRatedScore = metrics.highestRatedPerformer ? calculateCompositeScore2(metrics.highestRatedPerformer).toFixed(3) : "0.000";
     createStatElement(
       rowTwo,
       highestRatedName,
       "Highest Rated",
-      `Performer with highest rating: ${metrics.highestRating || 0}`
+      `Performer with highest composite score: ${highestRatedScore}`
     );
     const mostActiveName = metrics.mostActivePerformer ? metrics.mostActivePerformer.name : "N/A";
     const mostActiveStats = metrics.mostActivePerformer ? parsePerformerStats(metrics.mostActivePerformer) : null;
@@ -8132,9 +8473,9 @@ Match Stats:`;
     );
     createStatElement(
       rowTwo,
-      metrics.currentStreak,
-      "Current Streak",
-      "Current winning streak"
+      metrics.totalRatedPerformers,
+      "Rated Performers",
+      "Total number of performers with ratings"
     );
     const topStatsContainer = document.createElement("div");
     topStatsContainer.style.marginTop = "2rem";
@@ -9010,10 +9351,18 @@ Match Stats:`;
     };
     performers.forEach((performer) => {
       const tier = getRatingTier2(performer.rating || 0);
-      tierGroups[tier].push(performer);
+      const performerWithScore = {
+        ...performer,
+        compositeScore: calculateCompositeScore2(performer)
+      };
+      tierGroups[tier].push(performerWithScore);
     });
     Object.keys(tierGroups).forEach((tier) => {
-      tierGroups[tier].sort((a, b) => (b.rating || 0) - (a.rating || 0));
+      if (tier === "S-Tier") {
+        tierGroups[tier].sort((a, b) => (b.compositeScore || 0) - (a.compositeScore || 0));
+      } else {
+        tierGroups[tier].sort((a, b) => (b.rating || 0) - (a.rating || 0));
+      }
     });
     let currentTierIndex = 0;
     const tierKeys = Object.keys(tierGroups);
@@ -9254,9 +9603,22 @@ Match Stats:`;
       }, 1e3);
     });
   }
+  function calculateCompositeScore2(performer) {
+    const stats = parsePerformerStats(performer);
+    if (!stats)
+      return 0;
+    const rating = (performer.rating100 || 1) / 100;
+    const winRate = stats.total_matches > 0 ? stats.wins / stats.total_matches : 0;
+    const winMargin = stats.total_margin || 0;
+    const totalMatches = stats.total_matches || 0;
+    return rating / 100 + winRate * 0.5 + winMargin / 1e3 + totalMatches / 1e4;
+  }
   function createTopStatsSection(container, performers, currentOrigin) {
     container.innerHTML = "";
-    const topPerformers = [...performers].sort((a, b) => (b.rating || 0) - (a.rating || 0)).slice(0, 10);
+    const topPerformers = [...performers].map((p) => ({
+      ...p,
+      compositeScore: calculateCompositeScore2(p)
+    })).sort((a, b) => (b.compositeScore || 0) - (a.compositeScore || 0)).slice(0, 10);
     const performersGrid = document.createElement("div");
     performersGrid.style.display = "grid";
     performersGrid.style.gap = "1rem";
@@ -9611,7 +9973,7 @@ Match Stats:`;
   }
   function main() {
     if (window.honLoaded) {
-      cleanup();
+      cleanup2();
     }
     window.honLoaded = true;
     console.log("[Ascension] Global Scope Initialized");
@@ -9653,7 +10015,7 @@ Match Stats:`;
       setTimeout(() => injectBattleRankBadge(), 1e3);
     }
   }
-  function cleanup() {
+  function cleanup2() {
     if (observer2) {
       observer2.disconnect();
       observer2 = null;
