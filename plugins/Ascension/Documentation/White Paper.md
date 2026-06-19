@@ -184,7 +184,7 @@ Composite scoring is added in addition to the default 0-100 (0-10) scale system 
 
 Forumla:
 **Composite Score = (Rating/100) + (Win Rate × 0.5) + (Win Margin/1000) + (Total Matches/10000)**
-
+```
 Scoring Example of an Average Performer:
 Rating:     75 / 100      = 0.75000
 Win Rate:   9/12 × 0.5    = 0.37500
@@ -192,7 +192,9 @@ Win Margin: 4 / 1000      = 0.00400
 Matches:    12 / 10000    = 0.00120
 ─────────────────────────────────
 Total:                    = 1.13020
+```
 
+```
 Scoring Example of a Perfect Performer:
 Rating:     100 / 100     = 1.00000
 Win Rate:   11/11 × 0.5   = 0.50000
@@ -200,7 +202,7 @@ Win Margin: 11 / 1000     = 0.01100
 Matches:    11 / 10000    = 0.00110
 ─────────────────────────────────
 Total:                    = 1.51210
-
+```
 
 ---
 
