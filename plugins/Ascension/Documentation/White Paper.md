@@ -37,7 +37,7 @@ When evaluting selection for a tier focus, a calculation is made verifying requi
 
 When a tier is selected, all performers within that tier have their weights boosted (2.0) for focused selection. This means if you have had performers within a tier rated in the Any selection and their weights have been dropped to a low value, they will get another oppurtunity for a match if the tier is selected for focus. The Any selection does not boost weights. While the system will still use the weight and recency calculations to prioritize entities, depending on your tier size you can still see entities who may have been shown more recently in your session. 
 
-To maintain focus selection balance the system will lock on a tier for a semi-random block of matches ($3$ to $7$ matches long) before rolling a weighted probability check to select a new tier from the shuffled rotation list. If all pools have been exhausted, it will rely on the Any selection logic until a new pool qualifies for selection. The logic continuously evaluates tiers as users engage and entities recharge to determine eligibility.
+To maintain focus selection balance the system will lock on a tier for a semi-random block of matches ($7$ to $19$ matches long) before rolling a weighted probability check to select a new tier from the shuffled rotation list. If all pools have been exhausted, it will rely on the Any selection logic until a new pool qualifies for selection. The logic continuously evaluates tiers as users engage and entities recharge to determine eligibility.
 
 This system further boosts database priming speed while promoting healthy match-ups. With the catch up mechanics like getLowMatchBoost and fair handling of tier selection match count distribution remains within an acceptable level of drift.
 
@@ -103,7 +103,11 @@ Match selection events are meant to maintain engagement while introducing a litt
 
 The match selection features a 10% chance of a Cross tier matchup with the selection of a minimum 20 point gap. The maintain balance, S tiers are excluded from performers below B tier. 
 
-### Additional Fallbacks
+## applyTemporaryWeightBoost
+
+As an added fallback before dropping weight selection entirely the applyTemporaryWeightBoost function will activate and boost all performers by a weight of 2.0 above the minimum threshold to continue the pairing and tiering logic. The booster will deactivate once the pool returns to an acceptable average weight value.
+
+## Additional Fallbacks
 
 The system will always maintain checks to satisfy the 2 minimum performer requirement. However if criteria fails to be met, the system will drop the smart selection and search the nearest opponent. This is to maintain match continuity in the event of failover. If it cannot find the next closest opponent, it will randomly select. 
 
