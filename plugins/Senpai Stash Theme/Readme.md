@@ -1,5 +1,5 @@
 # Senpai Stash Theme
- The Senpai Stash Theme is a modular theme providing the user with a more customization options and modified plugin dependencies the further improve the user UI experience. It is based off of the the originally released [glassy theme released by Serechops](https://discourse.stashapp.cc/t/glassy-theme-a-window-to-your-collection/118). Major shoutout to this community member as this theme would not be possible without them.
+ The Senpai Stash Theme is a modular theme providing the user with a more customization options and modified plugin dependencies the further improve the user UI experience. It is based off of the the originally released [glassy theme released by Serechops](https://discourse.stashapp.cc/t/glassy-theme-a-window-to-your-collection/118).
 
 ## Features
 
