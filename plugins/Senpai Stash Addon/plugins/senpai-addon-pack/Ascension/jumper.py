@@ -5,6 +5,17 @@ import os
 import re
 from datetime import datetime
 
+try:
+    import stashapi.log as log
+    from stashapi.stashapp import StashInterface
+    STASHAPI_AVAILABLE = True
+except ImportError:
+    # Fallback to basic logging if stashapi is not available
+    import logging
+    logging.basicConfig(level=logging.INFO)
+    log = logging
+    STASHAPI_AVAILABLE = False
+
 def call_graphql(url, query, variables=None, cookies=None):
     headers = {"Content-Type": "application/json"}
     payload = {"query": query, "variables": variables}
@@ -13,14 +24,21 @@ def call_graphql(url, query, variables=None, cookies=None):
         return response.json()
     except Exception as e:
         error_msg = f"[ERROR] Request failed: {e}"
-        print(error_msg, file=sys.stderr)
+        if STASHAPI_AVAILABLE:
+            log.error(error_msg)
+        else:
+            print(error_msg, file=sys.stderr)
         return None
 
 def main():
     try:
         raw_input = sys.stdin.read()
         if not raw_input:
-            print(json.dumps({"error": "No input received"}))
+            error_msg = json.dumps({"error": "No input received"})
+            if STASHAPI_AVAILABLE:
+                log.error("No input received")
+            else:
+                print(error_msg, file=sys.stderr)
             return
         input_data = json.loads(raw_input)
         
@@ -35,25 +53,40 @@ def main():
         
         session = conn.get("SessionCookie", {})
         cookies = {session.get("Name"): session.get("Value")}
+        
+        if STASHAPI_AVAILABLE:
+            stash = StashInterface(conn)
+            log.info(f"Connected to Stash at {STASH_URL}")
     except Exception as e:
         error_msg = f"[ERROR] Failed parsing input: {e}"
-        print(error_msg, file=sys.stderr)
+        if STASHAPI_AVAILABLE:
+            log.error(error_msg)
+        else:
+            print(error_msg, file=sys.stderr)
         print(json.dumps({"error": error_msg}))
         return
 
     # Step 1: Fetch all performer IDs
+    if STASHAPI_AVAILABLE:
+        log.info("Fetching all performers...")
     find_query = "{ findPerformers(filter: { per_page: -1 }) { performers { id } } }"
     result = call_graphql(STASH_URL, find_query, cookies=cookies)
 
     if not result or "data" not in result or not result["data"]:
         error_msg = "[ERROR] Could not fetch performers."
-        print(error_msg, file=sys.stderr)
+        if STASHAPI_AVAILABLE:
+            log.error(error_msg)
+        else:
+            print(error_msg, file=sys.stderr)
         print(json.dumps({"error": error_msg}))
         return
         
     if "findPerformers" not in result["data"] or not result["data"]["findPerformers"]:
         error_msg = "[ERROR] No performers found in response."
-        print(error_msg, file=sys.stderr)
+        if STASHAPI_AVAILABLE:
+            log.error(error_msg)
+        else:
+            print(error_msg, file=sys.stderr)
         print(json.dumps({"error": error_msg}))
         return
 
@@ -61,6 +94,9 @@ def main():
     total = len(performers)
     success_count = 0
     variables_template = {}
+    
+    if STASHAPI_AVAILABLE:
+        log.info(f"Found {total} performers")
 
     # Step 2: Determine Logic based on task
     if task_action == "wipe":
@@ -74,6 +110,8 @@ def main():
         """
         action_desc = "deleted custom field history"
         display_name = "Wipe History"
+        if STASHAPI_AVAILABLE:
+            log.info("Starting wipe task...")
 
     elif task_action == "reset":
         mutation = """
@@ -86,6 +124,8 @@ def main():
         """
         action_desc = "reset ratings to null"
         display_name = "Reset Ratings"
+        if STASHAPI_AVAILABLE:
+            log.info("Starting reset task...")
 
     elif task_action == "prime":
         mutation = """
@@ -124,6 +164,10 @@ def main():
 
         random.shuffle(ratings_pool)
 
+        if STASHAPI_AVAILABLE:
+            log.info(f"Generated ratings pool. F: {num_f}, D: {num_d}, C: {num_c}")
+            log.info("Starting prime task...")
+
         # Apply ratings to performers
         for idx, p in enumerate(performers_list):
             pid = p["id"]
@@ -133,72 +177,187 @@ def main():
             res = call_graphql(STASH_URL, mutation, request_vars, cookies=cookies)
             if res and "errors" in res:
                 error_detail = f"[DEBUG] GraphQL Error on ID {pid}: {res['errors']}"
-                print(error_detail, file=sys.stderr)
+                if STASHAPI_AVAILABLE:
+                    log.debug(error_detail)
+                else:
+                    print(error_detail, file=sys.stderr)
             elif res and "data" in res:
                 success_count += 1
 
             if (idx + 1) % 50 == 0:
                 progress_msg = f"[INFO] {display_name}: Processed {idx + 1}/{total}..."
-                print(progress_msg, file=sys.stdout)
+                if STASHAPI_AVAILABLE:
+                    log.info(progress_msg)
+                else:
+                    print(progress_msg, file=sys.stdout)
 
     elif task_action == "snapshotexport":
-        # Fetch detailed performer info including name, rating, and custom fields
-        detailed_query = """
+        if STASHAPI_AVAILABLE:
+            log.info("Starting snapshot export task...")
+            
+        # Fetch detailed performer info including additional fields and scenes
+        detailed_performer_query = """
         query GetAllPerformersDetails {
           findPerformers(filter: { per_page: -1 }) {
             performers {
               id
               name
+              gender
+              birthdate
+              country
+              height_cm
               rating100
               custom_fields
+              image_path
+              scenes {
+                id
+              }
             }
           }
         }
         """
         
-        result = call_graphql(STASH_URL, detailed_query, cookies=cookies)
+        if STASHAPI_AVAILABLE:
+            log.debug("Fetching performer details...")
+        result = call_graphql(STASH_URL, detailed_performer_query, cookies=cookies)
         if not result:
             error_msg = "[ERROR] Failed to get response from GraphQL query."
-            print(error_msg, file=sys.stderr)
+            if STASHAPI_AVAILABLE:
+                log.error(error_msg)
+            else:
+                print(error_msg, file=sys.stderr)
             print(json.dumps({"error": error_msg}))
             return
             
         if "errors" in result:
             error_msg = f"[ERROR] GraphQL query returned errors: {result['errors']}"
-            print(error_msg, file=sys.stderr)
+            if STASHAPI_AVAILABLE:
+                log.error(error_msg)
+            else:
+                print(error_msg, file=sys.stderr)
             print(json.dumps({"error": error_msg}))
             return
             
         if "data" not in result or not result["data"]:
             error_msg = "[ERROR] No data returned from GraphQL query."
-            print(error_msg, file=sys.stderr)
+            if STASHAPI_AVAILABLE:
+                log.error(error_msg)
+            else:
+                print(error_msg, file=sys.stderr)
             print(json.dumps({"error": error_msg}))
             return
             
         if "findPerformers" not in result["data"] or not result["data"]["findPerformers"]:
             error_msg = "[ERROR] No performers found in GraphQL response."
-            print(error_msg, file=sys.stderr)
+            if STASHAPI_AVAILABLE:
+                log.error(error_msg)
+            else:
+                print(error_msg, file=sys.stderr)
             print(json.dumps({"error": error_msg}))
             return
             
         performers_details = result["data"]["findPerformers"]["performers"]
+        if STASHAPI_AVAILABLE:
+            log.info(f"Fetched details for {len(performers_details)} performers")
+        
+        # Fetch scene ratings
+        scene_query = """
+        query GetAllScenes {
+          findScenes(filter: { per_page: -1 }) {
+            scenes {
+              id
+              rating100
+            }
+          }
+        }
+        """
+        
+        if STASHAPI_AVAILABLE:
+            log.debug("Fetching scene ratings...")
+        scene_result = call_graphql(STASH_URL, scene_query, cookies=cookies)
+        if not scene_result:
+            error_msg = "[ERROR] Failed to get response from scene GraphQL query."
+            if STASHAPI_AVAILABLE:
+                log.error(error_msg)
+            else:
+                print(error_msg, file=sys.stderr)
+            print(json.dumps({"error": error_msg}))
+            return
+            
+        if "errors" in scene_result:
+            error_msg = f"[ERROR] Scene GraphQL query returned errors: {scene_result['errors']}"
+            if STASHAPI_AVAILABLE:
+                log.error(error_msg)
+            else:
+                print(error_msg, file=sys.stderr)
+            print(json.dumps({"error": error_msg}))
+            return
+            
+        if "data" not in scene_result or not scene_result["data"]:
+            error_msg = "[ERROR] No scene data returned from GraphQL query."
+            if STASHAPI_AVAILABLE:
+                log.error(error_msg)
+            else:
+                print(error_msg, file=sys.stderr)
+            print(json.dumps({"error": error_msg}))
+            return
+            
+        if "findScenes" not in scene_result["data"] or not scene_result["data"]["findScenes"]:
+            error_msg = "[ERROR] No scenes found in GraphQL response."
+            if STASHAPI_AVAILABLE:
+                log.error(error_msg)
+            else:
+                print(error_msg, file=sys.stderr)
+            print(json.dumps({"error": error_msg}))
+            return
+            
+        scenes_details = scene_result["data"]["findScenes"]["scenes"]
+        if STASHAPI_AVAILABLE:
+            log.info(f"Fetched ratings for {len(scenes_details)} scenes")
         
         # Get the directory where this script is located
         script_dir = os.path.dirname(os.path.abspath(__file__))
         
-        # Create filename with timestamp
+        # Create snapshots directory if it doesn't exist
+        snapshots_dir = os.path.join(script_dir, "snapshots")
+        if not os.path.exists(snapshots_dir):
+            os.makedirs(snapshots_dir)
+            if STASHAPI_AVAILABLE:
+                log.info(f"Created snapshots directory: {snapshots_dir}")
+        
+        # Create filename with timestamp in the snapshots directory
         timestamp = datetime.now().strftime("%Y-%m-%d-%H%M%S")
-        output_file = os.path.join(script_dir, f"[{timestamp}] - Ascension Database Snapshot.json")
+        output_file = os.path.join(snapshots_dir, f"[{timestamp}] - Ascension Database Snapshot.json")
         
         try:
             # Create export data structure
-            export_data = []
+            export_data = {
+                "performers": [],
+                "scenes": []
+            }
+            
             for performer in performers_details:
-                export_data.append({
+                # Extract scene IDs for this performer
+                scene_ids = [scene["id"] for scene in performer.get("scenes", [])]
+                
+                export_data["performers"].append({
                     "name": performer.get("name", "Unknown"),
+                    "ID": performer.get("id"),
+                    "gender": performer.get("gender"),
+                    "birthday": performer.get("birthdate"),
+                    "country": performer.get("country"),
+                    "height": performer.get("height_cm"),
                     "rating": performer.get("rating100"),
                     "stats": performer.get("custom_fields", {}).get("hotornot_stats"),
-                    "record": performer.get("custom_fields", {}).get("performer_record")
+                    "record": performer.get("custom_fields", {}).get("performer_record"),
+                    "image_path": performer.get("image_path"),
+                    "scenes": scene_ids  # Added scene IDs for this performer
+                })
+                
+            for scene in scenes_details:
+                export_data["scenes"].append({
+                    "id": scene.get("id"),
+                    "rating": scene.get("rating100")
                 })
             
             # Write to JSON file
@@ -209,19 +368,40 @@ def main():
             display_name = "Snapshot Export"
             success_count = len(performers_details)
             
+            if STASHAPI_AVAILABLE:
+                log.info(f"Exported {len(performers_details)} performers and {len(scenes_details)} scenes")
+                log.info(f"Snapshot saved to: {output_file}")
+            
         except Exception as e:
             error_msg = f"[ERROR] Failed to write snapshot file: {e}"
-            print(error_msg, file=sys.stderr)
+            if STASHAPI_AVAILABLE:
+                log.error(error_msg)
+            else:
+                print(error_msg, file=sys.stderr)
             print(json.dumps({"error": error_msg}))
             return
 
     elif task_action == "snapshotimport":
-        # Find the most recent snapshot file
+        if STASHAPI_AVAILABLE:
+            log.info("Starting snapshot import task...")
+            
+        # Get the directory where this script is located and snapshots folder
         script_dir = os.path.dirname(os.path.abspath(__file__))
+        snapshots_dir = os.path.join(script_dir, "snapshots")
         
-        # Look for files matching the pattern
+        # Check if snapshots directory exists
+        if not os.path.exists(snapshots_dir):
+            error_msg = "[ERROR] Snapshots directory not found."
+            if STASHAPI_AVAILABLE:
+                log.error(error_msg)
+            else:
+                print(error_msg, file=sys.stderr)
+            print(json.dumps({"error": error_msg}))
+            return
+        
+        # Look for files matching the pattern in snapshots directory
         snapshot_files = []
-        for filename in os.listdir(script_dir):
+        for filename in os.listdir(snapshots_dir):
             if filename.endswith(" - Ascension Database Snapshot.json"):
                 # Extract timestamp from filename
                 match = re.match(r'\[(\d{4}-\d{2}-\d{2}-\d{6})\]', filename)
@@ -234,19 +414,25 @@ def main():
                         continue
         
         if not snapshot_files:
-            error_msg = "[ERROR] No snapshot files found."
-            print(error_msg, file=sys.stderr)
+            error_msg = "[ERROR] No snapshot files found in snapshots directory."
+            if STASHAPI_AVAILABLE:
+                log.error(error_msg)
+            else:
+                print(error_msg, file=sys.stderr)
             print(json.dumps({"error": error_msg}))
             return
             
         # Sort by timestamp (newest first) and get the most recent
         snapshot_files.sort(key=lambda x: x[0], reverse=True)
-        most_recent_file = os.path.join(script_dir, snapshot_files[0][1])
+        most_recent_file = os.path.join(snapshots_dir, snapshot_files[0][1])
+        
+        if STASHAPI_AVAILABLE:
+            log.info(f"Using snapshot file: {most_recent_file}")
         
         try:
             # Read the JSON file
             with open(most_recent_file, 'r', encoding='utf-8') as f:
-                performers_data = json.load(f)
+                snapshot_data = json.load(f)
             
             # Get all performers with their names to match
             detailed_query = """
@@ -260,16 +446,24 @@ def main():
             }
             """
             
+            if STASHAPI_AVAILABLE:
+                log.debug("Fetching performer names for import...")
             result = call_graphql(STASH_URL, detailed_query, cookies=cookies)
             if not result or "data" not in result or not result["data"]:
                 error_msg = "[ERROR] Could not fetch performer names for import."
-                print(error_msg, file=sys.stderr)
+                if STASHAPI_AVAILABLE:
+                    log.error(error_msg)
+                else:
+                    print(error_msg, file=sys.stderr)
                 print(json.dumps({"error": error_msg}))
                 return
                 
             if "findPerformers" not in result["data"] or not result["data"]["findPerformers"]:
                 error_msg = "[ERROR] No performers found for import."
-                print(error_msg, file=sys.stderr)
+                if STASHAPI_AVAILABLE:
+                    log.error(error_msg)
+                else:
+                    print(error_msg, file=sys.stderr)
                 print(json.dumps({"error": error_msg}))
                 return
                 
@@ -297,7 +491,22 @@ def main():
             }
             """
             
+            scene_rating_mutation = """
+            mutation ImportSceneRating($id: ID!, $rating: Int) {
+              sceneUpdate(input: {
+                id: $id,
+                rating100: $rating
+              }) { id }
+            }
+            """
+            
             imported_count = 0
+            
+            # Import performer data
+            performers_data = snapshot_data.get("performers", [])
+            if STASHAPI_AVAILABLE:
+                log.info(f"Importing {len(performers_data)} performers...")
+                
             for performer_data in performers_data:
                 performer_name = performer_data["name"]
                 performer_id = performer_name_map.get(performer_name.lower())
@@ -314,7 +523,13 @@ def main():
                         
                         if res and "errors" in res:
                             error_detail = f"[DEBUG] GraphQL Error importing rating for {performer_name}: {res['errors']}"
-                            print(error_detail, file=sys.stderr)
+                            if STASHAPI_AVAILABLE:
+                                log.debug(error_detail)
+                            else:
+                                print(error_detail, file=sys.stderr)
+                        elif res and "data" in res:
+                            # Successfully updated rating
+                            pass
                     
                     # Update custom fields if available
                     custom_fields_data = {}
@@ -335,35 +550,92 @@ def main():
                         
                         if res and "errors" in res:
                             error_detail = f"[DEBUG] GraphQL Error importing custom fields for {performer_name}: {res['errors']}"
-                            print(error_detail, file=sys.stderr)
+                            if STASHAPI_AVAILABLE:
+                                log.debug(error_detail)
+                            else:
+                                print(error_detail, file=sys.stderr)
                         elif res and "data" in res:
                             imported_count += 1
                     
                     if (imported_count + 1) % 50 == 0:
                         progress_msg = f"[INFO] Snapshot Import: Processed {imported_count + 1} performers..."
-                        print(progress_msg, file=sys.stdout)
+                        if STASHAPI_AVAILABLE:
+                            log.info(progress_msg)
+                        else:
+                            print(progress_msg, file=sys.stdout)
                 else:
                     warning_msg = f"[DEBUG] Warning: Performer '{performer_name}' not found in database"
-                    print(warning_msg, file=sys.stderr)
+                    if STASHAPI_AVAILABLE:
+                        log.debug(warning_msg)
+                    else:
+                        print(warning_msg, file=sys.stderr)
             
-            action_desc = f"imported snapshot from {snapshot_files[0][1]} for {imported_count} performers"
+            # Import scene ratings
+            scenes_data = snapshot_data.get("scenes", [])
+            scene_imported_count = 0
+            if STASHAPI_AVAILABLE:
+                log.info(f"Importing {len(scenes_data)} scenes...")
+                
+            for scene_data in scenes_data:
+                scene_id = scene_data["id"]
+                scene_rating = scene_data["rating"]
+                
+                if scene_rating is not None:
+                    scene_rating_variables = {
+                        "id": scene_id,
+                        "rating": scene_rating
+                    }
+                    
+                    res = call_graphql(STASH_URL, scene_rating_mutation, scene_rating_variables, cookies=cookies)
+                    
+                    if res and "errors" in res:
+                        error_detail = f"[DEBUG] GraphQL Error importing rating for scene {scene_id}: {res['errors']}"
+                        if STASHAPI_AVAILABLE:
+                            log.debug(error_detail)
+                        else:
+                            print(error_detail, file=sys.stderr)
+                    elif res and "data" in res:
+                        scene_imported_count += 1
+                    # Added missing else case to handle successful import without logging
+                    else:
+                        scene_imported_count += 1
+                
+                if (scene_imported_count + 1) % 50 == 0:
+                    progress_msg = f"[INFO] Snapshot Import: Processed {scene_imported_count + 1} scenes..."
+                    if STASHAPI_AVAILABLE:
+                        log.info(progress_msg)
+                    else:
+                        print(progress_msg, file=sys.stdout)
+            
+            action_desc = f"imported snapshot from {snapshot_files[0][1]} for {imported_count} performers and {scene_imported_count} scenes"
             display_name = "Snapshot Import"
             success_count = imported_count
             
+            if STASHAPI_AVAILABLE:
+                log.info(f"Import complete: {imported_count} performers, {scene_imported_count} scenes")
+            
         except Exception as e:
             error_msg = f"[ERROR] Failed to import snapshot: {e}"
-            print(error_msg, file=sys.stderr)
+            if STASHAPI_AVAILABLE:
+                log.error(error_msg)
+            else:
+                print(error_msg, file=sys.stderr)
             print(json.dumps({"error": error_msg}))
             return
 
     else:
         error_msg = f"[ERROR] Unknown task action: {task_action}"
-        print(error_msg, file=sys.stderr)
+        if STASHAPI_AVAILABLE:
+            log.error(error_msg)
+        else:
+            print(error_msg, file=sys.stderr)
         print(json.dumps({"error": error_msg}))
         return
 
     # Step 3: Execute (only for tasks that need mutation execution)
     if task_action not in ["snapshotexport", "snapshotimport"]:  # Skip execution for export/import
+        if STASHAPI_AVAILABLE:
+            log.info(f"Starting {display_name} task...")
         for idx, p in enumerate(performers):
             pid = p["id"]
             
@@ -374,16 +646,24 @@ def main():
             
             if res and "errors" in res:
                 error_detail = f"[DEBUG] GraphQL Error on ID {pid}: {res['errors']}"
-                print(error_detail, file=sys.stderr)
+                if STASHAPI_AVAILABLE:
+                    log.debug(error_detail)
+                else:
+                    print(error_detail, file=sys.stderr)
             elif res and "data" in res:
                 success_count += 1
             
             if (idx + 1) % 50 == 0:
                 progress_msg = f"[INFO] {display_name}: Processed {idx + 1}/{total}..."
-                print(progress_msg, file=sys.stdout)
+                if STASHAPI_AVAILABLE:
+                    log.info(progress_msg)
+                else:
+                    print(progress_msg, file=sys.stdout)
 
     # Final output back to Stash
     output_msg = f"Successfully {action_desc} for {success_count} performers."
+    if STASHAPI_AVAILABLE:
+        log.info(output_msg)
     print(json.dumps({
         "output": output_msg
     }))
