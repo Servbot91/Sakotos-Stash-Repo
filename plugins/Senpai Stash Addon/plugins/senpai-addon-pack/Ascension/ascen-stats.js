@@ -6,7 +6,6 @@ function formatScore(score) {
 }
 
 function getRatingTier(rating) {
-  // Convert integer rating to actual rating value
   const actualRating = rating / 10;
   if (actualRating >= 8.5) return 'S-Tier';
   if (actualRating >= 7.0) return 'A-Tier';
@@ -69,7 +68,6 @@ const collapseObserver = new MutationObserver(() => {
       chevron.style.transform = 'rotate(180deg)';
     }
 
-    // Stop observing once expanded
     collapseObserver.disconnect();
   }
 });
@@ -104,7 +102,7 @@ const statsObserverNew = new MutationObserver(() => {
       el.dataset.parsed = 'true';
       el.replaceWith(grid);
     } catch (err) {
-      console.warn('HotOrNot stats parse failed (new):', err);
+      console.warn('Ascension stats parse failed (new):', err);
     }
   });
 });
@@ -114,13 +112,13 @@ function buildStatsGrid(data) {
   grid.className = 'stats-grid';
 
   const streakEmojis = [
-    { min: 3, max: 5, symbol: '❤️‍🔥' },
-    { min: 6, max: 9, symbol: '🔥' },
-    { min: 10, max: 14, symbol: '💎' },
-	{ min: 15, max: 20, symbol: '♠' },
-	{ min: 21, max: 26, symbol: '✨' },
-    { min: 27, max: Infinity, symbol: '👑' }
-  ];
+    { min: 2, max: 3, symbol: '🔥' },
+    { min: 4, max: 5, symbol: '❤️‍🔥' },
+    { min: 6, max: 8, symbol: '💎' },
+    { min: 9, max: 12, symbol: '♠️' },
+    { min: 13, max: 17, symbol: '✨' },
+    { min: 18, max: Infinity, symbol: '👑' }
+];
 
   Object.entries(data).forEach(([key, value]) => {
     const label = key
@@ -129,7 +127,6 @@ function buildStatsGrid(data) {
 
     let displayValue = value;
     
-    // Format rating values with decimals
     if (key.toLowerCase().includes('rating') || key === 'current_score') {
       displayValue = formatScore(value);
     } else if (key === 'last_match') {
@@ -216,7 +213,7 @@ const statsObserverOld = new MutationObserver(() => {
       el.dataset.parsed = 'true';
       el.replaceWith(grid);
     } catch (err) {
-      console.warn('HotOrNot stats parse failed (old):', err);
+      console.warn('Ascension stats parse failed (old):', err);
     }
   });
 });
@@ -253,33 +250,6 @@ const recordObserverNew = new MutationObserver(() => {
   });
 });
 
-// ==============================================================================
-// Stash Version .30 and Earlier Performer Record (Match History Timeline) Parser
-// ==============================================================================
-const recordObserverOld = new MutationObserver(() => {
-  document.querySelectorAll('.performer_record .TruncatedText').forEach(el => {
-    if (el.dataset.parsed) return;
-
-    try {
-      const rawText = el.textContent.trim();
-      if (!rawText.startsWith('[')) return;
-
-      const history = JSON.parse(rawText);
-      const container = el.closest('.performer_record');
-
-      const titleSpan = container?.querySelector('.detail-item-title');
-      if (titleSpan) titleSpan.textContent = 'Past Matchups';
-
-      const timeline = buildTimeline(history);
-      el.dataset.parsed = 'true';
-      el.innerHTML = '';
-      el.appendChild(timeline);
-    } catch (err) {
-      console.warn('Performer record parse failed (old):', err);
-    }
-  });
-});
-
 function buildTimeline(history) {
   const timeline = document.createElement('div');
   timeline.className = 'match-timeline';
@@ -300,7 +270,6 @@ function buildTimeline(history) {
       ? match.opponent.split(':')
       : [null, match.opponent];
 
-    // Truncate long performer names
     const maxNameLength = 15;
     const truncatedName = oppName.length > maxNameLength 
       ? oppName.substring(0, maxNameLength) + '...' 
@@ -308,14 +277,12 @@ function buildTimeline(history) {
 
     const profileUrl = oppId ? `/performers/${oppId}/scenes` : '#';
     
-    // Get the previous match to calculate rating change
     let tierIndicator = '';
     if (index < sortedHistory.length - 1) {
       const previousMatch = sortedHistory[index + 1];
       tierIndicator = getTierChangeIndicator(previousMatch.ratingAfter, match.ratingAfter);
     }
     
-    // Format rating with decimal
     const formattedRating = formatScore(match.ratingAfter);
 
     timeline.insertAdjacentHTML('beforeend', `

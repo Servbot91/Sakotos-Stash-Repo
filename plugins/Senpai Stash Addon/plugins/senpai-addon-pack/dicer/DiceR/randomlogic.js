@@ -1,3 +1,4 @@
+
 (function() {
   'use strict';
 
@@ -264,10 +265,9 @@
         historyCount: this.historySeen.size
       });
       
-      // Auto-save periodically to reduce I/O
-      if (this.recentSeen.size % 10 === 1) {
-        this.saveSeenData();
-      }
+      // Save immediately to ensure persistence, especially before navigation
+      // The save logic includes maintainSizeLimits and actual localStorage write
+      this.saveSeenData();
     }
 
     hasSeen(id) {
@@ -399,117 +399,113 @@
   }
 
   // Optimized: Hybrid approach for large collections with seen/unseen tracking
-  async function randomWithSamplingAndTracking(entity, idField, redirectPrefix, internalFilter, cacheKey) {
-    const realEntityPlural = getPlural(entity);
-    const seenTracker = new TieredSeenTracker(cacheKey);
-    const dataManager = new CachedDataManager(cacheKey);
+async function randomWithSamplingAndTracking(entity, idField, redirectPrefix, internalFilter, cacheKey) {
+  const realEntityPlural = getPlural(entity);
+  const seenTracker = new TieredSeenTracker(cacheKey);
+  const dataManager = new CachedDataManager(cacheKey);
 
-    // Refresh total count periodically with timeout handling
-    if (dataManager.needsRefresh()) {
-      DiceRLogger.log("info", "Refreshing total count");
-      
-      try {
-        const count = await retryWithTimeout(() => getTotalCount(entity, internalFilter));
-        if (count !== null) {
-          dataManager.updateTotalCount(count);
-        } else {
-          DiceRLogger.log("warn", "Failed to refresh count, using cached value");
-        }
-      } catch (error) {
-        DiceRLogger.log("error", "Failed to refresh count due to timeout", error);
-        // Continue with cached value
-      }
-    }
-
-    // Try to find an item that hasn't been seen
-    let attempts = 0;
-    let selectedItem = null;
-    let selectedId = null;
-
-    DiceRLogger.log("info", "Starting selection attempts", { maxAttempts: CONFIG.MAX_RETRY_ATTEMPTS });
-
-    while (attempts < CONFIG.MAX_RETRY_ATTEMPTS && !selectedItem) {
-      attempts++;
-      DiceRLogger.log("info", `Selection attempt #${attempts}`);
-      
-      try {
-        const itemResult = await retryWithTimeout(() => getRandomItemBySampling(entity, idField, internalFilter));
-        
-        if (itemResult && itemResult.item && itemResult.id) {
-          // Check if we've seen this item before
-          if (!seenTracker.hasSeen(itemResult.id)) {
-            selectedItem = itemResult.item;
-            selectedId = itemResult.id;
-            DiceRLogger.log("success", "Found unseen item", { 
-              id: selectedId, 
-              attemptsUsed: attempts 
-            });
-            break;
-          } else {
-            DiceRLogger.log("info", "Skipping already seen item", { 
-              id: itemResult.id, 
-              attempts 
-            });
-          }
-        } else {
-          DiceRLogger.log("warn", "Failed to get item from sampling", { attempts });
-        }
-      } catch (error) {
-        if (error.message === 'REQUEST_TIMEOUT') {
-          DiceRLogger.log("warn", "Timeout during sampling attempt", { attempts });
-        } else {
-          throw error;
-        }
-      }
-    }
-
-    // If we couldn't find an unseen item, either reshuffle or pick one anyway
-    if (!selectedItem) {
-      DiceRLogger.log("warn", "All items may have been seen, allowing repeats");
-      
-      // Clear seen tracking to allow repeats if most items have been seen
-      const totalCount = dataManager.getTotalCount();
-      const seenCount = seenTracker.getSeenCount();
-      
-      if (seenCount > (totalCount || 10000) * 0.9) {
-        DiceRLogger.log("warn", "Resetting seen tracking - most items seen", { 
-          seenCount, 
-          totalCount, 
-          threshold: (totalCount || 10000) * 0.9 
-        });
-        seenTracker.clear();
-      }
-      
-      try {
-        const sampleResult = await retryWithTimeout(() => getRandomItemBySampling(entity, idField, internalFilter));
-        if (sampleResult && sampleResult.item) {
-          selectedItem = sampleResult.item;
-          selectedId = sampleResult.id;
-          DiceRLogger.log("success", "Selected item with repeats allowed", { selectedId });
-        }
-      } catch (error) {
-        if (error.message !== 'REQUEST_TIMEOUT') {
-          throw error;
-        }
-      }
-    }
-
-    if (selectedItem && selectedId) {
-      // Mark as seen
-      seenTracker.addSeen(selectedId);
-
-      DiceRLogger.log("success", "Selected random item", {
-        itemId: selectedId,
-        seenCount: seenTracker.getSeenCount(),
-        totalEstimated: dataManager.getTotalCount()
-      });
-
-      window.location.href = `${redirectPrefix}${selectedId}`;
+  // Always fetch and update total count to ensure it's fresh
+  try {
+    const count = await retryWithTimeout(() => getTotalCount(entity, internalFilter));
+    if (count !== null) {
+      dataManager.updateTotalCount(count);
     } else {
-      DiceRLogger.log("error", "Failed to select item after max attempts");
-      alert("Unable to select random item.");
+      DiceRLogger.log("warn", "Failed to refresh count, using cached value");
+    }
+  } catch (error) {
+    DiceRLogger.log("error", "Failed to refresh count due to timeout", error);
+    // Continue with cached value
+  }
+
+  // Try to find an item that hasn't been seen
+  let attempts = 0;
+  let selectedItem = null;
+  let selectedId = null;
+
+  DiceRLogger.log("info", "Starting selection attempts", { maxAttempts: CONFIG.MAX_RETRY_ATTEMPTS });
+
+  while (attempts < CONFIG.MAX_RETRY_ATTEMPTS && !selectedItem) {
+    attempts++;
+    DiceRLogger.log("info", `Selection attempt #${attempts}`);
+
+    try {
+      const itemResult = await retryWithTimeout(() => getRandomItemBySampling(entity, idField, internalFilter));
+
+      if (itemResult && itemResult.item && itemResult.id) {
+        // Check if we've seen this item before
+        if (!seenTracker.hasSeen(itemResult.id)) {
+          selectedItem = itemResult.item;
+          selectedId = itemResult.id;
+          DiceRLogger.log("success", "Found unseen item", {
+            id: selectedId,
+            attemptsUsed: attempts
+          });
+          break;
+        } else {
+          DiceRLogger.log("info", "Skipping already seen item", {
+            id: itemResult.id,
+            attempts
+          });
+        }
+      } else {
+        DiceRLogger.log("warn", "Failed to get item from sampling", { attempts });
+      }
+    } catch (error) {
+      if (error.message === 'REQUEST_TIMEOUT') {
+        DiceRLogger.log("warn", "Timeout during sampling attempt", { attempts });
+      } else {
+        throw error;
+      }
     }
   }
+
+  // If we couldn't find an unseen item, either reshuffle or pick one anyway
+  if (!selectedItem) {
+    DiceRLogger.log("warn", "All items may have been seen, allowing repeats");
+
+    // Clear seen tracking to allow repeats if most items have been seen
+    const totalCount = dataManager.getTotalCount();
+    const seenCount = seenTracker.getSeenCount();
+
+    if (seenCount > (totalCount || 10000) * 0.9) {
+      DiceRLogger.log("warn", "Resetting seen tracking - most items seen", {
+        seenCount,
+        totalCount,
+        threshold: (totalCount || 10000) * 0.9
+      });
+      seenTracker.clear();
+    }
+
+    try {
+      const sampleResult = await retryWithTimeout(() => getRandomItemBySampling(entity, idField, internalFilter));
+      if (sampleResult && sampleResult.item) {
+        selectedItem = sampleResult.item;
+        selectedId = sampleResult.id;
+        DiceRLogger.log("success", "Selected item with repeats allowed", { selectedId });
+      }
+    } catch (error) {
+      if (error.message !== 'REQUEST_TIMEOUT') {
+        throw error;
+      }
+    }
+  }
+
+  if (selectedItem && selectedId) {
+    // Mark as seen
+    seenTracker.addSeen(selectedId);
+
+    DiceRLogger.log("success", "Selected random item", {
+      itemId: selectedId,
+      seenCount: seenTracker.getSeenCount(),
+      totalEstimated: dataManager.getTotalCount()
+    });
+
+    window.location.href = `${redirectPrefix}${selectedId}`;
+  } else {
+    DiceRLogger.log("error", "Failed to select item after max attempts");
+    alert("Unable to select random item.");
+  }
+}
 
   // Helper function to get random item via optimized sampling
   async function getRandomItemBySampling(entity, idField, internalFilter) {
@@ -1041,7 +1037,6 @@
 
   // Cleanup function for event listeners
   function cleanupEventListeners() {
-    document.removeEventListener('click', documentClickHandler);
     window.removeEventListener('popstate', popstateHandler);
     window.removeEventListener('hashchange', hashchangeHandler);
   }
@@ -1134,3 +1129,4 @@
   });
 
 })();
+
