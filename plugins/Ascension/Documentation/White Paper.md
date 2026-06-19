@@ -177,8 +177,33 @@ $$Result = (K \text{ Factor}) \times (\text{Elo Probability}) \times (\text{Unde
 | **Champion** | Streak $5–9$          | **0.7x**                         | Significant reduction in gains to keep the "King" within reach.      |
 | **Champion** | Streak $\ge 10$       | **0.4x**                         | **Hard Cap**: Extreme dampening to stop runaway leaderboard leaders. |
 
+
+## Composite Scoring
+
+Composite scoring is added in addition to the default 0-100 (0-10) scale system of stash without changing the plugin database rating system. This allows for more granular rating at all levels of the tier spectrum and allowing for infinite scaling while maintaining rank integrity.
+
+Forumla:
+**Composite Score = (Rating/100) + (Win Rate × 0.5) + (Win Margin/1000) + (Total Matches/10000)**
+
+Scoring Example of an Average Performer:
+Rating:     75 / 100      = 0.75000
+Win Rate:   9/12 × 0.5    = 0.37500
+Win Margin: 4 / 1000      = 0.00400
+Matches:    12 / 10000    = 0.00120
+─────────────────────────────────
+Total:                    = 1.13020
+
+Scoring Example of a Perfect Performer:
+Rating:     100 / 100     = 1.00000
+Win Rate:   11/11 × 0.5   = 0.50000
+Win Margin: 11 / 1000     = 0.01100
+Matches:    11 / 10000    = 0.00110
+─────────────────────────────────
+Total:                    = 1.51210
+
+
 ---
 
 # Summary
 
-The aggregation of all these systems in tandem allows for a dynamic granular vertical scaling rating system unique to the user that evolves in real time. Users can expect to see a healthy vertically scaled tier distribution of their database when starting from 0 or by using the Primer features in the stash task settings.
+The aggregation of all these systems allows for a dynamic granular vertical scaling rating system unique to the user that evolves in real time. Users can expect to see a healthy vertically scaled tier distribution of their database when starting from 0 or by using the Primer features in the stash task settings.
