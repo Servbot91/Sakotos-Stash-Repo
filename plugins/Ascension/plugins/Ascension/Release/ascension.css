@@ -666,8 +666,12 @@
   font-size: 1.1rem;
 }
 
+/* ============================================
+   FULL BADGE — used on single performer pages
+   ============================================ */
 .hon-battle-rank-badge {
   display: inline-flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
   padding: 6px 12px;
@@ -685,6 +689,7 @@
   vertical-align: middle;
   cursor: default;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
+  max-width: 100%;
 }
 
 .hon-battle-rank-badge:hover {
@@ -692,20 +697,18 @@
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
 
-.hon-rank-emoji {
-  font-size: 1.1em;
-}
-
-.hon-rank-text {
+.hon-battle-rank-badge .hon-rank-text {
   font-weight: 700;
+  white-space: nowrap;
 }
 
-.hon-rank-total {
+.hon-battle-rank-badge .hon-rank-total {
   color: #888;
   font-size: 0.85em;
+  white-space: nowrap;
 }
 
-.hon-match-stats {
+.hon-battle-rank-badge .hon-match-stats {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -713,9 +716,10 @@
   padding-left: 10px;
   border-left: 1px solid rgba(255, 255, 255, 0.3);
   font-size: 0.85em;
+  white-space: nowrap;
 }
 
-.hon-stats-record {
+.hon-battle-rank-badge .hon-stats-record {
   display: inline-flex;
   gap: 4px;
 }
@@ -729,7 +733,6 @@
   color: #f87171;
   font-weight: 600;
 }
-
 
 .hon-draws {
   color: #a3a3a3;
@@ -757,18 +760,26 @@
   border-radius: 10px;
 }
 
-@media (max-width: 768px) {
-  
-  .hon-battle-rank-badge {
-    flex-wrap: nowrap;
-  }
-  
-  .hon-battle-rank-badge-compact {
-    display: inline-flex !important;
-  }
-  
+/* Ascended Score display */
+.hon-battle-rank-badge .hon-asc-score-display,
+.hon-battle-rank-badge-compact .hon-asc-score-display {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
+.hon-asc-score-display svg {
+  fill: currentColor;
+  flex-shrink: 0;
+}
+
+.hon-asc-score-value {
+  font-weight: bold;
+}
+
+/* ============================================
+   COMPACT BADGE — used on performer list cards
+   ============================================ */
 .hon-battle-rank-badge-compact {
   display: inline-flex !important;
   align-items: center !important;
@@ -780,23 +791,20 @@
   background: linear-gradient(135deg, #2a2a2a, #1a1a1a) !important;
   border: 1px solid #444 !important;
   color: #fff !important;
-  width: auto !important; 
-  max-width: fit-content !important; 
+  width: auto !important;
+  max-width: fit-content !important;
   box-sizing: border-box !important;
   min-height: auto !important;
   height: auto !important;
-  align-self: center !important; 
+  align-self: center !important;
+  line-height: 1.4 !important;
+  min-height: 24px !important;
 }
 
 .hon-battle-rank-badge-compact .hon-rank-text,
 .hon-battle-rank-badge-compact .hon-rank-total,
 .hon-battle-rank-badge-compact .hon-match-stats {
   transform: translateX(-3px) !important;
-}
-
-.hon-battle-rank-badge-compact .hon-rank-emoji {
-  font-size: 1.1em !important;
-  flex-shrink: 0 !important;
 }
 
 .hon-battle-rank-badge-compact .hon-rank-text {
@@ -849,37 +857,61 @@
 }
 
 .thumbnail-section {
-  position: relative !important; 
+  position: relative !important;
 }
 
 .thumbnail-section .hon-battle-rank-badge-compact {
-  position: absolute !important; 
-  bottom: 5px !important; 
-  right: 5px !important; 
-  left: auto !important; 
-  transform: none !important; 
-  z-index: 10 !important; 
-  margin: 0 !important; 
+  position: absolute !important;
+  bottom: 5px !important;
+  right: 5px !important;
+  left: auto !important;
+  transform: none !important;
+  z-index: 10 !important;
+  margin: 0 !important;
   width: auto !important;
-  max-width: 80% !important; 
-}
-
-
-.hon-battle-rank-badge-compact {
-  line-height: 1.4!important;
-  min-height: 24px !important;
+  max-width: 80% !important;
 }
 
 @media (max-width: 180px) {
   .hon-battle-rank-badge-compact .hon-match-stats {
     display: none !important;
   }
-  
+
   .hon-battle-rank-badge-compact {
     gap: 2px !important;
     padding: 2px 4px !important;
   }
 }
+
+/* ============================================
+   MOBILE ADJUSTMENTS
+   ============================================ */
+@media (max-width: 768px) {
+  /* Full badge on single performer page: keep all stats visible and wrap cleanly */
+  .hon-battle-rank-badge {
+    display: inline-flex !important;
+    flex-wrap: wrap !important;
+    gap: 4px !important;
+    padding: 6px 10px !important;
+    font-size: 0.85rem !important;
+    max-width: 100% !important;
+  }
+
+  .hon-battle-rank-badge .hon-match-stats {
+    display: inline-flex !important;
+    margin-left: 4px !important;
+    padding-left: 6px !important;
+    border-left: 1px solid rgba(255, 255, 255, 0.3) !important;
+  }
+
+  /* Allow the quality-group container to wrap so the badge isn't squeezed */
+  .quality-group {
+    flex-wrap: wrap !important;
+    max-width: 100% !important;
+    overflow: visible !important;
+  }
+}
+
 
 /* === comparison.css === */
 .hon-comparison-area {
@@ -896,7 +928,8 @@
   align-items: stretch;
   width: 100%;
   max-width: 960px;
-  animation: fadeIn 0.3s ease-out;
+  /* Keep the container from collapsing while the old pair is replaced */
+  min-height: 600px;
 }
 
 .hon-vs-divider {
@@ -912,20 +945,57 @@
   text-shadow: 0 0 20px rgba(220, 53, 69, 0.5);
 }
 
+/* Entry animation for each new pair */
+.hon-pair-entering {
+  animation: hon-pair-enter 0.45s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+}
+
+@keyframes hon-pair-enter {
+  from {
+    opacity: 0;
+    transform: translateY(30px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Mobile: whole deck rises and scales in as one unit */
 @media (max-width: 1200px) {
+  .hon-comparison-area {
+    min-height: auto;
+  }
+
   .hon-vs-container {
     grid-template-columns: 1fr;
     gap: 30px;
+    min-height: auto;
   }
-  
+
   .hon-vs-divider {
     display: flex;
     justify-content: center;
     padding: 10px 0;
   }
-  
+
   .hon-scene-card {
     min-height: auto;
+  }
+
+  .hon-pair-entering {
+    animation: hon-mobile-deck-enter 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+  }
+}
+
+@keyframes hon-mobile-deck-enter {
+  from {
+    opacity: 0;
+    transform: translateY(40px) scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
   }
 }
 
@@ -2898,16 +2968,6 @@
   box-shadow: none;
 }
 
-.hon-vs-container {
-  margin: 0 auto;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  height: 100%;
-  position: relative;
-}
-
 @media (max-width: 1200px) {
   .hon-vs-container {
     display: flex;
@@ -3087,50 +3147,142 @@
   
 }
 
+
 /* === performer-cards.css === */
-.hon-performer-card,
-.hon-performer-image-container,
-.hon-performer-image,
-.hon-performer-duration,
-.hon-performer-body,
-.hon-performer-info,
-.hon-performer-title-row,
-.hon-performer-title,
-.hon-performer-meta,
-.hon-performer-rank,
-.hon-performer-image .hon-no-image {
-  box-sizing: border-box;
+/* =========================
+   === THEME VARIABLES ===
+   ========================= */
+:root {
+  --hon-card-bg: rgba(26, 26, 26, 0.88);
+  --hon-card-radius: 20px;
+  --hon-card-shadow:
+    0 1px 1px rgba(0, 0, 0, 0.10),
+    0 4px 8px rgba(0, 0, 0, 0.15),
+    0 12px 24px rgba(0, 0, 0, 0.20);
+  --hon-card-shadow-hover:
+    0 20px 40px rgba(0, 0, 0, 0.35),
+    0 0 24px rgba(28, 180, 214, 0.12);
+  --hon-accent: #1cb4d6;
+  --hon-title-color: #ffffff;
+  --hon-meta-color: #aaaaaa;
 }
 
-.hon-performer-card {
+/* =========================
+   === BATTLE / COMPARISON CARDS ===
+   ========================= */
+.hon-performer-card,
+.hon-image-card,
+.hon-scene-card {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border-radius: 2px;
+  border-radius: var(--hon-card-radius);
   background: var(--hon-card-bg, #1a1a1a) !important;
-  box-shadow: var(--hon-card-shadow, 0 2px 8px rgba(0,0,0,0.06));
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: none;
+  border-top: 4px solid transparent;
+  box-shadow: var(--hon-card-shadow);
   min-width: 410px;
+  transition: transform 0.35s cubic-bezier(0.175, 0.885, 0.32, 1.275),
+              box-shadow 0.35s ease,
+              border-color 0.3s ease;
+  will-change: transform, box-shadow;
 }
 
-.hon-performer-image-container {
+@media (min-width: 1201px) {
+  .hon-performer-card:hover,
+  .hon-image-card:hover,
+  .hon-scene-card:hover {
+    transform: translateY(-6px);
+    box-shadow: var(--hon-card-shadow-hover);
+    border-top-color: var(--hon-accent);
+  }
+}
+
+.hon-performer-image-container,
+.hon-scene-image-container,
+.hon-image-image-container,
+.hon-selection-image-container {
   position: relative;
   width: 100%;
-  max-height: 46vh;
   overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
   background: var(--hon-image-bg, #1a1a1a);
+  border-radius: 0;
+  margin: 0;
 }
 
-.hon-performer-image {
+.hon-performer-image-container,
+.hon-scene-image-container,
+.hon-image-image-container {
+  max-height: 46vh;
+  aspect-ratio: 3 / 4;
+}
+
+/* Gradient overlay on battle card images */
+.hon-performer-image-container::after,
+.hon-scene-image-container::after,
+.hon-image-image-container::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to top,
+    rgba(0, 0, 0, 0.75) 0%,
+    rgba(0, 0, 0, 0.30) 45%,
+    rgba(0, 0, 0, 0) 70%
+  );
+  pointer-events: none;
+  z-index: 1;
+}
+
+.hon-performer-image-container .hon-performer-duration,
+.hon-performer-image-container .hon-streak-badge,
+.hon-performer-image-container .hon-scene-duration,
+.hon-performer-image-container .hon-click-hint,
+.hon-performer-image-container .hon-no-image,
+.hon-scene-image-container .hon-streak-badge,
+.hon-scene-image-container .hon-scene-duration,
+.hon-scene-image-container .hon-click-hint,
+.hon-scene-image-container .hon-no-image,
+.hon-image-image-container .hon-streak-badge,
+.hon-image-image-container .hon-image-rank-overlay,
+.hon-image-image-container .hon-no-image {
+  z-index: 2;
+}
+
+/* Kill sub-pixel lines: oversize images by 1% and center */
+.hon-performer-image,
+.hon-scene-image,
+.hon-image-image-container img,
+.hon-selection-image {
   display: block;
-  max-width: 100%;
-  max-height: 36vh;
-  width: auto;
-  height: auto;
-  object-fit: contain;
+  width: calc(100% + 2px);
+  height: calc(100% + 2px);
+  max-width: none;
+  max-height: none;
+  margin: -1px;
+  object-fit: cover;
+  object-position: center top;
   background: #1a1a1a;
+  transition: transform 0.5s ease;
+  transform: translateZ(0);
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+}
+
+.hon-selection-image {
+  object-fit: contain;
+}
+
+.hon-performer-card:hover .hon-performer-image,
+.hon-scene-card:hover .hon-scene-image,
+.hon-image-card:hover .hon-image-image-container img,
+.hon-selection-card:hover .hon-selection-image {
+  transform: scale(1.04) translateZ(0);
 }
 
 .hon-performer-duration {
@@ -3144,23 +3296,54 @@
   border-radius: 6px;
 }
 
-.hon-performer-body {
+.hon-performer-body,
+.hon-scene-body,
+.hon-image-body {
   padding: 12px;
   display: block;
 }
 
-
-.hon-performer-title {
+/* Typography + chip meta */
+.hon-performer-title,
+.hon-scene-title,
+.hon-selection-name {
   margin: 0 0 6px 0;
-  font-size: 1rem;
-  line-height: 1.2;
-  color: var(--hon-title-color, #111);
+  font-size: 1.15rem;
+  font-weight: 700;
+  line-height: 1.25;
+  color: var(--hon-title-color, #fff);
 }
 
-.hon-performer-meta .hon-meta-item {
-  margin-bottom: 4px;
-  font-size: 1rem;
-  color: var(--hon-meta-color, #555);
+.hon-performer-meta,
+.hon-scene-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.hon-performer-meta .hon-meta-item,
+.hon-scene-meta .hon-meta-item,
+.hon-selection-rating,
+.hon-selection-meta-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: fit-content;
+  padding: 4px 10px;
+  font-size: 0.88rem;
+  color: var(--hon-meta-color, #aaa);
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  line-height: 1.35;
+}
+
+.hon-performer-meta .hon-meta-item strong,
+.hon-scene-meta .hon-meta-item strong,
+.hon-selection-meta-item strong {
+  color: #888;
+  font-weight: 600;
 }
 
 .hon-performer-rank {
@@ -3169,7 +3352,56 @@
   margin-left: 8px;
 }
 
-/* Selection cards */
+/* =========================
+   === CHOOSE BUTTON ===
+   ========================= */
+.hon-choose-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px;
+  margin-top: 12px;
+  border-radius: 12px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  background: rgba(28, 180, 214, 0.12);
+  color: var(--hon-accent);
+  border: 1px solid rgba(28, 180, 214, 0.25);
+  transition: all 0.25s ease;
+  cursor: pointer;
+}
+
+@media (min-width: 1201px) {
+  .hon-choose-btn:hover {
+    background: rgba(28, 180, 214, 0.25);
+    color: #fff;
+    box-shadow: 0 0 16px rgba(28, 180, 214, 0.2);
+  }
+}
+
+.hon-choose-btn.chosen-btn {
+  background: linear-gradient(135deg, #4CAF50, #2E7D32) !important;
+  color: white !important;
+  font-weight: bold;
+  transition: all 0.3s ease;
+  border-radius: 12px;
+  padding: 8px;
+  text-align: center;
+}
+
+.hon-choose-btn.not-chosen-btn {
+  background: linear-gradient(135deg, #F44336, #C62828) !important;
+  color: white !important;
+  font-weight: bold;
+  transition: all 0.3s ease;
+  border-radius: 12px;
+  padding: 8px;
+  text-align: center;
+}
+
+/* =========================
+   === SELECTION CARDS (gauntlet/champion) ===
+   ========================= */
 .hon-performer-selection {
   width: 100%;
   box-sizing: border-box;
@@ -3191,113 +3423,71 @@
   text-align: center;
 }
 
-
 .hon-selection-card {
-  background: #1a1a1a;
-  border: 2px solid #333;
-  border-radius: 12px;
-  overflow: hidden;
-  cursor: pointer;
+  width: 100%;
+  box-sizing: border-box;
+  align-self: stretch;
   display: flex;
   flex-direction: column;
+  background: var(--hon-card-bg, #1a1a1a);
+  border: none;
+  border-top: 4px solid transparent;
+  border-radius: var(--hon-card-radius, 20px);
+  overflow: hidden;
+  cursor: pointer;
   position: relative;
   transition: transform 0.3s ease, box-shadow 0.3s ease, border-color 0.3s ease;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--hon-card-shadow);
   height: 100%;
   z-index: 1;
   will-change: transform, box-shadow, border-color;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
 }
 
 .hon-selection-card:hover {
   transform: translateY(-10px) !important;
-  box-shadow: 0 15px 30px rgba(0, 0, 0, 0.4) !important;
+  box-shadow: var(--hon-card-shadow-hover) !important;
   z-index: 10 !important;
   position: relative !important;
 }
 
- Tier colors 
-.hon-selection-card.tier-s:hover,
-.hon-selection-card.tier-a:hover,
-.hon-selection-card.tier-b:hover,
-.hon-selection-card.tier-c:hover,
-.hon-selection-card.tier-d:hover,
-.hon-selection-card.tier-f:hover {
-  transform: translateY(-10px);
-  box-shadow: 0 15px 30px rgba(0, 0, 0, 0.4);
-  z-index: 10;
-}
+/* Tier-colored top accent */
+.hon-selection-card.tier-s { border-top-color: #eb9834; } /* S-Tier Gold */
+.hon-selection-card.tier-a { border-top-color: #e014aa; } /* A-Tier Pink */
+.hon-selection-card.tier-b { border-top-color: #7f1e82; } /* B-Tier Purple */
+.hon-selection-card.tier-c { border-top-color: #14bbe0; } /* C-Tier Light Blue */
+.hon-selection-card.tier-d { border-top-color: #92e014; } /* D-Tier Lime Green */
+.hon-selection-card.tier-f { border-top-color: #808080; } /* F-Tier Gray */
 
-@media (min-width: 1201px) {
-  #hon-performer-list {
-    display: flex !important;
-    flex-direction: row !important;
-    flex-wrap: wrap !important;
-    width: 140% !important;
-    padding: 10px 1px !important;
-    position: relative !important;
-    gap: 1px !important; 
-  }
-  
-  .hon-selection-card {
-    width: 230px !important;
-    min-width: 100px !important;
-    height: 600px !important;
-    font-size: 0.5rem;
-    margin: 0 !important; 
-  }
-  
-  .hon-selection-image-container {
-    height: 600px !important;
-    max-height: 600px !important;
-  }
-  
-  .hon-selection-image {
-    max-height: 600px !important;
-    max-width: 100% !important;
-  }
-  
-  .hon-selection-info {
-    padding: 3px !important;
-    max-height: 200px !important;
-    height: 200px !important;
-  }
-  
-  .hon-selection-name {
-    font-size: 0.5rem;
-    margin-bottom: 1px;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-  }
-  
-  .hon-selection-rating {
-    font-size: 0.5rem;
-    margin-bottom: 1px;
-  }
-  
-}
+.hon-selection-card.tier-s:hover { border-color: #eb9834; }
+.hon-selection-card.tier-a:hover { border-color: #e014aa; }
+.hon-selection-card.tier-b:hover { border-color: #7f1e82; }
+.hon-selection-card.tier-c:hover { border-color: #14bbe0; }
+.hon-selection-card.tier-d:hover { border-color: #92e014; }
+.hon-selection-card.tier-f:hover { border-color: #808080; }
 
 #hon-performer-list .hon-selection-card {
   cursor: pointer;
 }
 
 .hon-selection-image-container {
-  position: relative;
-  width: 100%;
   aspect-ratio: 2/3;
-  overflow: hidden;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   background: #000;
 }
 
-.hon-selection-image {
-  max-width: 100%;
-  max-height: 100%;
-  width: auto;
-  height: auto;
-  object-fit: contain;
-  transition: opacity 0.3s ease;
+.hon-selection-image-container::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to top,
+    rgba(0, 0, 0, 0.65) 0%,
+    rgba(0, 0, 0, 0.15) 40%,
+    transparent 70%
+  );
+  pointer-events: none;
+  z-index: 1;
 }
 
 .hon-selection-image.hon-no-image {
@@ -3309,6 +3499,7 @@
   font-size: 1rem;
   width: 100%;
   height: 100%;
+  z-index: 0;
 }
 
 .hon-selection-info {
@@ -3316,54 +3507,90 @@
   flex: 1;
   display: flex;
   flex-direction: column;
-}
-
-.hon-selection-name {
-  font-size: 1.4rem;
-  margin-bottom: 10px;
-  line-height: 1.3;
-  color: #fff;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.hon-selection-rating {
-  font-size: 0.9rem;
-  color: #aaa;
-  margin-bottom: 10px;
+  background: rgba(0, 0, 0, 0.25);
 }
 
 .hon-selection-rating-value {
   color: #fff;
+  font-weight: 600;
+  margin-left: 4px;
 }
 
 .hon-selection-tier {
   font-weight: bold;
-  margin-right: 5px;
+  margin-right: 4px;
 }
 
-.hon-selection-meta-item {
-  font-size: 0.85rem;
-  color: #fff;
-  margin-bottom: 4px;
+/* =========================
+   === DESKTOP GRID OVERRIDES ===
+   ========================= */
+@media (min-width: 1201px) {
+  #hon-performer-list {
+    display: flex !important;
+    flex-direction: row !important;
+    flex-wrap: wrap !important;
+    width: 140% !important;
+    padding: 10px 1px !important;
+    position: relative !important;
+    gap: 1px !important;
+  }
+
+  .hon-selection-card {
+    width: 230px !important;
+    min-width: 100px !important;
+    height: 750px !important;
+    font-size: 0.9rem;
+    margin: 0 !important;
+  }
+
+  .hon-selection-image-container {
+    height: 500px !important;
+    max-height: 500px !important;
+  }
+
+  .hon-selection-image {
+    max-height: 500px !important;
+    max-width: 100% !important;
+  }
+
+  .hon-selection-info {
+    padding: 10px !important;
+    height: 250px !important;
+    max-height: 250px !important;
+  }
+
+  .hon-selection-name {
+    font-size: 1.1rem;
+    margin-bottom: 6px;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    overflow: hidden;
+  }
+
+  .hon-selection-rating {
+    font-size: 0.9rem;
+    margin-bottom: 8px;
+    padding: 3px 8px;
+  }
+
+  .hon-selection-meta-item {
+    font-size: 0.85rem;
+    margin-bottom: 4px;
+    padding: 2px 8px;
+  }
 }
 
-.hon-selection-meta-item strong {
-  color: #888;
-}
-
-/* Responsive adjustments */
+/* =========================
+   === TABLET / SMALL DESKTOP GRID ===
+   ========================= */
 @media (max-width: 1200px) {
   #hon-performer-list {
-	  display: grid !important;
-    gap: 1px !important;
+    display: grid !important;
     grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)) !important;
     gap: 20px !important;
-	padding: 10px 2px !important;
+    padding: 10px 2px !important;
     position: relative;
   }
-  
 }
 
 @media (max-width: 768px) {
@@ -3371,19 +3598,19 @@
     grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)) !important;
     gap: 15px !important;
   }
-  
+
   .hon-selection-card {
     min-width: 140px;
   }
-  
+
   .hon-selection-name {
     font-size: 1rem;
   }
-  
+
   .hon-selection-rating {
     font-size: 0.8rem;
   }
-  
+
   .hon-selection-meta-item {
     font-size: 0.75rem;
   }
@@ -3394,11 +3621,11 @@
     grid-template-columns: 1fr !important;
     gap: 20px !important;
   }
-  
+
   .hon-selection-card {
     min-width: auto;
   }
-  
+
   .hon-selection-image-container {
     aspect-ratio: 3/4;
   }
@@ -3415,220 +3642,166 @@
 #hon-modal.hon-mode-champion .hon-container {
   max-width: 1400px !important;
 }
-/*
-======================
-=== MOBILE SYTLING ===
-======================
 
-*/
+/* =========================
+   === MOBILE BATTLE CARDS ===
+   ========================= */
 @media (max-width: 1200px) {
   .hon-vs-container {
     position: relative;
     justify-content: center;
-    position: relative;
-    height: 90vh; 
+    height: 90vh;
     perspective: 1000px;
   }
-  
+
   .hon-performer-card {
     position: absolute;
     width: 100%;
-    max-width: 90vw; 
+    max-width: 90vw;
     transition: transform 0.3s ease, opacity 0.3s ease, z-index 0.3s step-end;
     box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
     z-index: 10;
     touch-action: pan-y;
     min-width: 145px;
   }
-  
+
   .hon-performer-card.active {
     z-index: 30;
   }
-  
-  .hon-performer-meta .hon-meta-item {
-   font-size: 0.85rem;
-}
 
-  
+  .hon-performer-meta .hon-meta-item {
+    font-size: 0.85rem;
+  }
+
   .hon-performer-card.inactive {
     z-index: 20;
     transform: scale(0.95) translateY(10px);
     opacity: 0.9;
   }
-  
+
   .hon-performer-card.swiping {
     transition: none;
   }
-}
 
-
-
-/*
-===============================
-=== Swipe visual indicators ===
-===============================
-*/
   .hon-performer-image-container {
-    max-height: 85vh; 
+    max-height: 85vh;
   }
-  
+
   .hon-performer-body {
     border-top: 2px solid #575757;
     display: block;
     padding: 1px 3px;
-    overflow-y: auto; 
-    max-height: 55%; 
+    overflow-y: auto;
+    max-height: 55%;
     padding-bottom: 5px;
   }
 
   .hon-vs-divider {
     display: none;
   }
-  
-/*
-===============================
-=== Swipe visual indicators ===
-===============================
-*/
-
-
-.hon-choose-btn.chosen-btn {
-  background: linear-gradient(135deg, #4CAF50, #2E7D32) !important;
-  color: white !important;
-  font-weight: bold;
-  transition: all 0.3s ease;
-  border-radius: 4px;
-  padding: 8px;
-  text-align: center;
 }
 
-.hon-choose-btn.not-chosen-btn {
-  background: linear-gradient(135deg, #F44336, #C62828) !important;
-  color: white !important;
-  font-weight: bold;
-  transition: all 0.3s ease;
-  border-radius: 4px;
-  padding: 8px;
-  text-align: center;
-}
-
-.hon-choose-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 8px;
-  border-radius: 4px;
-  transition: all 0.3s ease;
-}
-
+/* =========================
+   === GAUNTLET MOBILE CAROUSEL ===
+   ========================= */
 @media (max-width: 1200px) {
-
-  .hon-tier-change-notification {
-    position: absolute !important;
-    left: 50% !important;
-    top: 20px !important; 
-    transform: translateX(-50%) translateY(20px) !important;
-    opacity: 0 !important;
-    
-    font-size: 1.5rem !important;
-    font-weight: 800 !important;
-    line-height: 1.4 !important;
-    text-align: center !important;
-    z-index: 1000 !important;
-    pointer-events: none !important;
-    white-space: nowrap !important;
-    display: inline-block !important;
-    
-    transition: opacity 0.4s ease, transform 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) !important;
-  }
-
-  .hon-tier-change-notification.show {
-    opacity: 1 !important;
-    transform: translateX(-50%) translateY(0) !important;
-  }
-
-  .hon-tier-change-notification.exit {
-    opacity: 0 !important;
-    transform: translateX(-50%) translateY(-30px) !important;
-    transition: opacity 0.4s ease, transform 0.4s ease-in !important;
-  }
-  
   .hon-performer-selection .hon-vs-container {
     position: relative;
     width: 100%;
-    height: 600px; 
+    height: 600px;
     overflow: hidden;
   }
-  
+
   .hon-vs-container {
     overflow: hidden;
     position: relative;
   }
 
-  
-  .hon-selection-card {
-    position: absolute;
+  #hon-performer-list.hon-selection-carousel {
+    display: block !important;
+    padding: 0 !important;
+    gap: 0 !important;
+    grid-template-columns: none !important;
+  }
+
+  #hon-performer-list.hon-selection-carousel .hon-vs-container {
+    position: relative;
+    width: 100%;
+    height: 80vh;
+    max-height: 650px;
+    overflow: hidden;
+    perspective: 1000px;
+    touch-action: pan-y;
+  }
+
+  #hon-performer-list.hon-selection-carousel .hon-vs-container .hon-selection-card {
+    position: absolute !important;
     top: 0;
     left: 0;
     width: 100%;
     height: 100%;
-    transition: transform 0.3s ease, opacity 0.3s ease;
+    box-sizing: border-box;
+    transition: transform 0.35s ease, opacity 0.35s ease;
+    transform: scale(0.9) translateY(16px);
     opacity: 0;
-    transform: translateX(100%);
     z-index: 1;
-    touch-action: pan-x; 
+    pointer-events: none;
+    will-change: transform, opacity;
   }
 
-  .hon-selection-card.active {
-    transform: translateX(0);
+  #hon-performer-list.hon-selection-carousel .hon-vs-container .hon-selection-card.active {
+    transform: translateX(0) scale(1);
     opacity: 1;
-    z-index: 3;
+    z-index: 30;
+    pointer-events: auto;
   }
 
-  .hon-selection-card.inactive {
-    transform: translateX(-100%);
+  #hon-performer-list.hon-selection-carousel .hon-vs-container .hon-selection-card.inactive {
+    transform: scale(0.9) translateY(16px);
     opacity: 0;
     z-index: 2;
   }
 
+  #hon-performer-list.hon-selection-carousel .hon-vs-container .hon-selection-card.swiping {
+    transition: none;
+    z-index: 40;
+  }
+
+  .hon-swipe-hint {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    background: rgba(255, 255, 255, 0.2);
+    padding: 10px;
+    border-radius: 50%;
+    font-size: 24px;
+    z-index: 40;
+    opacity: 0;
+    transition: opacity 0.2s;
+    pointer-events: none;
+    width: 44px;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .hon-swipe-hint.left {
+    left: 10px;
+  }
+
+  .hon-swipe-hint.right {
+    right: 10px;
+  }
+
+  .hon-swipe-hint.visible {
+    opacity: 1;
+  }
 }
-	.hon-swipe-hint {
-	  position: absolute;
-	  top: 50%;
-	  transform: translateY(-50%);
-	  background: rgba(255, 255, 255, 0.2);
-	  padding: 10px;
-	  border-radius: 50%;
-	  font-size: 24px;
-	  z-index: 40;
-	  opacity: 0;
-	  transition: opacity 0.2s;
-	  pointer-events: none;
-	  width: 44px;
-	  height: 44px;
-	  display: flex;
-	  align-items: center;
-	  justify-content: center;
-	}
 
-	.hon-swipe-hint.left {
-	  left: 10px;
-	}
-
-	.hon-swipe-hint.right {
-	  right: 10px;
-	}
-
-	.hon-swipe-hint.visible {
-	  opacity: 1;
-	}
-
-/*
-======================
-=== Action Buttons ===
-======================
-*/
-
+/* =========================
+   === ACTION BUTTONS ===
+   ========================= */
 .hon-actions {
   display: flex;
   justify-content: flex-end;
@@ -3679,7 +3852,7 @@
     right: auto;
     top: auto;
   }
-  
+
   .hon-action-btn {
     width: 60px;
     height: 60px;
@@ -3696,17 +3869,171 @@
 }
 
 .hon-performer-title.hon-scene-title {
-    color: #ffffff !important;
+  color: #ffffff !important;
 }
 
-.hon-performer-meta.hon-scene-meta .hon-meta-item {
-    color: #ffffff; 
+.hon-scene-meta .hon-meta-item {
+  color: #ffffff;
 }
 
-.hon-performer-meta.hon-scene-meta .hon-meta-item strong {
-    color: #999999; 
+.hon-scene-meta .hon-meta-item strong {
+  color: #999999;
 }
 
+/* =========================
+   === 12. SKELETON LOADER ===
+   ========================= */
+.hon-skeleton-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 16px;
+  width: 100%;
+  padding: 12px;
+}
+
+.hon-comparison-skeleton {
+  grid-template-columns: 1fr 1fr;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+@media (max-width: 768px) {
+  .hon-comparison-skeleton {
+    grid-template-columns: 1fr;
+  }
+}
+
+.hon-skeleton-card {
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: var(--hon-card-radius, 20px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  aspect-ratio: 3 / 4;
+}
+
+.hon-skeleton-img {
+  flex: 1;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.05) 0%,
+    rgba(255, 255, 255, 0.12) 50%,
+    rgba(255, 255, 255, 0.05) 100%
+  );
+  background-size: 200% 100%;
+  animation: hon-skeleton-shimmer 1.4s infinite ease-in-out;
+}
+
+.hon-skeleton-text {
+  height: 14px;
+  margin: 10px 12px 0;
+  border-radius: 6px;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.05) 0%,
+    rgba(255, 255, 255, 0.12) 50%,
+    rgba(255, 255, 255, 0.05) 100%
+  );
+  background-size: 200% 100%;
+  animation: hon-skeleton-shimmer 1.4s infinite ease-in-out;
+}
+
+.hon-skeleton-text.short {
+  width: 55%;
+  margin-bottom: 14px;
+}
+
+@keyframes hon-skeleton-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* =========================
+   === MOBILE BATTLE CARD SIZING FIX ===
+   ========================= */
+@media (max-width: 1200px) {
+  .hon-vs-container {
+    height: calc(100vh - 130px) !important;
+    min-height: 0 !important;
+    max-height: none !important;
+  }
+
+  .hon-performer-card,
+  .hon-image-card,
+  .hon-scene-card {
+    max-height: 100% !important;
+    max-width: 95vw !important;
+    width: 100% !important;
+  }
+
+  .hon-performer-image-container,
+  .hon-scene-image-container,
+  .hon-image-image-container {
+    max-height: 60% !important;
+    flex-shrink: 0 !important;
+  }
+
+  .hon-performer-body,
+  .hon-scene-body,
+  .hon-image-body {
+    display: flex !important;
+    flex-direction: column !important;
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow-y: auto !important;
+    padding: 8px !important;
+  }
+
+  .hon-choose-btn {
+    margin-top: auto !important;
+    flex-shrink: 0 !important;
+  }
+
+  .hon-actions {
+    margin-top: 0 !important;
+    padding: 10px 0 !important;
+  }
+}
+
+/* =========================
+   === PAIR SWAP ANIMATION SUPPORT ===
+   ========================= */
+
+/* Prevent any visual jump when the container is swapped */
+#hon-comparison-area {
+  position: relative;
+}
+
+#hon-comparison-area:empty::before {
+  content: '';
+  display: block;
+  min-height: 600px;
+}
+
+/* If a skeleton or loading state appears, keep the area stable */
+#hon-comparison-area .hon-loading {
+  min-height: 600px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Tier colors aligned with getTierColor() in rating-utils.js */
+.hon-selection-card.tier-s { border-top-color: #eb9834; }
+.hon-selection-card.tier-a { border-top-color: #e014aa; }
+.hon-selection-card.tier-b { border-top-color: #7f1e82; }
+.hon-selection-card.tier-c { border-top-color: #14bbe0; }
+.hon-selection-card.tier-d { border-top-color: #92e014; }
+.hon-selection-card.tier-f { border-top-color: #808080; }
+
+.hon-selection-card.tier-s:hover { border-color: #eb9834; }
+.hon-selection-card.tier-a:hover { border-color: #e014aa; }
+.hon-selection-card.tier-b:hover { border-color: #7f1e82; }
+.hon-selection-card.tier-c:hover { border-color: #14bbe0; }
+.hon-selection-card.tier-d:hover { border-color: #92e014; }
+.hon-selection-card.tier-f:hover { border-color: #808080; }
 
 
 /* === plugin-layout.css === */
@@ -3714,8 +4041,8 @@
   display: flex;
   width: 100%;
   gap: 20px;
-  position: relative; 
-  min-height: 500px; 
+  position: relative;
+  min-height: 500px;
 }
 
 .hon-sidebar {
@@ -3732,7 +4059,7 @@
   flex: 1;
   min-width: 0;
   position: relative;
-  z-index: 1; 
+  z-index: 1;
 }
 
 .hon-sidebar-content {
@@ -3759,15 +4086,22 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  transition: background 0.2s;
+  transition: background 0.2s, border-left 0.2s, color 0.2s;
   color: #ccc;
   font-weight: 500;
   border-radius: 4px;
   margin: 0 10px;
+  border-left: 3px solid transparent;
 }
 
 .hon-sidebar-row:hover {
   background: #2a2a2a;
+}
+
+.hon-sidebar-row.active {
+  background: rgba(13, 110, 253, 0.12);
+  border-left: 3px solid #0d6efd;
+  color: #fff;
 }
 
 .hon-sidebar-row.expanded {
@@ -3834,7 +4168,6 @@
   .hon-plugin-layout {
     flex-direction: column;
   }
-
 }
 
 .hon-sidebar-section {
@@ -3847,6 +4180,213 @@
   padding-bottom: 0;
   border-bottom: none;
 }
+
+.hon-options-panel {
+  width: 100%;
+  min-height: 500px;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 25px;
+  color: #ccc;
+  display: flex;
+  flex-direction: column;
+}
+
+.hon-options-title {
+  margin: 0 0 20px 0;
+  font-size: 1.8rem;
+  color: #fff;
+  border-bottom: 1px solid #333;
+  padding-bottom: 15px;
+}
+
+.hon-options-section {
+  margin-bottom: 25px;
+}
+
+.hon-options-section-title {
+  margin: 0 0 8px 0;
+  font-size: 1.2rem;
+  color: #fff;
+}
+
+.hon-options-hint {
+  margin: 0 0 15px 0;
+  color: #888;
+  font-size: 0.95rem;
+}
+
+.hon-options-warning {
+  color: #ff6b6b;
+}
+
+.hon-options-gender-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.hon-options-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 15px;
+  background: #222;
+  border: 1px solid #444;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.hon-options-checkbox:hover {
+  background: #2a2a2a;
+  border-color: #555;
+}
+
+.hon-options-checkbox.active {
+  border-color: #0d6efd;
+  background: rgba(13, 110, 253, 0.1);
+}
+
+.hon-options-checkbox input[type="checkbox"] {
+  display: none;
+}
+
+.hon-options-checkmark {
+  width: 20px;
+  height: 20px;
+  border: 2px solid #666;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8rem;
+  color: transparent;
+  transition: all 0.2s;
+}
+
+.hon-options-checkbox.active .hon-options-checkmark {
+  background: #0d6efd;
+  border-color: #0d6efd;
+  color: #fff;
+}
+
+.hon-options-label-text {
+  font-size: 1rem;
+  color: #ddd;
+}
+
+.hon-options-checkbox.active .hon-options-label-text {
+  color: #fff;
+}
+
+.hon-options-actions {
+  margin-top: auto;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.hon-options-close-btn {
+  padding: 10px 20px;
+  background: #6c757d;
+  border: none;
+  border-radius: 4px;
+  color: #fff;
+  cursor: pointer;
+  font-size: 1rem;
+  transition: background 0.2s;
+}
+
+.hon-options-close-btn:hover {
+  background: #5c636a;
+}
+
+/* Mobile options panel: scrollable and compact */
+@media (max-width: 768px) {
+  .hon-options-panel.mobile {
+    max-height: calc(100vh - 140px);
+    overflow-y: auto;
+    padding: 15px;
+    min-height: unset;
+  }
+
+  .hon-options-panel.mobile .hon-options-title {
+    font-size: 1.4rem;
+  }
+
+  .hon-options-panel.mobile .hon-options-section {
+    margin-bottom: 15px;
+  }
+
+  /* Close button is a normal block at the bottom, not sticky/floating */
+  .hon-options-panel.mobile .hon-options-actions {
+    position: static;
+    background: transparent;
+    padding-top: 0;
+    border-top: none;
+  }
+}
+
+/* Collapsed sidebar on mobile becomes a horizontal icon bar */
+@media (max-width: 768px) {
+  .hon-sidebar.collapsed {
+    width: 100% !important;
+    padding: 8px 0;
+    order: 2;
+  }
+
+  .hon-sidebar.collapsed .hon-sidebar-content {
+    flex-direction: row;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .hon-sidebar.collapsed .hon-sidebar-section {
+    display: flex;
+    flex-direction: row;
+    justify-content: space-around;
+    align-items: center;
+    width: 100%;
+    margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom: none;
+  }
+
+  .hon-sidebar.collapsed .hon-sidebar-row {
+    padding: 8px;
+    margin: 0;
+    border-left: none;
+    justify-content: center;
+  }
+
+  .hon-sidebar.collapsed .hon-sidebar-row.active {
+    border-left: none;
+    background: rgba(13, 110, 253, 0.25);
+  }
+
+  .hon-sidebar.collapsed .hon-sidebar-row-text {
+    color: transparent;
+    font-size: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .hon-sidebar.collapsed .hon-sidebar-row-text .hon-mode-icon {
+    color: #ccc;
+    font-size: 1.4rem;
+    line-height: 1;
+    margin: 0;
+  }
+}
+
+@media (max-width: 768px) {
+  .hon-sidebar {
+    transition: padding 0.25s ease;
+  }
+}
+
 
 /* === scene-cards.css === */
 
@@ -4204,7 +4744,7 @@
   max-width: 95%;
   max-height: 90vh;
   width: 1200px;
-  overflow-y: auto;
+  overflow: auto;
   padding: 30px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
 }
@@ -4253,6 +4793,7 @@
 
 .hon-stats-table {
   width: 100%;
+  min-width: max-content;
   border-collapse: collapse;
   font-size: 0.95rem;
 }
@@ -4584,6 +5125,8 @@
 
 .hon-rank-group-content {
   border-top: 1px solid #333;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .hon-rank-group-content.collapsed {
@@ -4685,6 +5228,17 @@
     font-size: 0.8rem;
   }
 }
+
+.opponent-tooltip,
+.hon-performer-tooltip {
+  font-family: inherit;
+  line-height: 1.4;
+}
+
+.hon-stats-name a {
+  display: inline-block;
+}
+
 
 /* === transitions.css === */
 /* Replace your CSS with this optimized version */
@@ -5134,6 +5688,41 @@
 #hon-stats-btn {
   margin-top: 10px !important;
   margin-bottom: 15px !important;
+}
+
+.hon-focus-btn {
+  display: block;
+  width: 100%;
+  margin: 8px 0;
+  padding: 10px;
+  background: rgba(28, 180, 214, 0.15);
+  border: 1px solid rgba(28, 180, 214, 0.4);
+  color: #1cb4d6;
+  border-radius: 6px;
+  font-weight: bold;
+  cursor: pointer;
+  text-align: center;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.15s ease, transform 0.1s ease, box-shadow 0.15s ease;
+}
+
+.hon-focus-btn:active,
+.hon-focus-btn.pressed {
+  background: rgba(28, 180, 214, 0.35);
+  transform: scale(0.98);
+  box-shadow: 0 0 10px rgba(28, 180, 214, 0.4);
+}
+
+.hon-focus-btn:focus-visible {
+  outline: 2px solid #1cb4d6;
+  outline-offset: 2px;
+}
+
+@media (min-width: 769px) {
+  .hon-focus-btn {
+    display: none;
+  }
 }
 
 

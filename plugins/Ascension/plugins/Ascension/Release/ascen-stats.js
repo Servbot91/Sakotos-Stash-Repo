@@ -1,30 +1,17 @@
 // =================================
-// Tier Info
+// Tier Info (Percentile-based, duplicated from rating-utils.js)
 // =================================
+const TIER_GATES = Object.freeze([
+  { tier: 'S-Tier', maxPercentile: 5,  minBattleScore: 9.0 },
+  { tier: 'A-Tier', maxPercentile: 18, minBattleScore: 7.5 },
+  { tier: 'B-Tier', maxPercentile: 38, minBattleScore: 5.0 },
+  { tier: 'C-Tier', maxPercentile: 68, minBattleScore: 2.0 },
+  { tier: 'D-Tier', maxPercentile: 88, minBattleScore: 0.4 },
+  { tier: 'F-Tier', maxPercentile: 100, minBattleScore: 0.11 }
+]);
+
 function formatScore(score) {
   return (score / 10).toFixed(1);
-}
-
-function getRatingTier(rating) {
-  const actualRating = rating / 10;
-  if (actualRating >= 8.5) return 'S-Tier';
-  if (actualRating >= 7.0) return 'A-Tier';
-  if (actualRating >= 5.5) return 'B-Tier';
-  if (actualRating >= 4.0) return 'C-Tier';
-  if (actualRating >= 2.5) return 'D-Tier';
-  return 'F-Tier';
-}
-
-function getTierChangeIndicator(ratingBefore, ratingAfter) {
-  const tierBefore = getRatingTier(ratingBefore);
-  const tierAfter = getRatingTier(ratingAfter);
-  
-  if (tierAfter === tierBefore) return '';
-  
-  const tierColor = getTierColor(tierAfter);
-  const arrow = getTierLevel(tierAfter) > getTierLevel(tierBefore) ? '⬆️' : '⬇️';
-  
-  return ` <span style="color: ${tierColor}; font-weight: bold; font-size: 0.8em;">${arrow}${tierAfter.charAt(0)}</span>`;
 }
 
 function getTierLevel(tier) {
@@ -51,25 +38,147 @@ function getTierColor(tier) {
   }
 }
 
+function getPerformerStats(performer) {
+  let totalMatches = performer.total_matches ?? 0;
+  let wins = performer.wins ?? 0;
+  let winMargin = performer.win_margin ?? 0;
+
+  if (performer.custom_fields?.hotornot_stats) {
+    try {
+      const stats = typeof performer.custom_fields.hotornot_stats === 'string'
+        ? JSON.parse(performer.custom_fields.hotornot_stats)
+        : performer.custom_fields.hotornot_stats;
+
+      if (totalMatches === 0 && (stats?.total_matches ?? 0) > 0) totalMatches = stats.total_matches;
+      if (wins === 0 && (stats?.wins ?? 0) > 0) wins = stats.wins;
+      if (winMargin === 0 && (stats?.win_margin ?? 0) !== 0) winMargin = stats.win_margin;
+    } catch (e) {}
+  }
+
+  return { totalMatches, wins, winMargin };
+}
+
+function calculateBattleScore(performer) {
+  if (!performer || typeof performer !== 'object') return 0;
+
+  const rating100 = performer.rating100 ?? performer.rawRating ?? 1;
+  const displayRating = rating100 / 10;
+  const stats = getPerformerStats(performer);
+  const winRate = stats.totalMatches > 0 ? stats.wins / stats.totalMatches : 0;
+
+  const compositeScore =
+    (rating100 / 100) +
+    (winRate * 0.5) +
+    (stats.winMargin / 100) +
+    (Math.log10(stats.wins + 1) * 0.2);
+
+  return displayRating + compositeScore;
+}
+
+function getSortedBattleScores(performers) {
+  return performers
+    .map(p => calculateBattleScore(p))
+    .sort((a, b) => b - a);
+}
+
+function findStrictlyBetterCount(sortedScores, score) {
+  let lo = 0;
+  let hi = sortedScores.length;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (sortedScores[mid] > score) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  return lo;
+}
+
+function getPercentilePosition(performer, allPerformers) {
+  if (!Array.isArray(allPerformers) || allPerformers.length === 0) return 50;
+  const battleScore = calculateBattleScore(performer);
+  const sortedScores = getSortedBattleScores(allPerformers);
+  const strictlyBetter = findStrictlyBetterCount(sortedScores, battleScore);
+  return (strictlyBetter / sortedScores.length) * 100;
+}
+
+function getTierFromPercentile(percentile, battleScore) {
+  if (percentile < 0) percentile = 0;
+  if (percentile > 100) percentile = 100;
+
+  for (const gate of TIER_GATES) {
+    if (percentile < gate.maxPercentile && battleScore >= gate.minBattleScore) {
+      return gate.tier;
+    }
+  }
+
+  return 'F-Tier';
+}
+
+function getRatingTier(performer, allPerformers = null) {
+  if (!performer || typeof performer !== 'object') return 'F-Tier';
+
+  const rating100 = performer.rating100 ?? performer.rawRating ?? 1;
+  const stats = getPerformerStats(performer);
+
+  if (rating100 <= 1 && stats.totalMatches === 0) return 'F-Tier';
+
+  if (!Array.isArray(allPerformers) || allPerformers.length === 0) {
+    if (rating100 >= 85) return 'S-Tier';
+    if (rating100 >= 70) return 'A-Tier';
+    if (rating100 >= 55) return 'B-Tier';
+    if (rating100 >= 40) return 'C-Tier';
+    if (rating100 >= 25) return 'D-Tier';
+    return 'F-Tier';
+  }
+
+  const battleScore = calculateBattleScore(performer);
+  const sortedScores = getSortedBattleScores(allPerformers);
+  if (sortedScores.length === 0) return 'F-Tier';
+
+  const strictlyBetter = findStrictlyBetterCount(sortedScores, battleScore);
+  const percentile = (strictlyBetter / sortedScores.length) * 100;
+
+  return getTierFromPercentile(percentile, battleScore);
+}
+
+function getTierChangeIndicator(ratingBefore, ratingAfter) {
+  const tierBefore = getRatingTier({ rating100: ratingBefore });
+  const tierAfter = getRatingTier({ rating100: ratingAfter });
+
+  if (tierAfter === tierBefore) return '';
+
+  const tierColor = getTierColor(tierAfter);
+  const arrow = getTierLevel(tierAfter) > getTierLevel(tierBefore) ? '⬆️' : '⬇️';
+
+  return ` <span style="color: ${tierColor}; font-weight: bold; font-size: 0.8em;">${arrow}${tierAfter.charAt(0)}</span>`;
+}
+
 // =================================
 // Force Custom Fields Collapse Open
 // =================================
 const collapseObserver = new MutationObserver(() => {
-  const performerCustomFields = document.querySelector('#performer-page .custom-fields');
-  if (!performerCustomFields) return;
+  const allCustomFields = document.querySelectorAll('.custom-fields');
 
-  const collapse = performerCustomFields.querySelector('.collapse');
-  const chevron = performerCustomFields.querySelector('.collapse-button svg');
+  allCustomFields.forEach(container => {
+    const hasRelevantField =
+      container.querySelector('.custom-field-performer_record') ||
+      container.querySelector('.custom-field-scene_record') ||
+      container.querySelector('.custom-field-hotornot_stats');
 
-  if (collapse && !collapse.classList.contains('show')) {
-    collapse.classList.add('show');
+    if (!hasRelevantField) return;
 
-    if (chevron) {
-      chevron.style.transform = 'rotate(180deg)';
+    const collapse = container.querySelector('.collapse');
+    const chevron = container.querySelector('.collapse-button svg');
+
+    if (collapse && !collapse.classList.contains('show')) {
+      collapse.classList.add('show');
+      if (chevron) {
+        chevron.style.transform = 'rotate(180deg)';
+      }
     }
-
-    collapseObserver.disconnect();
-  }
+  });
 });
 
 collapseObserver.observe(document.body, {
@@ -118,7 +227,7 @@ function buildStatsGrid(data) {
     { min: 9, max: 12, symbol: '♠️' },
     { min: 13, max: 17, symbol: '✨' },
     { min: 18, max: Infinity, symbol: '👑' }
-];
+  ];
 
   Object.entries(data).forEach(([key, value]) => {
     const label = key
@@ -126,7 +235,7 @@ function buildStatsGrid(data) {
       .replace(/\b\w/g, c => c.toUpperCase());
 
     let displayValue = value;
-    
+
     if (key.toLowerCase().includes('rating') || key === 'current_score') {
       displayValue = formatScore(value);
     } else if (key === 'last_match') {
@@ -209,7 +318,7 @@ const statsObserverOld = new MutationObserver(() => {
         titleSpan.textContent = 'Match History';
       }
 
-      const grid = buildStatsGrid(data); 
+      const grid = buildStatsGrid(data);
       el.dataset.parsed = 'true';
       el.replaceWith(grid);
     } catch (err) {
@@ -227,7 +336,7 @@ statsObserverOld.observe(document.body, {
 // Performer Record (Match History Timeline) Parser - New Version (.31+)
 // ======================================================================
 const recordObserverNew = new MutationObserver(() => {
-  document.querySelectorAll('.custom-field-performer_record .TruncatedText').forEach(el => {
+  document.querySelectorAll('.custom-field-performer_record .TruncatedText, .custom-field-scene_record .TruncatedText').forEach(el => {
     if (el.dataset.parsed) return;
 
     try {
@@ -235,28 +344,29 @@ const recordObserverNew = new MutationObserver(() => {
       if (!rawText.startsWith('[')) return;
 
       const history = JSON.parse(rawText);
-      const container = el.closest('.custom-field-performer_record');
+      const container = el.closest('.custom-field-performer_record, .custom-field-scene_record');
 
-      const titleSpan = container?.querySelector('.detail-item-title.custom-field-performer-record');
+      const isSceneRecord = container?.classList.contains('custom-field-scene_record');
+
+      const titleSpan = container?.querySelector('.detail-item-title.custom-field-performer-record, .detail-item-title.custom-field-scene-record');
       if (titleSpan) titleSpan.textContent = 'Past Matchups';
 
-      const timeline = buildTimeline(history);
+      const timeline = buildTimeline(history, isSceneRecord);
       el.dataset.parsed = 'true';
       el.innerHTML = '';
       el.appendChild(timeline);
     } catch (err) {
-      console.warn('Performer record parse failed (new):', err);
+      console.warn('Record timeline parse failed (new):', err);
     }
   });
 });
 
-function buildTimeline(history) {
+function buildTimeline(history, isSceneRecord = false) {
   const timeline = document.createElement('div');
   timeline.className = 'match-timeline';
 
-  // Process matches in reverse chronological order (newest first)
   const sortedHistory = [...history].reverse();
-  
+
   sortedHistory.slice(0, 10).forEach((match, index) => {
     const date = new Date(match.date).toLocaleDateString(undefined, {
       month: 'short', day: 'numeric'
@@ -266,23 +376,47 @@ function buildTimeline(history) {
     const statusText = match.won === true ? 'WIN' : (match.won === false ? 'LOSS' : 'DRAW');
     const symbol = match.won === true ? '●' : (match.won === false ? '●' : '○');
 
-    const [oppId, oppName] = match.opponent.includes(':')
-      ? match.opponent.split(':')
-      : [null, match.opponent];
+    let oppId = null;
+    let oppName = 'Unknown';
+
+    if (isSceneRecord) {
+      // Scene record format: opponentId, optionally legacy opponent "id:Title"
+      if (match.opponentId) {
+        oppId = match.opponentId.toString();
+        oppName = `Scene ${oppId}`;
+      } else if (match.opponent && typeof match.opponent === 'string' && match.opponent.includes(':')) {
+        oppId = match.opponent.split(':')[0];
+        oppName = `Scene ${oppId}`;
+      }
+    } else {
+      // Performer record format: opponent "id:Name"
+      if (match.opponent && typeof match.opponent === 'string') {
+        if (match.opponent.includes(':')) {
+          const parts = match.opponent.split(':');
+          oppId = parts[0];
+          oppName = parts.slice(1).join(':') || 'Unknown';
+        } else {
+          oppId = match.opponent;
+          oppName = `Performer ${oppId}`;
+        }
+      }
+    }
 
     const maxNameLength = 15;
-    const truncatedName = oppName.length > maxNameLength 
-      ? oppName.substring(0, maxNameLength) + '...' 
+    const truncatedName = oppName.length > maxNameLength
+      ? oppName.substring(0, maxNameLength) + '...'
       : oppName;
 
-    const profileUrl = oppId ? `/performers/${oppId}/scenes` : '#';
-    
+    const profileUrl = isSceneRecord
+      ? (oppId ? `/scenes/${oppId}` : '#')
+      : (oppId ? `/performers/${oppId}/scenes` : '#');
+
     let tierIndicator = '';
     if (index < sortedHistory.length - 1) {
       const previousMatch = sortedHistory[index + 1];
       tierIndicator = getTierChangeIndicator(previousMatch.ratingAfter, match.ratingAfter);
     }
-    
+
     const formattedRating = formatScore(match.ratingAfter);
 
     timeline.insertAdjacentHTML('beforeend', `
@@ -291,7 +425,7 @@ function buildTimeline(history) {
         <span class="timeline-marker">${symbol}</span>
         <div class="timeline-content">
           <span class="timeline-status">${statusText}</span>
-          <span class="timeline-vs">vs</span> 
+          <span class="timeline-vs">vs</span>
           <a href="${profileUrl}" class="timeline-opponent-link" style="color: #00b2ff; text-decoration: none;" title="${oppName}">
             ${truncatedName}
           </a>
@@ -307,7 +441,6 @@ function buildTimeline(history) {
   return timeline;
 }
 
-
 const style = document.createElement('style');
 style.textContent = `
   .rating-tier-container {
@@ -316,11 +449,11 @@ style.textContent = `
     align-items: center;
     gap: 2px;
   }
-  
+
   .timeline-rating {
     font-weight: bold;
   }
-  
+
   .tier-indicator {
     font-size: 0.8em;
   }
@@ -328,4 +461,3 @@ style.textContent = `
 document.head.appendChild(style);
 
 recordObserverNew.observe(document.body, { childList: true, subtree: true });
-recordObserverOld.observe(document.body, { childList: true, subtree: true });
