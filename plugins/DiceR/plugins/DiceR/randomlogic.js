@@ -62,7 +62,9 @@
     MAX_RETRY_ATTEMPTS: 5,
     PAGE_SIZE: 1000,
     REQUEST_TIMEOUT: 6000, // 6 seconds timeout
-    MAX_TIMEOUT_RETRIES: 3 // Number of retry attempts for timeouts
+    MAX_TIMEOUT_RETRIES: 3, // Number of retry attempts for timeouts
+    SAMPLING_THRESHOLD: 5000, // Collections larger than this use sampling
+    SEEN_SAVE_DEBOUNCE_MS: 1000 // Coalesce seen-tracker writes
   };
 
   /* ==========================
@@ -142,11 +144,27 @@
     return cacheKey;
   }
 
-  // Optimized shuffle using Fisher-Yates algorithm
+  // Unbiased random integer in [0, max) using crypto.getRandomValues when available.
+  function secureRandomInt(max) {
+    if (max <= 0) return 0;
+    if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+      const array = new Uint32Array(1);
+      const limit = 0x100000000 - (0x100000000 % max);
+      let value;
+      do {
+        crypto.getRandomValues(array);
+        value = array[0];
+      } while (value >= limit);
+      return value % max;
+    }
+    return Math.floor(Math.random() * max);
+  }
+
+  // Optimized shuffle using Fisher-Yates algorithm with a higher-quality RNG
   function shuffleArray(array) {
     DiceRLogger.log("info", "shuffleArray", { arrayLength: array.length });
     for (let i = array.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
+      const j = secureRandomInt(i + 1);
       [array[i], array[j]] = [array[j], array[i]];
     }
     return array;
@@ -163,6 +181,7 @@
       this.historyKey = `${cacheKey}_history`;
       this.recentSeen = new Set();
       this.historySeen = new Set();
+      this._saveTimeout = null;
       this.loadSeenData();
       DiceRLogger.log("success", "TieredSeenTracker initialized", { 
         cacheKey, 
@@ -187,6 +206,22 @@
         DiceRLogger.log("warn", "Failed to load seen data, using empty sets", e);
         this.recentSeen = new Set();
         this.historySeen = new Set();
+      }
+    }
+
+    _scheduleSave() {
+      if (this._saveTimeout) clearTimeout(this._saveTimeout);
+      this._saveTimeout = setTimeout(() => {
+        this.saveSeenData();
+        this._saveTimeout = null;
+      }, CONFIG.SEEN_SAVE_DEBOUNCE_MS);
+    }
+
+    flushSave() {
+      if (this._saveTimeout) {
+        clearTimeout(this._saveTimeout);
+        this._saveTimeout = null;
+        this.saveSeenData();
       }
     }
 
@@ -265,9 +300,8 @@
         historyCount: this.historySeen.size
       });
       
-      // Save immediately to ensure persistence, especially before navigation
-      // The save logic includes maintainSizeLimits and actual localStorage write
-      this.saveSeenData();
+      // Debounce persistence to avoid blocking the main thread on every click.
+      this._scheduleSave();
     }
 
     hasSeen(id) {
@@ -301,7 +335,7 @@
       const clearedCount = this.recentSeen.size + this.historySeen.size;
       this.recentSeen.clear();
       this.historySeen.clear();
-      this.saveSeenData();
+      this.flushSave();
       DiceRLogger.log("warn", "Seen tracking cleared", { clearedItems: clearedCount });
     }
   }
@@ -387,7 +421,18 @@
     DiceRLogger.log("event", `🎲 Roll #${rollCount}`, { entity, internalFilter });
 
     const cacheKey = getCacheKey(entity, internalFilter);
-	const shouldUseSampling = (entity === "Image" || entity === "Scene" || entity === "Gallery" || entity === "Performer") && !internalFilter;
+    const dataManager = new CachedDataManager(cacheKey);
+    const cachedCount = dataManager.getTotalCount();
+
+    // Dynamic path selection based on actual (cached) collection size.
+    let shouldUseSampling;
+    if (internalFilter) {
+      shouldUseSampling = false;
+    } else if (cachedCount > 0) {
+      shouldUseSampling = cachedCount > CONFIG.SAMPLING_THRESHOLD;
+    } else {
+      shouldUseSampling = ['Image', 'Scene', 'Gallery', 'Performer'].includes(entity);
+    }
 
     if (shouldUseSampling) {
       DiceRLogger.log("info", "Using sampling approach for large collection");
@@ -399,123 +444,128 @@
   }
 
   // Optimized: Hybrid approach for large collections with seen/unseen tracking
-async function randomWithSamplingAndTracking(entity, idField, redirectPrefix, internalFilter, cacheKey) {
-  const realEntityPlural = getPlural(entity);
-  const seenTracker = new TieredSeenTracker(cacheKey);
-  const dataManager = new CachedDataManager(cacheKey);
+  async function randomWithSamplingAndTracking(entity, idField, redirectPrefix, internalFilter, cacheKey) {
+    const realEntityPlural = getPlural(entity);
+    const seenTracker = new TieredSeenTracker(cacheKey);
+    const dataManager = new CachedDataManager(cacheKey);
 
-  // Always fetch and update total count to ensure it's fresh
-  try {
-    const count = await retryWithTimeout(() => getTotalCount(entity, internalFilter));
-    if (count !== null) {
-      dataManager.updateTotalCount(count);
-    } else {
-      DiceRLogger.log("warn", "Failed to refresh count, using cached value");
-    }
-  } catch (error) {
-    DiceRLogger.log("error", "Failed to refresh count due to timeout", error);
-    // Continue with cached value
-  }
-
-  // Try to find an item that hasn't been seen
-  let attempts = 0;
-  let selectedItem = null;
-  let selectedId = null;
-
-  DiceRLogger.log("info", "Starting selection attempts", { maxAttempts: CONFIG.MAX_RETRY_ATTEMPTS });
-
-  while (attempts < CONFIG.MAX_RETRY_ATTEMPTS && !selectedItem) {
-    attempts++;
-    DiceRLogger.log("info", `Selection attempt #${attempts}`);
-
-    try {
-      const itemResult = await retryWithTimeout(() => getRandomItemBySampling(entity, idField, internalFilter));
-
-      if (itemResult && itemResult.item && itemResult.id) {
-        // Check if we've seen this item before
-        if (!seenTracker.hasSeen(itemResult.id)) {
-          selectedItem = itemResult.item;
-          selectedId = itemResult.id;
-          DiceRLogger.log("success", "Found unseen item", {
-            id: selectedId,
-            attemptsUsed: attempts
-          });
-          break;
+    // Use cached count if fresh; only refetch when stale or unknown.
+    let totalCount = dataManager.getTotalCount();
+    if (dataManager.needsRefresh() || totalCount === 0) {
+      try {
+        const count = await retryWithTimeout(() => getTotalCount(entity, internalFilter));
+        if (count !== null) {
+          dataManager.updateTotalCount(count);
+          totalCount = count;
         } else {
-          DiceRLogger.log("info", "Skipping already seen item", {
-            id: itemResult.id,
-            attempts
-          });
+          DiceRLogger.log("warn", "Failed to refresh count, using cached value");
         }
-      } else {
-        DiceRLogger.log("warn", "Failed to get item from sampling", { attempts });
-      }
-    } catch (error) {
-      if (error.message === 'REQUEST_TIMEOUT') {
-        DiceRLogger.log("warn", "Timeout during sampling attempt", { attempts });
-      } else {
-        throw error;
+      } catch (error) {
+        DiceRLogger.log("error", "Failed to refresh count due to timeout", error);
+        // Continue with cached value
       }
     }
-  }
 
-  // If we couldn't find an unseen item, either reshuffle or pick one anyway
-  if (!selectedItem) {
-    DiceRLogger.log("warn", "All items may have been seen, allowing repeats");
+    // Try to find an item that hasn't been seen
+    let attempts = 0;
+    let selectedItem = null;
+    let selectedId = null;
 
-    // Clear seen tracking to allow repeats if most items have been seen
-    const totalCount = dataManager.getTotalCount();
-    const seenCount = seenTracker.getSeenCount();
+    DiceRLogger.log("info", "Starting selection attempts", { maxAttempts: CONFIG.MAX_RETRY_ATTEMPTS });
 
-    if (seenCount > (totalCount || 10000) * 0.9) {
-      DiceRLogger.log("warn", "Resetting seen tracking - most items seen", {
-        seenCount,
-        totalCount,
-        threshold: (totalCount || 10000) * 0.9
+    while (attempts < CONFIG.MAX_RETRY_ATTEMPTS && !selectedItem) {
+      attempts++;
+      DiceRLogger.log("info", `Selection attempt #${attempts}`);
+
+      try {
+        const itemResult = await retryWithTimeout(() => getRandomItemBySampling(entity, idField, internalFilter, totalCount));
+
+        if (itemResult && itemResult.item && itemResult.id) {
+          // Check if we've seen this item before
+          if (!seenTracker.hasSeen(itemResult.id)) {
+            selectedItem = itemResult.item;
+            selectedId = itemResult.id;
+            DiceRLogger.log("success", "Found unseen item", {
+              id: selectedId,
+              attemptsUsed: attempts
+            });
+            break;
+          } else {
+            DiceRLogger.log("info", "Skipping already seen item", {
+              id: itemResult.id,
+              attempts
+            });
+          }
+        } else {
+          DiceRLogger.log("warn", "Failed to get item from sampling", { attempts });
+        }
+      } catch (error) {
+        if (error.message === 'REQUEST_TIMEOUT') {
+          DiceRLogger.log("warn", "Timeout during sampling attempt", { attempts });
+        } else {
+          throw error;
+        }
+      }
+    }
+
+    // If we couldn't find an unseen item, either reshuffle or pick one anyway
+    if (!selectedItem) {
+      DiceRLogger.log("warn", "All items may have been seen, allowing repeats");
+
+      // Clear seen tracking to allow repeats if most items have been seen
+      const seenCount = seenTracker.getSeenCount();
+
+      if (seenCount > (totalCount || 10000) * 0.9) {
+        DiceRLogger.log("warn", "Resetting seen tracking - most items seen", {
+          seenCount,
+          totalCount,
+          threshold: (totalCount || 10000) * 0.9
+        });
+        seenTracker.clear();
+      }
+
+      try {
+        const sampleResult = await retryWithTimeout(() => getRandomItemBySampling(entity, idField, internalFilter, totalCount));
+        if (sampleResult && sampleResult.item) {
+          selectedItem = sampleResult.item;
+          selectedId = sampleResult.id;
+          DiceRLogger.log("success", "Selected item with repeats allowed", { selectedId });
+        }
+      } catch (error) {
+        if (error.message !== 'REQUEST_TIMEOUT') {
+          throw error;
+        }
+      }
+    }
+
+    if (selectedItem && selectedId) {
+      // Mark as seen
+      seenTracker.addSeen(selectedId);
+      // Ensure persistence before the page unloads.
+      seenTracker.flushSave();
+
+      DiceRLogger.log("success", "Selected random item", {
+        itemId: selectedId,
+        seenCount: seenTracker.getSeenCount(),
+        totalEstimated: dataManager.getTotalCount()
       });
-      seenTracker.clear();
-    }
 
-    try {
-      const sampleResult = await retryWithTimeout(() => getRandomItemBySampling(entity, idField, internalFilter));
-      if (sampleResult && sampleResult.item) {
-        selectedItem = sampleResult.item;
-        selectedId = sampleResult.id;
-        DiceRLogger.log("success", "Selected item with repeats allowed", { selectedId });
-      }
-    } catch (error) {
-      if (error.message !== 'REQUEST_TIMEOUT') {
-        throw error;
-      }
+      window.location.href = `${redirectPrefix}${selectedId}`;
+    } else {
+      DiceRLogger.log("error", "Failed to select item after max attempts");
+      alert("Unable to select random item.");
     }
   }
-
-  if (selectedItem && selectedId) {
-    // Mark as seen
-    seenTracker.addSeen(selectedId);
-
-    DiceRLogger.log("success", "Selected random item", {
-      itemId: selectedId,
-      seenCount: seenTracker.getSeenCount(),
-      totalEstimated: dataManager.getTotalCount()
-    });
-
-    window.location.href = `${redirectPrefix}${selectedId}`;
-  } else {
-    DiceRLogger.log("error", "Failed to select item after max attempts");
-    alert("Unable to select random item.");
-  }
-}
 
   // Helper function to get random item via optimized sampling
-  async function getRandomItemBySampling(entity, idField, internalFilter) {
+  async function getRandomItemBySampling(entity, idField, internalFilter, knownTotalCount = null) {
     const realEntityPlural = getPlural(entity);
     
     try {
       DiceRLogger.log("info", "Getting random item via sampling", { entity, idField });
       
-      // Get total count
-      const totalCount = await getTotalCount(entity, internalFilter);
+      // Get total count (use cached value when provided to avoid extra GraphQL calls)
+      const totalCount = knownTotalCount !== null ? knownTotalCount : await getTotalCount(entity, internalFilter);
       if (totalCount === 0) {
         DiceRLogger.log("warn", "Total count is zero", { entity });
         return null;
@@ -525,10 +575,10 @@ async function randomWithSamplingAndTracking(entity, idField, redirectPrefix, in
 
       // Generate random page and offset
       const totalPages = Math.ceil(totalCount / CONFIG.PAGE_SIZE);
-      const randomPage = Math.floor(Math.random() * totalPages);
+      const randomPage = secureRandomInt(totalPages);
       const itemsInLastPage = totalCount % CONFIG.PAGE_SIZE || CONFIG.PAGE_SIZE;
       const maxOffset = (randomPage === totalPages - 1) ? itemsInLastPage : CONFIG.PAGE_SIZE;
-      const randomOffsetInPage = Math.floor(Math.random() * maxOffset);
+      const randomOffsetInPage = secureRandomInt(maxOffset);
 
       DiceRLogger.log("info", "Sampling parameters", { 
         totalPages, 
@@ -538,12 +588,11 @@ async function randomWithSamplingAndTracking(entity, idField, redirectPrefix, in
         randomOffsetInPage 
       });
 
-      // Add random sort to prevent chronological ordering
-      const sortOptions = ['created_at', 'updated_at', 'name', 'path', 'date'];
-      const randomSort = sortOptions[Math.floor(Math.random() * sortOptions.length)];
-      const sortDirection = Math.random() > 0.5 ? 'ASC' : 'DESC';
+      // Use a fixed, deterministic sort so the backend can reuse/cachche the query plan.
+      const sort = 'created_at';
+      const direction = 'ASC';
 
-      DiceRLogger.log("info", "Random sort applied", { randomSort, sortDirection });
+      DiceRLogger.log("info", "Fixed sort applied", { sort, direction });
 
       // Fetch the specific page
       let filterArg = "";
@@ -552,8 +601,8 @@ async function randomWithSamplingAndTracking(entity, idField, redirectPrefix, in
         filter: { 
           per_page: CONFIG.PAGE_SIZE,
           page: randomPage + 1,
-          sort: randomSort,
-          direction: sortDirection
+          sort,
+          direction
         }
       };
 
@@ -605,7 +654,7 @@ async function randomWithSamplingAndTracking(entity, idField, redirectPrefix, in
       });
 
       // Select random item from the page
-      const randomIndex = randomOffsetInPage < items.length ? randomOffsetInPage : Math.floor(Math.random() * items.length);
+      const randomIndex = randomOffsetInPage < items.length ? randomOffsetInPage : secureRandomInt(items.length);
       const selectedItem = items[randomIndex];
 
       DiceRLogger.log("success", "Random item selected from page", { 
@@ -845,140 +894,140 @@ async function randomWithSamplingAndTracking(entity, idField, redirectPrefix, in
      BUTTON HANDLER
   ========================== */
 
-	async function randomButtonHandler() {
-	  const pathname = window.location.pathname.replace(/\/$/, ''); // Remove trailing slash
-	  const searchParams = new URLSearchParams(window.location.search);
-	  DiceRLogger.log("event", "Button clicked", { pathname, searchParams: window.location.search });
+  async function randomButtonHandler() {
+    const pathname = window.location.pathname.replace(/\/$/, ''); // Remove trailing slash
+    const searchParams = new URLSearchParams(window.location.search);
+    DiceRLogger.log("event", "Button clicked", { pathname, searchParams: window.location.search });
 
-	  // Handle main galleries list page (with or without filters)
-	  if (pathname === '/galleries') {
-		DiceRLogger.log("info", "Handling galleries page");
-		const filterParam = searchParams.get('c');
-		if (filterParam) {
-		  try {
-			const internalFilter = convertUrlFilterToInternalFilter(filterParam);
-			DiceRLogger.log("info", "Using filter for galleries", { filterParam });
-			return randomGlobal('Gallery', 'galleries', '/galleries/', internalFilter);
-		  } catch (e) {
-			DiceRLogger.log("error", "Failed to convert filters", e);
-			return randomGlobal('Gallery', 'galleries', '/galleries/');
-		  }
-		}
-		return randomGlobal('Gallery', 'galleries', '/galleries/');
-	  }
+    // Handle main galleries list page (with or without filters)
+    if (pathname === '/galleries') {
+      DiceRLogger.log("info", "Handling galleries page");
+      const filterParam = searchParams.get('c');
+      if (filterParam) {
+        try {
+          const internalFilter = convertUrlFilterToInternalFilter(filterParam);
+          DiceRLogger.log("info", "Using filter for galleries", { filterParam });
+          return randomGlobal('Gallery', 'galleries', '/galleries/', internalFilter);
+        } catch (e) {
+          DiceRLogger.log("error", "Failed to convert filters", e);
+          return randomGlobal('Gallery', 'galleries', '/galleries/');
+        }
+      }
+      return randomGlobal('Gallery', 'galleries', '/galleries/');
+    }
 
-	  // Handle specific gallery page - should roll to another gallery
-	  let galleryId = getIdFromPath(/^\/galleries\/(\d+)/);
-	  if (galleryId) {
-		DiceRLogger.log("info", "Handling specific gallery page", { galleryId });
-		const filterParam = searchParams.get('c');
-		if (filterParam) {
-		  try {
-			const internalFilter = convertUrlFilterToInternalFilter(filterParam);
-			return randomGlobal('Gallery', 'galleries', '/galleries/', internalFilter);
-		  } catch (e) {
-			DiceRLogger.log("error", "Failed to convert filters", e);
-			return randomGlobal('Gallery', 'galleries', '/galleries/');
-		  }
-		}
-		return randomGlobal('Gallery', 'galleries', '/galleries/');
-	  }
+    // Handle specific gallery page - should roll to another gallery
+    let galleryId = getIdFromPath(/^\/galleries\/(\d+)/);
+    if (galleryId) {
+      DiceRLogger.log("info", "Handling specific gallery page", { galleryId });
+      const filterParam = searchParams.get('c');
+      if (filterParam) {
+        try {
+          const internalFilter = convertUrlFilterToInternalFilter(filterParam);
+          return randomGlobal('Gallery', 'galleries', '/galleries/', internalFilter);
+        } catch (e) {
+          DiceRLogger.log("error", "Failed to convert filters", e);
+          return randomGlobal('Gallery', 'galleries', '/galleries/');
+        }
+      }
+      return randomGlobal('Gallery', 'galleries', '/galleries/');
+    }
 
-	  // Handle specific performer page - should roll to another performer
-	  let performerPageId = getIdFromPath(/^\/performers\/(\d+)/);
-	  if (performerPageId) {
-		DiceRLogger.log("info", "Handling specific performer page", { performerPageId });
-		// Always roll to another performer, never content from this performer
-		return randomGlobal('Performer', 'performers', '/performers/');
-	  }
+    // Handle specific performer page - should roll to another performer
+    let performerPageId = getIdFromPath(/^\/performers\/(\d+)/);
+    if (performerPageId) {
+      DiceRLogger.log("info", "Handling specific performer page", { performerPageId });
+      // Always roll to another performer, never content from this performer
+      return randomGlobal('Performer', 'performers', '/performers/');
+    }
 
-	  // Handle specific studio page - should roll to another studio
-	  // This regex matches /studios/{id} even if there are more path segments
-	  let studioMatch = pathname.match(/^\/studios\/(\d+)/);
-	  if (studioMatch) {
-		let studioId = studioMatch[1];
-		DiceRLogger.log("info", "Handling specific studio page", { studioId });
-		return randomGlobal('Studio', 'studios', '/studios/');
-	  }
+    // Handle specific studio page - should roll to another studio
+    // This regex matches /studios/{id} even if there are more path segments
+    let studioMatch = pathname.match(/^\/studios\/(\d+)/);
+    if (studioMatch) {
+      let studioId = studioMatch[1];
+      DiceRLogger.log("info", "Handling specific studio page", { studioId });
+      return randomGlobal('Studio', 'studios', '/studios/');
+    }
 
-	  // Handle specific tag page - should roll to another tag
-	  // This regex matches /tags/{id} even if there are more path segments
-	  let tagMatch = pathname.match(/^\/tags\/(\d+)/);
-	  if (tagMatch) {
-		let tagId = tagMatch[1];
-		DiceRLogger.log("info", "Handling specific tag page", { tagId });
-		return randomGlobal('Tag', 'tags', '/tags/');
-	  }
+    // Handle specific tag page - should roll to another tag
+    // This regex matches /tags/{id} even if there are more path segments
+    let tagMatch = pathname.match(/^\/tags\/(\d+)/);
+    if (tagMatch) {
+      let tagId = tagMatch[1];
+      DiceRLogger.log("info", "Handling specific tag page", { tagId });
+      return randomGlobal('Tag', 'tags', '/tags/');
+    }
 
-	  // Rest of your existing conditions...
-	  if (pathname === '/scenes' || pathname === '/' || pathname === '' ||
-		  pathname === '/stats' || pathname === '/settings' ||
-		  pathname === '/scenes/markers' || /^\/scenes\/\d+$/.test(pathname)) {
-		DiceRLogger.log("info", "Handling scenes page");
-		return randomGlobal('Scene', 'scenes', '/scenes/');
-	  }
+    // Rest of your existing conditions...
+    if (pathname === '/scenes' || pathname === '/' || pathname === '' ||
+        pathname === '/stats' || pathname === '/settings' ||
+        pathname === '/scenes/markers' || /^\/scenes\/\d+$/.test(pathname)) {
+      DiceRLogger.log("info", "Handling scenes page");
+      return randomGlobal('Scene', 'scenes', '/scenes/');
+    }
 
-	  if (pathname === '/images' || /^\/images\/\d+$/.test(pathname)) {
-		DiceRLogger.log("info", "Handling images page");
-		return randomGlobal('Image', 'images', '/images/');
-	  }
+    if (pathname === '/images' || /^\/images\/\d+$/.test(pathname)) {
+      DiceRLogger.log("info", "Handling images page");
+      return randomGlobal('Image', 'images', '/images/');
+    }
 
-	  if (pathname === '/performers') {
-		DiceRLogger.log("info", "Handling performers page");
-		return randomGlobal('Performer', 'performers', '/performers/');
-	  }
+    if (pathname === '/performers') {
+      DiceRLogger.log("info", "Handling performers page");
+      return randomGlobal('Performer', 'performers', '/performers/');
+    }
 
-	  if (pathname === '/studios') {
-		DiceRLogger.log("info", "Handling studios page");
-		return randomGlobal('Studio', 'studios', '/studios/');
-	  }
+    if (pathname === '/studios') {
+      DiceRLogger.log("info", "Handling studios page");
+      return randomGlobal('Studio', 'studios', '/studios/');
+    }
 
-	  if (pathname === '/tags') {
-		DiceRLogger.log("info", "Handling tags page");
-		return randomGlobal('Tag', 'tags', '/tags/');
-	  }
+    if (pathname === '/tags') {
+      DiceRLogger.log("info", "Handling tags page");
+      return randomGlobal('Tag', 'tags', '/tags/');
+    }
 
-	  if (pathname === '/groups') {
-		DiceRLogger.log("info", "Handling groups page");
-		return randomGlobal('Group', 'groups', '/groups/');
-	  }
+    if (pathname === '/groups') {
+      DiceRLogger.log("info", "Handling groups page");
+      return randomGlobal('Group', 'groups', '/groups/');
+    }
 
-	  // Handle images within a specific gallery (from gallery image view)
-	  let galleryImageId = getIdFromPath(/^\/galleries\/(\d+)\/images/);
-	  if (galleryImageId) {
-		DiceRLogger.log("info", "Handling gallery images", { galleryImageId });
-		return randomGlobal('Image', 'images', '/images/', {
-		  galleries: { value: [galleryImageId], modifier: "INCLUDES_ALL" }
-		});
-	  }
+    // Handle images within a specific gallery (from gallery image view)
+    let galleryImageId = getIdFromPath(/^\/galleries\/(\d+)\/images/);
+    if (galleryImageId) {
+      DiceRLogger.log("info", "Handling gallery images", { galleryImageId });
+      return randomGlobal('Image', 'images', '/images/', {
+        galleries: { value: [galleryImageId], modifier: "INCLUDES_ALL" }
+      });
+    }
 
-	  let studioSceneId = getIdFromPath(/^\/studios\/(\d+)\/scenes/);
-	  if (studioSceneId) {
-		DiceRLogger.log("info", "Handling studio scenes", { studioSceneId });
-		return randomGlobal('Scene', 'scenes', '/scenes/', {
-		  studios: { value: [studioSceneId], modifier: "INCLUDES_ALL" }
-		});
-	  }
+    let studioSceneId = getIdFromPath(/^\/studios\/(\d+)\/scenes/);
+    if (studioSceneId) {
+      DiceRLogger.log("info", "Handling studio scenes", { studioSceneId });
+      return randomGlobal('Scene', 'scenes', '/scenes/', {
+        studios: { value: [studioSceneId], modifier: "INCLUDES_ALL" }
+      });
+    }
 
-	  let groupId = getIdFromPath(/^\/groups\/(\d+)\/scenes/);
-	  if (groupId) {
-		DiceRLogger.log("info", "Handling group scenes", { groupId });
-		return randomGlobal('Scene', 'scenes', '/scenes/', {
-		  groups: { value: [groupId], modifier: "INCLUDES_ALL" }
-		});
-	  }
+    let groupId = getIdFromPath(/^\/groups\/(\d+)\/scenes/);
+    if (groupId) {
+      DiceRLogger.log("info", "Handling group scenes", { groupId });
+      return randomGlobal('Scene', 'scenes', '/scenes/', {
+        groups: { value: [groupId], modifier: "INCLUDES_ALL" }
+      });
+    }
 
-	  let tagSceneId = getIdFromPath(/^\/tags\/(\d+)\/scenes/);
-	  if (tagSceneId) {
-		DiceRLogger.log("info", "Handling tag scenes", { tagSceneId });
-		return randomGlobal('Scene', 'scenes', '/scenes/', {
-		  tags: { value: [tagSceneId], modifier: "INCLUDES_ALL" }
-		});
-	  }
+    let tagSceneId = getIdFromPath(/^\/tags\/(\d+)\/scenes/);
+    if (tagSceneId) {
+      DiceRLogger.log("info", "Handling tag scenes", { tagSceneId });
+      return randomGlobal('Scene', 'scenes', '/scenes/', {
+        tags: { value: [tagSceneId], modifier: "INCLUDES_ALL" }
+      });
+    }
 
-	  DiceRLogger.log("error", "Unsupported path", { pathname });
-	  alert('Not supported');
-	}
+    DiceRLogger.log("error", "Unsupported path", { pathname });
+    alert('Not supported');
+  }
 
   // Convert URL filter format to internal GraphQL filter format
   function convertUrlFilterToInternalFilter(filterParam) {
@@ -986,7 +1035,7 @@ async function randomWithSamplingAndTracking(entity, idField, redirectPrefix, in
       DiceRLogger.log("info", "Converting URL filter", { filterParam });
       const decoded = decodeURIComponent(filterParam);
       
-      const excludedMatch = decoded.match(/"excluded":$$$(.*?)$$$/);
+      const excludedMatch = decoded.match(/"excluded":\[(.*?)\]/);
       if (excludedMatch && excludedMatch[1]) {
         const tagIds = [];
         const excludedStr = excludedMatch[1];
@@ -1129,4 +1178,3 @@ async function randomWithSamplingAndTracking(entity, idField, redirectPrefix, in
   });
 
 })();
-
