@@ -98,6 +98,29 @@
     recencyWeightCache.set(cacheKey, { value: freshness, timestamp: now });
     return freshness;
   }
+  function getSceneRecencyWeight(scene) {
+    const stats = parsePerformerEloData(scene);
+    if (!stats.last_match || stats.total_matches === 0) {
+      return 1;
+    }
+    const lastMatchDate = new Date(stats.last_match);
+    const msSince = Date.now() - lastMatchDate.getTime();
+    if (isNaN(msSince))
+      return 1;
+    const hoursSince = msSince / (1e3 * 60 * 60);
+    if (hoursSince < 1)
+      return 0;
+    if (hoursSince < 24) {
+      return Math.max(0.05, hoursSince / 24);
+    }
+    if (hoursSince < 168) {
+      return 0.4 + Math.min(0.6, (hoursSince - 24) / 144 * 0.6);
+    }
+    if (hoursSince < 720) {
+      return 0.7 + Math.min(0.3, (hoursSince - 168) / 552 * 0.3);
+    }
+    return 1;
+  }
   function getSceneSelectionConfig(totalScenes = 1e3) {
     const scaleFactor = Math.min(1, Math.max(0.3, totalScenes / 27e3));
     return {
@@ -108,7 +131,11 @@
       ratingWindowMin: 6,
       recentCooldownSize: Math.min(300, Math.max(75, Math.floor(totalScenes * 0.01))),
       similarityPenalty: 0.65,
-      maxSimilarityPenalty: 0.15
+      maxSimilarityPenalty: 0.15,
+      persistentCooldownHours: 6,
+      hardRepeatWindowHours: 24,
+      drainModeRepeatPenalty: 0.05,
+      metadataRefreshInterval: 10
     };
   }
   function calculateSceneSimilarity(sceneA, sceneB) {
@@ -285,15 +312,13 @@
   }
   function getChallengeProtectionMultiplier(ratingDiff) {
     if (ratingDiff > 15) {
-      if (ratingDiff > 30) {
+      if (ratingDiff > 30)
         return 0.7;
-      } else if (ratingDiff > 25) {
+      if (ratingDiff > 25)
         return 0.8;
-      } else if (ratingDiff > 20) {
+      if (ratingDiff > 20)
         return 0.85;
-      } else {
-        return 0.9;
-      }
+      return 0.9;
     }
     return 1;
   }
@@ -1258,7 +1283,14 @@
     const rankDisplay = rank != null ? `<span class="hon-scene-rank">${typeof rank === "number" ? "#" + rank : rank}</span>` : "";
     const streakDisplay = gauntletStreak ? `<div class="hon-streak-badge">${formatStreakDisplay(gauntletStreak)}</div>` : "";
     const dateDisplay = scene.date && scene.date !== "Unknown" ? `<div class="hon-meta-item"><strong>Date:</strong> ${scene.date}</div>` : "";
-    const focusBtnHtml = isMobile() ? `<button type="button" class="hon-focus-btn" data-action="focus" aria-label="Focus card">\u{1F50D} Focus</button>` : "";
+    const topActionsHtml = isMobile() ? `<div class="hon-scene-top-actions">
+      <button type="button" class="hon-focus-btn" data-action="focus" aria-label="Focus card">\u{1F50D} Focus</button>
+      <div class="hon-choose-btn hon-choose-btn-icon" data-winner="${scene.id}">
+        <span class="hon-choose-icon hon-choose-icon-default">\u2B55</span>
+        <span class="hon-choose-icon hon-choose-icon-selected">\u2705</span>
+        <span class="hon-choose-icon hon-choose-icon-rejected">\u274C</span>
+      </div>
+    </div>` : "";
     const htmlParts = [];
     htmlParts.push(
       '<div class="hon-scene-card" data-scene-id="',
@@ -1291,7 +1323,7 @@
       scene.id,
       '">',
       '<div class="hon-scene-info">',
-      focusBtnHtml,
+      topActionsHtml,
       '<div class="hon-scene-title-row"><h3 class="hon-scene-title">',
       title,
       "</h3>",
@@ -1474,7 +1506,7 @@
         ${rankDisplay ? `<div class="hon-image-rank-overlay">${rankDisplay}</div>` : ""}
       </div>
       <div class="hon-image-body hon-scene-body" data-winner="${image.id}">
-        <div class="hon-choose-btn">\u2713 Choose This Image</div>
+        <div class="hon-choose-btn">\u2B55</div>
       </div>
     </div>`;
   }
@@ -1591,6 +1623,7 @@
     SCENE_FRAGMENT: () => SCENE_FRAGMENT,
     fetchAllPerformerStats: () => fetchAllPerformerStats,
     fetchAllPerformersSorted: () => fetchAllPerformersSorted,
+    fetchAllSceneMetadata: () => fetchAllSceneMetadata,
     fetchGlobalPerformerRatings: () => fetchGlobalPerformerRatings,
     fetchImageCount: () => fetchImageCount,
     fetchPerformerById: () => fetchPerformerById,
@@ -1598,6 +1631,7 @@
     fetchRandomImages: () => fetchRandomImages,
     fetchRandomPerformers: () => fetchRandomPerformers,
     fetchSceneById: () => fetchSceneById,
+    fetchScenesByIds: () => fetchScenesByIds,
     getAllPerformersSorted: () => getAllPerformersSorted,
     getHotOrNotConfig: () => getHotOrNotConfig,
     graphqlQuery: () => graphqlQuery,
@@ -1659,6 +1693,33 @@
       currentPage++;
     }
     return allItems;
+  }
+  async function fetchAllSceneMetadata() {
+    const queryTemplate = `
+    query FindSceneMetadata($filter: FindFilterType) {
+      findScenes(filter: $filter) {
+        scenes { id rating100 custom_fields }
+      }
+    }
+  `;
+    return await fetchAllItems2(queryTemplate, {
+      filter: { sort: "rating100", direction: "DESC" }
+    }, 1e3);
+  }
+  async function fetchScenesByIds(ids) {
+    if (!ids || ids.length === 0)
+      return [];
+    const query = `
+    query FindScenesByIds($filter: FindFilterType) {
+      findScenes(filter: $filter) {
+        scenes { ${SCENE_FRAGMENT} }
+      }
+    }
+  `;
+    const result = await graphqlQuery(query, {
+      filter: { per_page: ids.length, ids }
+    });
+    return result?.findScenes?.scenes || [];
   }
   function sortPerformersByRating(performers) {
     const performerStats = /* @__PURE__ */ new Map();
@@ -2910,7 +2971,7 @@ Match Stats:`;
       subtree: true
     });
   }
-  function showPlacementScreen(item, rank, finalRating, battleType, totalItemsCount) {
+  async function showPlacementScreen(item, placementRank, finalRating, battleType, totalItemsCount) {
     const area = document.getElementById("hon-comparison-area");
     if (!area)
       return;
@@ -2937,6 +2998,56 @@ Match Stats:`;
     } else {
       imageContent = `<div class="hon-victory-image hon-no-image">No Image</div>`;
     }
+    let rank = placementRank;
+    let total = totalItemsCount;
+    let displayScore = null;
+    let tierName = null;
+    let scoreLabel = "Rating";
+    let scoreSuffix = `/10.0`;
+    if (battleType === "performers") {
+      try {
+        await initCacheFromDB();
+        if (!allPerformersCache) {
+          allPerformersCache = await getAllPerformersSorted();
+          rankCache = calculateAllPerformerRanks(allPerformersCache);
+          await writeCache("allPerformers", allPerformersCache);
+          await writeCache("rankMap", rankCache);
+        }
+        let rankInfo = rankCache ? rankCache.get(item.id) : null;
+        if (!rankInfo) {
+          rankInfo = await getPerformerGlobalRank(item.id, allPerformersCache);
+        }
+        if (rankInfo) {
+          rank = rankInfo.rank;
+          total = rankInfo.total;
+          displayScore = rankInfo.battleScore;
+          tierName = getRatingTier(item, allPerformersCache);
+          scoreLabel = "Asc.Score";
+          scoreSuffix = "";
+        } else {
+          displayScore = calculateBattleScore(item);
+          tierName = getRatingTier(item, allPerformersCache);
+          scoreLabel = "Asc.Score";
+          scoreSuffix = "";
+        }
+      } catch (err) {
+        console.warn("[Ascension] Failed to load global rank for placement screen:", err);
+        displayScore = calculateBattleScore(item);
+        tierName = getRatingTier(item, null);
+        scoreLabel = "Asc.Score";
+        scoreSuffix = "";
+      }
+    }
+    let scoreDisplay = "";
+    if (displayScore !== null && !isNaN(displayScore)) {
+      const tierColor = tierName ? getTierColor(tierName) : getTierColor("F-Tier");
+      scoreDisplay = `
+      ${scoreLabel}: <strong style="color: ${tierColor};">${displayScore.toFixed(2)}${scoreSuffix}</strong>
+      ${tierName ? `<span style="color: ${tierColor}; font-weight: bold;"> (${tierName})</span>` : ""}
+    `;
+    } else {
+      scoreDisplay = `Rating: <strong>${(finalRating / 10).toFixed(1)}/10.0</strong>`;
+    }
     area.innerHTML = `
     <div class="hon-victory-screen">
       <div class="hon-victory-crown">\u{1F4CD}</div>
@@ -2946,8 +3057,8 @@ Match Stats:`;
       </div>
       <h3 class="hon-victory-name">${title}</h3>
       <p class="hon-victory-stats">
-        Rank <strong>#${rank}</strong> of ${totalItemsCount}<br>
-        Rating: <strong>${(finalRating / 10).toFixed(1)}/10.0</strong>
+        Rank <strong>#${rank}</strong> of ${total}<br>
+        ${scoreDisplay}
       </p>
       <button id="hon-new-gauntlet" class="btn btn-primary">Start New Run</button>
     </div>
@@ -3110,7 +3221,7 @@ Match Stats:`;
             const tooltipText = createBattleRankTooltip(
               rankInfo.rank,
               rankInfo.total,
-              rankInfo.rating,
+              rankInfo.rank,
               rankInfo.stats,
               rankInfo.battleScore
             );
@@ -3699,14 +3810,18 @@ Match Stats:`;
       const winnerBtn = winnerBody.querySelector(".hon-choose-btn");
       if (winnerBtn) {
         winnerBtn.classList.add("chosen-btn");
-        winnerBtn.innerHTML = "\u2705";
+        if (!winnerBtn.classList.contains("hon-choose-btn-icon")) {
+          winnerBtn.innerHTML = "\u2705";
+        }
       }
     }
     if (loserBody) {
       const loserBtn = loserBody.querySelector(".hon-choose-btn");
       if (loserBtn) {
         loserBtn.classList.add("not-chosen-btn");
-        loserBtn.innerHTML = "\u274C";
+        if (!loserBtn.classList.contains("hon-choose-btn-icon")) {
+          loserBtn.innerHTML = "\u274C";
+        }
       }
     }
     const winnerIsBattleScore = useBattleScoreDisplay(winnerItem);
@@ -3915,9 +4030,8 @@ Match Stats:`;
             const clickHandler = (e) => {
               if (isNonVotingClick(e))
                 return;
-              if (clickTimeout) {
+              if (clickTimeout)
                 clearTimeout(clickTimeout);
-              }
               clickTimeout = setTimeout(() => {
                 clickTimeout = null;
               }, 500);
@@ -3963,9 +4077,7 @@ Match Stats:`;
           handleChooseItem(e);
         };
         body.addEventListener("click", clickHandler);
-        cleanupFunctions2.push(() => {
-          body.removeEventListener("click", clickHandler);
-        });
+        cleanupFunctions2.push(() => body.removeEventListener("click", clickHandler));
       });
       const cards = area.querySelectorAll(".hon-scene-card");
       cards.forEach((card) => {
@@ -3973,9 +4085,8 @@ Match Stats:`;
         if (!video)
           return;
         const mouseEnterHandler = () => {
-          if (video.style.display === "none") {
+          if (video.style.display === "none")
             video.style.display = "block";
-          }
           video.muted = true;
           video.style.position = "absolute";
           video.style.top = "0";
@@ -4041,14 +4152,11 @@ Match Stats:`;
           expandedTags.style.display = "inline";
       };
       tagElement.addEventListener("click", clickHandler);
-      cleanupFunctions2.push(() => {
-        tagElement.removeEventListener("click", clickHandler);
-      });
+      cleanupFunctions2.push(() => tagElement.removeEventListener("click", clickHandler));
     });
     area._battleCleanup = () => {
-      if (mobileBlurHandler) {
+      if (mobileBlurHandler)
         mobileBlurHandler();
-      }
       clearAllTimers();
       if (carouselInstance && typeof carouselInstance.destroy === "function") {
         carouselInstance.destroy();
@@ -4148,9 +4256,8 @@ Match Stats:`;
   function attachVictoryHandlers(area) {
     const btn = area.querySelector("#hon-new-gauntlet");
     if (btn) {
-      if (btn._victoryCleanup) {
+      if (btn._victoryCleanup)
         btn._victoryCleanup();
-      }
       const clickHandler = () => {
         resetBattleState();
         if (state.currentMode === "gauntlet" && state.battleType === "performers") {
@@ -4348,44 +4455,41 @@ Match Stats:`;
   async function fetchSwissPairScenes() {
     const totalScenes = await fetchSceneCount();
     const config = getSceneSelectionConfig(totalScenes);
-    const useSampling = totalScenes > config.sampleSize;
-    const sampleSize = useSampling ? config.sampleSize : totalScenes;
-    const query = `query FindScenesByRating($filter: FindFilterType) {
-    findScenes(filter: $filter) { scenes { ${SCENE_FRAGMENT} } }
-  }`;
-    const result = await graphqlQuery(query, {
-      filter: {
-        per_page: sampleSize,
-        sort: useSampling ? "random" : "rating100",
-        direction: useSampling ? void 0 : "DESC"
-      }
-    });
-    const scenes = result.findScenes.scenes || [];
-    if (scenes.length < 2)
+    let sceneMetadata = state.sceneMetadataCache;
+    state.sceneMetadataRefreshCounter = (state.sceneMetadataRefreshCounter || 0) + 1;
+    if (!sceneMetadata || state.sceneMetadataRefreshCounter > config.metadataRefreshInterval) {
+      sceneMetadata = await fetchAllSceneMetadata();
+      state.sceneMetadataCache = sceneMetadata;
+      state.sceneMetadataRefreshCounter = 0;
+    }
+    if (sceneMetadata.length < 2) {
       return { items: await fetchRandomScenes(2), ranks: [null, null] };
-    const avgMatches = calculateAverageMatches(scenes.map((scene) => parsePerformerEloData(scene)));
-    const weightedScenes = scenes.map((scene) => {
+    }
+    const avgMatches = calculateAverageMatches(sceneMetadata.map((scene) => parsePerformerEloData(scene)));
+    const weightedScenes = sceneMetadata.map((scene) => {
       const stats = parsePerformerEloData(scene);
       const rawMatches = stats.total_matches || 0;
       const cappedMatches = Math.min(rawMatches, config.lowMatchThreshold);
-      const baseWeight = Math.pow(getRecencyWeight(scene), 3) + Math.random() * 0.01;
+      const recencyWeight = getSceneRecencyWeight(scene);
+      const baseWeight = Math.pow(recencyWeight, 3) + Math.random() * 0.01;
       const lowMatchBoost = getLowMatchBoost({ ...scene, total_matches: cappedMatches }, avgMatches);
-      const distributionBoost = getMatchCountDistributionBoost(scene, scenes);
+      const distributionBoost = getMatchCountDistributionBoost(scene, sceneMetadata);
       const sessionPenalty = getSceneSessionPenalty(scene.id);
       const finalWeight = baseWeight * lowMatchBoost * distributionBoost * sessionPenalty;
       return {
         scene,
         weight: finalWeight,
         rating: scene.rating100 || 1,
-        matches: rawMatches
+        matches: rawMatches,
+        recencyWeight
       };
     });
     weightedScenes.sort((a, b) => b.weight - a.weight);
-    const weights = weightedScenes.map((item) => item.weight);
-    const selected = weightedRandomSelect(weightedScenes, weights);
-    const seedScene = selected ? selected.scene : weightedScenes[0].scene;
-    const seedRating = seedScene.rating100 || 1;
-    const seedMatches = parsePerformerEloData(seedScene).total_matches || 0;
+    const seedWeights = weightedScenes.map((item) => item.weight);
+    const seedItem = weightedRandomSelect(weightedScenes, seedWeights) || weightedScenes[0];
+    const seedSceneMeta = seedItem.scene;
+    const seedRating = seedSceneMeta.rating100 || 1;
+    const seedMatches = parsePerformerEloData(seedSceneMeta).total_matches || 0;
     let ratingWindow = config.ratingWindowInitial;
     if (seedMatches > 20) {
       ratingWindow = config.ratingWindowMin;
@@ -4396,16 +4500,81 @@ Match Stats:`;
     } else {
       ratingWindow = config.ratingWindowMax;
     }
-    let validOpponents = weightedScenes.filter((item) => {
-      if (item.scene.id === seedScene.id)
+    const isSceneHardExcluded = (scene) => {
+      const stats = parsePerformerEloData(scene);
+      if (!stats.last_match)
         return false;
-      if (isSceneOnCooldown(item.scene.id) || isSceneRecentlySelected(item.scene.id))
+      const lastMatch = new Date(stats.last_match).getTime();
+      if (isNaN(lastMatch))
         return false;
-      const pointDiff = Math.abs(seedRating - item.rating);
-      return pointDiff <= ratingWindow;
-    });
-    validOpponents = validOpponents.map((item) => {
-      const similarity = calculateSceneSimilarity(seedScene, item.scene);
+      const hoursSince = (Date.now() - lastMatch) / (1e3 * 60 * 60);
+      return hoursSince < config.hardRepeatWindowHours;
+    };
+    function filterCandidates(pool, window2, allowHardRepeat = false) {
+      return pool.filter((item) => {
+        if (item.scene.id === seedSceneMeta.id)
+          return false;
+        if (isSceneOnCooldown(item.scene.id) || isSceneRecentlySelected(item.scene.id))
+          return false;
+        if (!allowHardRepeat && isSceneHardExcluded(item.scene))
+          return false;
+        return Math.abs(seedRating - item.rating) <= window2;
+      });
+    }
+    let candidates = filterCandidates(weightedScenes, ratingWindow);
+    if (candidates.length < 10) {
+      candidates = filterCandidates(weightedScenes, ratingWindow * 3);
+    }
+    let inDrainMode = false;
+    if (candidates.length < 2) {
+      console.log("[Ascension] Scene pool exhausted within hard-repeat window; entering drain mode");
+      candidates = filterCandidates(weightedScenes, ratingWindow * 3, true).map((item) => ({
+        ...item,
+        weight: item.weight * config.drainModeRepeatPenalty
+      }));
+      inDrainMode = true;
+    }
+    if (candidates.length < 2) {
+      console.log("[Ascension] Scene pool exhausted; clearing session cooldown and re-sampling");
+      state.recentlySelectedScenes = [];
+      state.sessionSceneCounts = {};
+      state.sceneMetadataRefreshCounter = config.metadataRefreshInterval + 1;
+      sceneMetadata = await fetchAllSceneMetadata();
+      state.sceneMetadataCache = sceneMetadata;
+      state.sceneMetadataRefreshCounter = 0;
+      const refreshedWeighted = sceneMetadata.map((scene) => {
+        const stats = parsePerformerEloData(scene);
+        const rawMatches = stats.total_matches || 0;
+        const cappedMatches = Math.min(rawMatches, config.lowMatchThreshold);
+        const recencyWeight = getSceneRecencyWeight(scene);
+        const baseWeight = Math.pow(recencyWeight, 3) + Math.random() * 0.01;
+        const lowMatchBoost = getLowMatchBoost({ ...scene, total_matches: cappedMatches }, avgMatches);
+        const distributionBoost = getMatchCountDistributionBoost(scene, sceneMetadata);
+        const finalWeight = baseWeight * lowMatchBoost * distributionBoost;
+        return { scene, weight: finalWeight, rating: scene.rating100 || 1, matches: rawMatches };
+      });
+      refreshedWeighted.sort((a, b) => b.weight - a.weight);
+      candidates = refreshedWeighted.filter((item) => {
+        if (item.scene.id === seedSceneMeta.id)
+          return false;
+        return Math.abs(seedRating - item.rating) <= ratingWindow * 3;
+      });
+    }
+    if (candidates.length === 0) {
+      const fallback = weightedScenes.find((item) => item.scene.id !== seedSceneMeta.id);
+      candidates = fallback ? [fallback] : weightedScenes.slice(1, 2);
+      console.warn("[Ascension] Scene opponent selection fell back to last-resort");
+    }
+    candidates.sort((a, b) => b.weight - a.weight);
+    const topCandidates = candidates.slice(0, 20);
+    const candidateIds = [seedSceneMeta.id, ...topCandidates.map((c) => c.scene.id)];
+    const fullScenes = await fetchScenesByIds(candidateIds);
+    const seedFull = fullScenes.find((s) => s.id === seedSceneMeta.id) || seedSceneMeta;
+    const candidatesWithSimilarity = topCandidates.map((item) => {
+      const full = fullScenes.find((s) => s.id === item.scene.id);
+      if (!full)
+        return { ...item, similarity: 0 };
+      const similarity = calculateSceneSimilarity(seedFull, full);
       const similarityPenalty = Math.max(config.maxSimilarityPenalty, 1 - similarity * config.similarityPenalty);
       return {
         ...item,
@@ -4413,46 +4582,16 @@ Match Stats:`;
         similarity
       };
     });
-    let opponentScene;
-    if (validOpponents.length > 0) {
-      const opponentWeights = validOpponents.map((opponent) => opponent.weight);
-      const opponentItem = weightedRandomSelect(validOpponents, opponentWeights);
-      opponentScene = opponentItem ? opponentItem.scene : validOpponents[0].scene;
-    } else {
-      let fallbackWindow = ratingWindow * 1.5;
-      let fallbackOpponents = weightedScenes.filter((item) => {
-        if (item.scene.id === seedScene.id)
-          return false;
-        const pointDiff = Math.abs(seedRating - item.rating);
-        return pointDiff <= fallbackWindow;
-      });
-      if (fallbackOpponents.length === 0) {
-        fallbackWindow = ratingWindow * 3;
-        fallbackOpponents = weightedScenes.filter((item) => item.scene.id !== seedScene.id);
-      }
-      if (fallbackOpponents.length > 0) {
-        const fallbackWeights = fallbackOpponents.map((o) => {
-          const similarity = calculateSceneSimilarity(seedScene, o.scene);
-          return o.weight * Math.max(config.maxSimilarityPenalty, 1 - similarity);
-        });
-        const opponentItem = weightedRandomSelect(fallbackOpponents, fallbackWeights);
-        opponentScene = opponentItem ? opponentItem.scene : fallbackOpponents[0].scene;
-      } else {
-        opponentScene = scenes.find((s) => s.id !== seedScene.id) || scenes[1];
-      }
-    }
+    const opponentWeights = candidatesWithSimilarity.map((c) => c.weight);
+    const opponentItem = weightedRandomSelect(candidatesWithSimilarity, opponentWeights);
+    const opponentSceneMeta = opponentItem ? opponentItem.scene : candidatesWithSimilarity[0].scene;
+    const seedScene = fullScenes.find((s) => s.id === seedSceneMeta.id) || seedSceneMeta;
+    const opponentScene = fullScenes.find((s) => s.id === opponentSceneMeta.id) || opponentSceneMeta;
     trackSceneSelection(seedScene.id);
     trackSceneSelection(opponentScene.id);
     addToRecentlySelectedScenes(seedScene.id, config.recentCooldownSize);
     addToRecentlySelectedScenes(opponentScene.id, config.recentCooldownSize);
-    let ranks = [null, null];
-    if (!useSampling && scenes.length > 0) {
-      const sortedScenes = [...scenes].sort((a, b) => (b.rating100 || 0) - (a.rating100 || 0));
-      const rank1 = sortedScenes.findIndex((s) => s.id === seedScene.id) + 1;
-      const rank2 = sortedScenes.findIndex((s) => s.id === opponentScene.id) + 1;
-      ranks = [rank1 || null, rank2 || null];
-    }
-    return { items: [seedScene, opponentScene], ranks };
+    return { items: [seedScene, opponentScene], ranks: [null, null] };
   }
   async function fetchSceneCount() {
     const result = await graphqlQuery(`query { findScenes(filter: { per_page: 0 }) { count } }`);

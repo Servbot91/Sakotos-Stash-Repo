@@ -3278,6 +3278,13 @@
   object-fit: contain;
 }
 
+/* =========================
+   === SWISS MODE PERFORMER IMAGE FRAMING FIX ===
+   ========================= */
+.hon-mode-swiss .hon-performer-image {
+  object-position: center 25% !important;
+}
+
 .hon-performer-card:hover .hon-performer-image,
 .hon-scene-card:hover .hon-scene-image,
 .hon-image-card:hover .hon-image-image-container img,
@@ -3397,6 +3404,128 @@
   border-radius: 12px;
   padding: 8px;
   text-align: center;
+}
+
+/* =========================
+   === SCENE TOP ACTIONS: Focus + Choose side by side on mobile ===
+   ========================= */
+.hon-focus-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.hon-focus-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.hon-scene-top-actions {
+  display: none;
+}
+
+@media (max-width: 1200px) {
+  .hon-scene-top-actions {
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    gap: 8px;
+    margin-bottom: 10px;
+    width: 100%;
+  }
+
+  .hon-scene-top-actions .hon-focus-btn,
+  .hon-scene-top-actions .hon-choose-btn {
+    flex: 1 1 0;
+    min-width: 0;
+    margin: 0;
+    padding: 8px 4px;
+    white-space: nowrap;
+  }
+
+  /* Default mobile scene choose button: match Focus button styling */
+  .hon-scene-card[data-scene-id] .hon-scene-top-actions .hon-choose-btn {
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+  }
+
+  /* Icon-only choose button: holds overlapping icons for crossfade */
+  .hon-scene-card[data-scene-id] .hon-scene-top-actions .hon-choose-btn.hon-choose-btn-icon {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .hon-scene-card[data-scene-id] .hon-scene-top-actions .hon-choose-btn-icon .hon-choose-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: opacity 0.3s ease, transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  }
+
+  .hon-scene-card[data-scene-id] .hon-scene-top-actions .hon-choose-btn-icon .hon-choose-icon-selected,
+  .hon-scene-card[data-scene-id] .hon-scene-top-actions .hon-choose-btn-icon .hon-choose-icon-rejected {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    transform: scale(0.5) rotate(-45deg);
+    pointer-events: none;
+  }
+
+  .hon-scene-card[data-scene-id] .hon-scene-top-actions .hon-choose-btn-icon .hon-choose-icon-default {
+    opacity: 1;
+    transform: scale(1) rotate(0deg);
+  }
+
+  /* Chosen state: crossfade to ✅ */
+  .hon-scene-card[data-scene-id] .hon-scene-top-actions .hon-choose-btn-icon.chosen-btn {
+    background: linear-gradient(135deg, #4CAF50, #2E7D32) !important;
+    color: white !important;
+    border-color: transparent;
+    transform: scale(1.02);
+  }
+
+  .hon-scene-card[data-scene-id] .hon-scene-top-actions .hon-choose-btn-icon.chosen-btn .hon-choose-icon-default {
+    opacity: 0;
+    transform: scale(0.5) rotate(45deg);
+  }
+
+  .hon-scene-card[data-scene-id] .hon-scene-top-actions .hon-choose-btn-icon.chosen-btn .hon-choose-icon-selected {
+    opacity: 1;
+    transform: scale(1) rotate(0deg);
+  }
+
+  /* Not-chosen state: crossfade to ❌ */
+  .hon-scene-card[data-scene-id] .hon-scene-top-actions .hon-choose-btn-icon.not-chosen-btn {
+    background: linear-gradient(135deg, #F44336, #C62828) !important;
+    color: white !important;
+    border-color: transparent;
+    transform: scale(1.02);
+  }
+
+  .hon-scene-card[data-scene-id] .hon-scene-top-actions .hon-choose-btn-icon.not-chosen-btn .hon-choose-icon-default {
+    opacity: 0;
+    transform: scale(0.5) rotate(45deg);
+  }
+
+  .hon-scene-card[data-scene-id] .hon-scene-top-actions .hon-choose-btn-icon.not-chosen-btn .hon-choose-icon-rejected {
+    opacity: 1;
+    transform: scale(1) rotate(0deg);
+  }
+
+  /* Hide only the bottom choose button inside scene cards on mobile, not performer cards */
+  .hon-scene-card[data-scene-id] .hon-scene-body > .hon-choose-btn {
+    display: none !important;
+  }
 }
 
 /* =========================
@@ -3538,25 +3667,29 @@
   .hon-selection-card {
     width: 230px !important;
     min-width: 100px !important;
-    height: 750px !important;
+    /* Remove fixed 750px height so cards shrink to fit content */
+    height: auto !important;
     font-size: 0.9rem;
     margin: 0 !important;
   }
 
   .hon-selection-image-container {
-    height: 500px !important;
-    max-height: 500px !important;
+    /* Remove fixed 500px height and let the 2/3 aspect ratio determine height */
+    height: auto !important;
+    max-height: none !important;
+    aspect-ratio: 2/3 !important;
   }
 
   .hon-selection-image {
-    max-height: 500px !important;
+    max-height: none !important;
     max-width: 100% !important;
   }
 
   .hon-selection-info {
     padding: 10px !important;
-    height: 250px !important;
-    max-height: 250px !important;
+    /* Remove fixed 250px height so the info area only takes what it needs */
+    height: auto !important;
+    max-height: none !important;
   }
 
   .hon-selection-name {
