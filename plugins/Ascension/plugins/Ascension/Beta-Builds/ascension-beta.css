@@ -3254,11 +3254,17 @@
   object-fit: contain;
 }
 
-/* =========================
-   === SWISS MODE PERFORMER IMAGE FRAMING FIX ===
-   ========================= */
-.hon-mode-swiss .hon-performer-image {
-  object-position: center 25% !important;
+/* Scale performer battle cards with viewport height so the portrait image
+   stays portrait and never gets squashed into a square */
+.hon-performer-card {
+  min-width: 200px;
+  width: min(420px, 52.5vh);
+  max-width: 45vw;
+  max-height: 92vh;
+}
+
+.hon-performer-image-container {
+  max-height: 70vh;
 }
 
 .hon-performer-card:hover .hon-performer-image,
@@ -3335,15 +3341,19 @@
   margin-left: 8px;
 }
 
-@media (min-width: 1401px) and (max-width: 1600px) {
+/* Single desktop container rule — no width-based card jumps */
+@media (min-width: 1201px) {
   .hon-vs-container {
-    height: auto !important;
-    max-height: 92vh !important;
-    align-items: center !important;
-    justify-content: center !important;
+    height: auto;
+    max-height: 92vh;
+    align-items: center;
+    justify-content: center;
   }
+}
 
-  .hon-performer-card,
+/* Scene/image card sizing kept from the old 1401-1600 / 1601-1920 ranges,
+   but performer-card rules removed so heads don't get cropped. */
+@media (min-width: 1401px) and (max-width: 1600px) {
   .hon-image-card,
   .hon-scene-card {
     max-height: 75vh !important;
@@ -3351,18 +3361,11 @@
     width: auto !important;
   }
 
-  .hon-performer-image-container,
   .hon-scene-image-container,
   .hon-image-image-container {
     max-height: 50vh !important;
   }
 
-  /* move performer image down slightly */
-  .hon-performer-image {
-    object-position: center 15% !important;
-  }
-
-  .hon-performer-body,
   .hon-scene-body,
   .hon-image-body {
     max-height: 22vh !important;
@@ -3377,14 +3380,6 @@
 }
 
 @media (min-width: 1601px) and (max-width: 1920px) {
-  .hon-vs-container {
-    height: auto !important;
-    max-height: 90vh !important;
-    align-items: center !important;
-    justify-content: center !important;
-  }
-
-  .hon-performer-card,
   .hon-image-card,
   .hon-scene-card {
     max-height: 80vh !important;
@@ -3392,17 +3387,11 @@
     width: auto !important;
   }
 
-  .hon-performer-image-container,
   .hon-scene-image-container,
   .hon-image-image-container {
     max-height: 55vh !important;
   }
 
-  .hon-performer-image {
-    object-position: center 25% !important;
-  }
-
-  .hon-performer-body,
   .hon-scene-body,
   .hon-image-body {
     max-height: 25vh !important;
@@ -3415,8 +3404,6 @@
     flex-shrink: 0 !important;
   }
 }
-
-
 
 /* =========================
    === CHOOSE BUTTON ===
@@ -4226,6 +4213,46 @@
 .hon-selection-card.tier-c:hover { border-color: #14bbe0; }
 .hon-selection-card.tier-d:hover { border-color: #92e014; }
 .hon-selection-card.tier-f:hover { border-color: #808080; }
+
+/* =========================
+   === PICTURE ONLY MODE ===
+   ========================= */
+.hon-picture-only .hon-performer-body,
+.hon-picture-only .hon-scene-body,
+.hon-picture-only .hon-image-body {
+  display: none !important;
+}
+
+.hon-picture-only .hon-performer-image-container,
+.hon-picture-only .hon-scene-image-container,
+.hon-picture-only .hon-image-image-container {
+  max-height: 100% !important;
+  height: 100% !important;
+  flex: 1 1 100% !important;
+  aspect-ratio: unset !important;
+}
+
+.hon-picture-only .hon-performer-image-container::after,
+.hon-picture-only .hon-scene-image-container::after,
+.hon-picture-only .hon-image-image-container::after {
+  display: none !important;
+}
+
+.hon-picture-only.hon-performer-card,
+.hon-picture-only.hon-image-card,
+.hon-picture-only.hon-scene-card {
+  max-height: 100% !important;
+}
+
+.hon-picture-only .hon-performer-image-container,
+.hon-picture-only .hon-scene-image-container,
+.hon-picture-only .hon-image-image-container {
+  cursor: pointer;
+}
+
+.hon-picture-only .hon-click-hint {
+  display: none !important;
+}
 
 
 /* === plugin-layout.css === */
