@@ -1,7 +1,7 @@
 name: Ascension
 description: "!!!DO NOT RUN THIS VERSION WITH THE STABLE BUILD ENABLED!!! DISABLE STABLE BUILD FIRST!!! 
 This is the beta version of Ascension. Always take a snapshot of your database just to be safe. While the goal is to maintain as stable a build as possible, you may encounter bugs. Please use the discourse thread used in the link button to report"
-version: 1.3.5B2
+version: 1.3.5B3
 url: 
 exec:
   - python

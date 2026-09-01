@@ -603,7 +603,7 @@
       unratedPerformers.forEach((p) => {
         rankMap.set(p.id, {
           rank: ratedCount + 1,
-          total: ratedCount,
+          total: allPerformers.length,
           rating: p.rating100 ?? 1,
           stats: null,
           battleScore: 0
@@ -678,6 +678,7 @@
         gauntletFallingItem: null,
         // Filters & Settings
         cachedUrlFilter: null,
+        cachedSceneFilter: null,
         badgeInjectionInProgress: false,
         pluginConfigCache: null,
         selectedGenders: (() => {
@@ -1030,6 +1031,14 @@
   });
 
   // formatters.js
+  function getGenderDisplay(gender) {
+    if (!gender)
+      return "";
+    const genderEntry = ALL_GENDERS.find((g) => g.value === gender);
+    const label = genderEntry ? genderEntry.label : gender;
+    const icon = GENDER_ICONS[gender] || "\u{1F464}";
+    return `${icon} ${label}`;
+  }
   function formatDuration(seconds) {
     if (!seconds)
       return "N/A";
@@ -1294,9 +1303,14 @@
         <span class="hon-choose-icon hon-choose-icon-rejected">\u274C</span>
       </div>
     </div>` : "";
+    const isPictureOnly = getCardDisplayOption("PictureOnlyMode");
+    const pictureOnlyClass = isPictureOnly ? "hon-picture-only" : "";
+    const imageWinnerAttr = isPictureOnly ? ` data-winner="${scene.id}"` : "";
     const htmlParts = [];
     htmlParts.push(
-      '<div class="hon-scene-card" data-scene-id="',
+      '<div class="hon-scene-card ',
+      pictureOnlyClass,
+      '" data-scene-id="',
       scene.id,
       '" data-side="',
       side,
@@ -1305,7 +1319,9 @@
       '">',
       '<div class="hon-scene-image-container" data-scene-url="/scenes/',
       scene.id,
-      '">'
+      '"',
+      imageWinnerAttr,
+      ">"
     );
     if (screenshotPath) {
       htmlParts.push('<img class="hon-scene-image" src="', screenshotPath, '" alt="', title, '" loading="lazy" />');
@@ -1320,7 +1336,7 @@
       formatDuration(file.duration),
       "</div>",
       streakDisplay,
-      '<div class="hon-click-hint">Click to open scene</div>',
+      isPictureOnly ? "" : '<div class="hon-click-hint">Click to open scene</div>',
       "</div>",
       '<div class="hon-scene-body" data-winner="',
       scene.id,
@@ -1383,9 +1399,9 @@
       battleScore = calculateBattleScore(performer);
     }
     let genderIcon = "";
-    if (performer.gender) {
+    if (!getCardDisplayOption("HideGender") && performer.gender) {
       const genderKey = performer.gender.toUpperCase();
-      genderIcon = GENDER_ICONS[genderKey] || "\u{1F464}";
+      genderIcon = `${GENDER_ICONS[genderKey] || "\u{1F464}"} `;
     }
     let currentStreakDisplay = "";
     if (performer.custom_fields?.hotornot_stats) {
@@ -1419,6 +1435,9 @@
       metaItems.push(`<div class="hon-meta-item"><strong>Ascended Score:</strong> ${tierDisplay}<span class="hon-asc-score" data-asc-score="${battleScore.toFixed(2)}">${battleScore.toFixed(2)}</span></div>`);
     } else if (battleScore === null) {
       metaItems.push(`<div class="hon-meta-item"><strong>Rating:</strong> ${tierDisplay}${stashRating}</div>`);
+    }
+    if (!getCardDisplayOption("HideGender") && performer.gender) {
+      metaItems.push(`<div class="hon-meta-item"><strong>Gender:</strong> ${getGenderDisplay(performer.gender)}</div>`);
     }
     if (!getCardDisplayOption("HideCountry") && performer.country) {
       metaItems.push(`<div class="hon-meta-item"><strong>Country:</strong> ${getCountryDisplay(performer.country)}</div>`);
@@ -1462,7 +1481,7 @@
         const remainingCount = tags.length - 3;
         metaItems.push(`
         <div class="hon-meta-item hon-tags-container">
-          <strong>Tags:</strong> 
+          <strong>Tags:</strong>
           <span class="hon-tags-displayed">${displayedString}</span>
           <span class="hon-tags-ellipsis">...</span>
           <span class="hon-tags-more" style="color: #007bff; cursor: pointer; text-decoration: underline;" data-tags-expanded="false">(+${remainingCount} more)</span>
@@ -1473,12 +1492,15 @@
     const streakDisplay = gauntletStreak && gauntletStreak >= 3 ? `<div class="hon-streak-badge">${formatStreakDisplay(gauntletStreak)}</div>` : "";
     const namePart = getCardDisplayOption("HidePerformerName") ? "" : `<span class="hon-performer-name">${name}</span> `;
     const chooseButtonHtml = getCardDisplayOption("HideChooseThisPerformerButton") ? "" : '<div class="hon-choose-btn">\u2713 Choose This Performer</div>';
+    const isPictureOnly = getCardDisplayOption("PictureOnlyMode");
+    const pictureOnlyClass = isPictureOnly ? "hon-picture-only" : "";
+    const imageWinnerAttr = isPictureOnly ? ` data-winner="${performer.id}"` : "";
+    const performerImageHtml = imagePath ? `<img class="hon-performer-image hon-scene-image" src="${imagePath}" alt="${name}" />` : `<div class="hon-no-image">No Image</div>`;
+    const imageContainerInner = isPictureOnly ? performerImageHtml : `<a href="/performers/${performer.id}" target="_blank" class="hon-performer-link">${performerImageHtml}</a>`;
     return `
-    <div class="hon-performer-card hon-scene-card${tierClass}" data-performer-id="${performer.id}" data-side="${side}" data-rating="${performer.rating100 || 1}" data-asc-score="${battleScore?.toFixed(2) ?? ""}">
-      <div class="hon-performer-image-container hon-scene-image-container">
-        <a href="/performers/${performer.id}" target="_blank" class="hon-performer-link">
-          ${imagePath ? `<img class="hon-performer-image hon-scene-image" src="${imagePath}" alt="${name}" />` : `<div class="hon-no-image">No Image</div>`}
-        </a>
+    <div class="hon-performer-card hon-scene-card${tierClass}${pictureOnlyClass ? " " + pictureOnlyClass : ""}" data-performer-id="${performer.id}" data-side="${side}" data-rating="${performer.rating100 || 1}" data-asc-score="${battleScore?.toFixed(2) ?? ""}">
+      <div class="hon-performer-image-container hon-scene-image-container"${imageWinnerAttr}>
+        ${imageContainerInner}
         ${currentStreakDisplay}
         ${streakDisplay}
       </div>
@@ -1501,9 +1523,12 @@
     const thumbnailPath = image.paths?.thumbnail || null;
     const rankDisplay = rank != null ? `<span class="hon-image-rank hon-scene-rank">#${rank}</span>` : "";
     const streakDisplay = gauntletStreak && gauntletStreak >= 3 ? `<div class="hon-streak-badge">${formatStreakDisplay(gauntletStreak)}</div>` : "";
+    const isPictureOnly = getCardDisplayOption("PictureOnlyMode");
+    const pictureOnlyClass = isPictureOnly ? "hon-picture-only" : "";
+    const imageWinnerAttr = isPictureOnly ? ` data-winner="${image.id}"` : "";
     return `
-    <div class="hon-image-card hon-scene-card" data-image-id="${image.id}" data-side="${side}" data-rating="${image.rating100 || 1}">
-      <div class="hon-image-image-container hon-scene-image-container" data-image-url="/images/${image.id}">
+    <div class="hon-image-card hon-scene-card ${pictureOnlyClass}" data-image-id="${image.id}" data-side="${side}" data-rating="${image.rating100 || 1}">
+      <div class="hon-image-image-container hon-scene-image-container" data-image-url="/images/${image.id}"${imageWinnerAttr}>
         ${thumbnailPath ? `<img class="hon-scene-image" src="${thumbnailPath}" />` : `<div class="hon-no-image">No Image</div>`}
         ${streakDisplay}
         ${rankDisplay ? `<div class="hon-image-rank-overlay">${rankDisplay}</div>` : ""}
@@ -2666,13 +2691,20 @@ Match Stats:`;
     let scoreSuffix = `/10.0`;
     if (battleType === "performers") {
       try {
-        await initCacheFromDB();
-        if (!allPerformersCache) {
-          allPerformersCache = await getAllPerformersSorted();
-          rankCache = calculateAllPerformerRanks(allPerformersCache);
-          await writeCache("allPerformers", allPerformersCache);
-          await writeCache("rankMap", rankCache);
+        allPerformersCache = null;
+        rankCache = null;
+        state.globalPerformerPool = null;
+        const fresh = await getAllPerformersSorted();
+        const itemId = String(item.id);
+        const merged = fresh.map((p) => String(p.id) === itemId ? { ...p, ...item } : p);
+        if (!merged.some((p) => String(p.id) === itemId)) {
+          merged.push(item);
         }
+        allPerformersCache = merged;
+        state.globalPerformerPool = merged;
+        rankCache = calculateAllPerformerRanks(merged);
+        await writeCache("allPerformers", merged);
+        await writeCache("rankMap", rankCache);
         let rankInfo = rankCache ? rankCache.get(item.id) : null;
         if (!rankInfo) {
           rankInfo = await getPerformerGlobalRank(item.id, allPerformersCache);
@@ -2881,7 +2913,7 @@ Match Stats:`;
             const tooltipText = createBattleRankTooltip(
               rankInfo.rank,
               rankInfo.total,
-              rankInfo.rank,
+              rankInfo.rating,
               rankInfo.stats,
               rankInfo.battleScore
             );
@@ -3083,7 +3115,7 @@ Match Stats:`;
     let tierDisplay = "";
     let tierClass = "";
     let battleScore = null;
-    if (performer.rating100 === null || performer.rating100 === 1) {
+    if (performer.rating100 === null || performer.rating100 === void 0) {
       ratingDisplay = "<span class='hon-selection-rating-value'>Unrated</span>";
       tierClass = "tier-f";
     } else {
@@ -3241,7 +3273,7 @@ Match Stats:`;
     state.gauntletWins = 0;
     state.gauntletFalling = false;
     const performerName = performer.name || `Performer #${performer.id}`;
-    const performerRating = performer.rating100 ? (performer.rating100 / 10).toFixed(1) : "Unrated";
+    const performerRating = performer.rating100 !== null && performer.rating100 !== void 0 ? (performer.rating100 / 10).toFixed(1) : "Unrated";
     console.log(`[Ascension] Champion Selected: ${performerName} (ID: ${performer.id}) | Rating: ${performerRating}`);
     const sel = document.getElementById("hon-performer-selection");
     const comp = document.getElementById("hon-comparison-area");
@@ -4568,23 +4600,34 @@ Match Stats:`;
   var ui_sidebar_exports = {};
   __export(ui_sidebar_exports, {
     applySelectedSavedFilter: () => applySelectedSavedFilter,
+    applySelectedSavedSceneFilter: () => applySelectedSavedSceneFilter,
     attachSidebarEventListeners: () => attachSidebarEventListeners,
     autoShowOptionsIfNoGenders: () => autoShowOptionsIfNoGenders,
     createSidebar: () => createSidebar,
     fetchSavedPerformerFilters: () => fetchSavedPerformerFilters,
+    fetchSavedSceneFilters: () => fetchSavedSceneFilters,
     getBadgeDisplayOption: () => getBadgeDisplayOption,
     getCardDisplayOption: () => getCardDisplayOption2,
+    getDisableImagelessPerformers: () => getDisableImagelessPerformers,
+    getPictureOnlyMode: () => getPictureOnlyMode,
+    getSceneFilterOverrideEnabled: () => getSceneFilterOverrideEnabled,
     getSceneMinDuration: () => getSceneMinDuration,
     getSelectedSavedFilterId: () => getSelectedSavedFilterId,
+    getSelectedSavedSceneFilterId: () => getSelectedSavedSceneFilterId,
     getUserFilterOverrideEnabled: () => getUserFilterOverrideEnabled,
     onBadgeSettingsChange: () => onBadgeSettingsChange,
     onSceneMinDurationChange: () => onSceneMinDurationChange,
     openOptionsPanel: () => openOptionsPanel,
     setBadgeDisplayOption: () => setBadgeDisplayOption,
     setCardDisplayOption: () => setCardDisplayOption,
+    setDisableImagelessPerformers: () => setDisableImagelessPerformers,
+    setPictureOnlyMode: () => setPictureOnlyMode,
+    setSceneFilterOverrideEnabled: () => setSceneFilterOverrideEnabled,
     setSceneMinDuration: () => setSceneMinDuration,
     setSelectedSavedFilterId: () => setSelectedSavedFilterId,
+    setSelectedSavedSceneFilterId: () => setSelectedSavedSceneFilterId,
     setUserFilterOverrideEnabled: () => setUserFilterOverrideEnabled,
+    toggleCardDisplayOption: () => toggleCardDisplayOption,
     toggleGender: () => toggleGender,
     toggleTier: () => toggleTier
   });
@@ -4605,6 +4648,32 @@ Match Stats:`;
       localStorage.setItem(CARD_DISPLAY_LS_KEY, JSON.stringify(state.cardDisplayOptions));
     } catch (err) {
       console.warn("[Ascension] Could not save card display options:", err);
+    }
+  }
+  function getPictureOnlyMode() {
+    return getCardDisplayOption2(PICTURE_ONLY_MODE_KEY);
+  }
+  function setPictureOnlyMode(value) {
+    setCardDisplayOption(PICTURE_ONLY_MODE_KEY, !!value);
+    if (value) {
+      ALL_HIDE_OPTIONS.forEach((key) => setCardDisplayOption(key, false));
+    }
+  }
+  function toggleCardDisplayOption(key, checked) {
+    const currentPOM = getPictureOnlyMode();
+    if (key === PICTURE_ONLY_MODE_KEY) {
+      setPictureOnlyMode(checked);
+      return;
+    }
+    if (currentPOM) {
+      setCardDisplayOption(PICTURE_ONLY_MODE_KEY, false);
+      setCardDisplayOption(key, checked);
+      return;
+    }
+    setCardDisplayOption(key, checked);
+    const allHidden = ALL_HIDE_OPTIONS.every((k) => getCardDisplayOption2(k));
+    if (allHidden) {
+      setPictureOnlyMode(true);
     }
   }
   function loadCardDisplayOptions() {
@@ -4697,6 +4766,48 @@ Match Stats:`;
       console.warn("[Ascension] Could not load user filter override:", err);
     }
   }
+  function getSceneFilterOverrideEnabled() {
+    return state.sceneFilterOverride ?? DEFAULT_SCENE_FILTER_OVERRIDE;
+  }
+  function setSceneFilterOverrideEnabled(value) {
+    state.sceneFilterOverride = !!value;
+    try {
+      localStorage.setItem(SCENE_FILTER_OVERRIDE_LS_KEY, JSON.stringify(state.sceneFilterOverride));
+    } catch (err) {
+      console.warn("[Ascension] Could not save scene filter override:", err);
+    }
+  }
+  function loadSceneFilterOverride() {
+    try {
+      const saved = localStorage.getItem(SCENE_FILTER_OVERRIDE_LS_KEY);
+      if (saved !== null) {
+        state.sceneFilterOverride = JSON.parse(saved);
+      }
+    } catch (err) {
+      console.warn("[Ascension] Could not load scene filter override:", err);
+    }
+  }
+  function getDisableImagelessPerformers() {
+    return state.disableImagelessPerformers ?? DEFAULT_DISABLE_IMAGELESS;
+  }
+  function setDisableImagelessPerformers(value) {
+    state.disableImagelessPerformers = !!value;
+    try {
+      localStorage.setItem(DISABLE_IMAGELESS_LS_KEY, JSON.stringify(state.disableImagelessPerformers));
+    } catch (err) {
+      console.warn("[Ascension] Could not save disable imageless performers setting:", err);
+    }
+  }
+  function loadDisableImagelessPerformers() {
+    try {
+      const saved = localStorage.getItem(DISABLE_IMAGELESS_LS_KEY);
+      if (saved !== null) {
+        state.disableImagelessPerformers = JSON.parse(saved);
+      }
+    } catch (err) {
+      console.warn("[Ascension] Could not load disable imageless performers setting:", err);
+    }
+  }
   function getSelectedSavedFilterId() {
     return state.selectedSavedFilterId ?? null;
   }
@@ -4749,6 +4860,137 @@ Match Stats:`;
     const selected = filters.find((f) => String(f.id) === String(id));
     state.cachedUrlFilter = selected?.object_filter || null;
     return selected || null;
+  }
+  function getSelectedSavedSceneFilterId() {
+    return state.selectedSavedSceneFilterId ?? null;
+  }
+  function setSelectedSavedSceneFilterId(id) {
+    state.selectedSavedSceneFilterId = id || null;
+    try {
+      if (id) {
+        localStorage.setItem(SAVED_SCENE_FILTER_LS_KEY, JSON.stringify(id));
+      } else {
+        localStorage.removeItem(SAVED_SCENE_FILTER_LS_KEY);
+      }
+    } catch (err) {
+      console.warn("[Ascension] Could not save selected saved scene filter:", err);
+    }
+  }
+  function loadSelectedSavedSceneFilterId() {
+    try {
+      const saved = localStorage.getItem(SAVED_SCENE_FILTER_LS_KEY);
+      state.selectedSavedSceneFilterId = saved ? JSON.parse(saved) : null;
+    } catch (err) {
+      console.warn("[Ascension] Could not load selected saved scene filter:", err);
+    }
+  }
+  async function fetchSavedSceneFilters() {
+    try {
+      const { graphqlQuery: graphqlQuery2 } = await Promise.resolve().then(() => (init_api_client(), api_client_exports));
+      const result = await graphqlQuery2(`
+      query FindSavedFilters {
+        findSavedFilters {
+          id
+          name
+          mode
+          object_filter
+        }
+      }
+    `);
+      const filters = (result?.findSavedFilters || []).filter(
+        (f) => f.mode === "SCENES"
+      );
+      state.savedSceneFilters = filters;
+      return filters;
+    } catch (err) {
+      console.warn("[Ascension] Failed to fetch saved scene filters:", err);
+      return [];
+    }
+  }
+  function applySelectedSavedSceneFilter() {
+    const id = getSelectedSavedSceneFilterId();
+    const filters = state.savedSceneFilters || [];
+    const selected = filters.find((f) => String(f.id) === String(id));
+    let rawFilter = selected?.object_filter || null;
+    if (typeof rawFilter === "string") {
+      try {
+        rawFilter = JSON.parse(rawFilter);
+      } catch (err) {
+        console.warn("[Ascension] Saved scene filter object_filter is not valid JSON:", err);
+        rawFilter = null;
+      }
+    }
+    state.cachedSceneFilter = normalizeSceneFilter(rawFilter);
+    return selected || null;
+  }
+  function normalizeSceneFilter(filter) {
+    if (!filter || typeof filter !== "object")
+      return filter;
+    const result = {};
+    for (const [key, value] of Object.entries(filter)) {
+      if (["AND", "OR", "NOT"].includes(key)) {
+        if (Array.isArray(value)) {
+          const nested = value.map(normalizeSceneFilter).filter(Boolean);
+          if (nested.length)
+            result[key] = nested;
+        } else if (value) {
+          const nested = normalizeSceneFilter(value);
+          if (nested)
+            result[key] = nested;
+        }
+        continue;
+      }
+      result[key] = normalizeCriterionValue(key, value);
+    }
+    return result;
+  }
+  function extractIds(items) {
+    return (items || []).map((item) => typeof item === "string" ? item : item?.id).filter((id) => id != null && id !== "");
+  }
+  function normalizeCriterionValue(key, criterion) {
+    if (!criterion || typeof criterion !== "object")
+      return criterion;
+    const nullaryModifiers = /* @__PURE__ */ new Set(["IS_NULL", "NOT_NULL", "IS_NOT_NULL"]);
+    if (nullaryModifiers.has(criterion.modifier)) {
+      const out = { modifier: criterion.modifier };
+      const value = criterion.value || {};
+      if ("depth" in value)
+        out.depth = value.depth;
+      else if ("depth" in criterion)
+        out.depth = criterion.depth;
+      const excludes = extractIds(value.excluded);
+      if (excludes.length)
+        out.excludes = excludes;
+      return out;
+    }
+    if (isIntLikeCriterion(key, criterion)) {
+      const directValue = typeof criterion.value === "number" ? criterion.value : criterion.value?.value;
+      if (directValue === void 0 || directValue === null)
+        return criterion;
+      const { value, ...rest } = criterion;
+      return { ...rest, value: directValue };
+    }
+    if (isHierarchicalMultiCriterion(criterion)) {
+      const value = criterion.value || {};
+      const ids = extractIds(value.items);
+      if (ids.length === 0)
+        return null;
+      const out = { modifier: criterion.modifier, value: ids };
+      if ("depth" in value)
+        out.depth = value.depth;
+      const excludes = extractIds(value.excluded);
+      if (excludes.length)
+        out.excludes = excludes;
+      return out;
+    }
+    return criterion;
+  }
+  function isIntLikeCriterion(key, criterion) {
+    const intKeys = ["tag_count", "file_count", "rating100", "o_counter", "duration", "framerate", "bitrate", "performer_count", "stash_id_count", "resume_time", "play_count", "play_duration"];
+    return intKeys.includes(key) && (typeof criterion.value === "number" || criterion.value && typeof criterion.value === "object" && typeof criterion.value.value === "number");
+  }
+  function isHierarchicalMultiCriterion(criterion) {
+    return criterion && typeof criterion === "object" && (Array.isArray(criterion.value?.items) || Array.isArray(criterion.items));
   }
   function onBadgeSettingsChange(callback) {
     badgeSettingsChangeListeners.add(callback);
@@ -5075,12 +5317,25 @@ Match Stats:`;
       }
     });
   }
+  function syncCardDisplayCheckboxUI(vsContainer) {
+    vsContainer.querySelectorAll(".hon-options-checkbox[data-card-display]").forEach((label) => {
+      const key = label.dataset.cardDisplay;
+      const checkbox = label.querySelector('input[type="checkbox"]');
+      const isChecked = getCardDisplayOption2(key);
+      label.classList.toggle("active", isChecked);
+      if (checkbox)
+        checkbox.checked = isChecked;
+    });
+  }
   function renderOptionsPanel() {
     const noGenderWarning = state.selectedGenders.length === 0 ? '<p class="hon-options-hint hon-options-warning">Please select at least one gender to continue.</p>' : '<p class="hon-options-hint">Select which genders to include in matchups.</p>';
     const tierWarningHTML = getTierGapWarningHTML(state.selectedTiers);
     const overrideEnabled = getUserFilterOverrideEnabled();
     const savedFilters = state.savedPerformerFilters || [];
     const selectedFilterId = getSelectedSavedFilterId();
+    const sceneOverrideEnabled = getSceneFilterOverrideEnabled();
+    const savedSceneFilters = state.savedSceneFilters || [];
+    const selectedSceneFilterId = getSelectedSavedSceneFilterId();
     return `
     <div class="hon-options-panel ${isMobile() ? "mobile" : ""}">
       <h2 class="hon-options-title">\u2699\uFE0F Options</h2>
@@ -5121,7 +5376,7 @@ Match Stats:`;
 
       <div class="hon-options-section">
         <h3 class="hon-options-section-title">Card Display</h3>
-        <p class="hon-options-hint">Choose which details to hide on performer battle cards.</p>
+        <p class="hon-options-hint">Choose which details to hide on battle cards. Picture Only Mode hides all meta details and expands the image.</p>
         <div class="hon-options-gender-grid">
           ${CARD_DISPLAY_OPTIONS.map((opt) => {
       const isHidden = getCardDisplayOption2(opt.key);
@@ -5162,6 +5417,11 @@ Match Stats:`;
             <span class="hon-options-checkmark">\u2713</span>
             <span class="hon-options-label-text">Enable User Filter Override</span>
           </label>
+          <label class="hon-options-checkbox ${getDisableImagelessPerformers() ? "active" : ""}" data-disable-imageless>
+            <input type="checkbox" ${getDisableImagelessPerformers() ? "checked" : ""}>
+            <span class="hon-options-checkmark">\u2713</span>
+            <span class="hon-options-label-text">Disable Performers without an image</span>
+          </label>
         </div>
         <div class="hon-options-saved-filter-row" style="margin-top: 12px;">
           <label for="hon-saved-filter">Saved performer filter:</label>
@@ -5178,6 +5438,25 @@ Match Stats:`;
 
       <div class="hon-options-section">
         <h3 class="hon-options-section-title">Scene Filter</h3>
+        <p class="hon-options-hint">When enabled, the selected saved Stash scene filter is strictly respected in Scene Mode.</p>
+        <div class="hon-options-gender-grid">
+          <label class="hon-options-checkbox ${sceneOverrideEnabled ? "active" : ""}" data-scene-filter-override>
+            <input type="checkbox" ${sceneOverrideEnabled ? "checked" : ""}>
+            <span class="hon-options-checkmark">\u2713</span>
+            <span class="hon-options-label-text">Enable Scene Filter Override</span>
+          </label>
+        </div>
+        <div class="hon-options-saved-filter-row" style="margin-top: 12px;">
+          <label for="hon-saved-scene-filter">Saved scene filter:</label>
+          <select id="hon-saved-scene-filter" data-saved-scene-filter ${sceneOverrideEnabled ? "" : "disabled"}>
+            ${savedSceneFilters.length === 0 ? `<option value="">No saved scene filters found</option>` : `
+                <option value="">-- Select a saved scene filter --</option>
+                ${savedSceneFilters.map((f) => `
+                  <option value="${f.id}" ${String(f.id) === String(selectedSceneFilterId) ? "selected" : ""}>${f.name}</option>
+                `).join("")}
+              `}
+          </select>
+        </div>
         <p class="hon-options-hint">Set the minimum scene duration (in seconds) that can be selected in Scene Mode. 0 means no minimum.</p>
         <div class="hon-options-duration-row">
           <label for="hon-scene-min-duration">Min duration (seconds):</label>
@@ -5217,11 +5496,9 @@ Match Stats:`;
     displayCheckboxes.forEach((checkbox) => {
       checkbox.addEventListener("change", (e) => {
         const key = e.target.value;
-        const isHidden = e.target.checked;
-        setCardDisplayOption(key, isHidden);
-        const label = e.target.closest(".hon-options-checkbox");
-        if (label)
-          label.classList.toggle("active", isHidden);
+        const checked = e.target.checked;
+        toggleCardDisplayOption(key, checked);
+        syncCardDisplayCheckboxUI(vsContainer);
       });
     });
     const badgeCheckboxes = vsContainer.querySelectorAll('.hon-options-checkbox[data-badge-display] input[type="checkbox"]');
@@ -5245,7 +5522,7 @@ Match Stats:`;
     }
     const userFilterOverrideCheckbox = vsContainer.querySelector('[data-user-filter-override] input[type="checkbox"]');
     if (userFilterOverrideCheckbox) {
-      userFilterOverrideCheckbox.addEventListener("change", async (e) => {
+      userFilterOverrideCheckbox.addEventListener("change", (e) => {
         const isEnabled = e.target.checked;
         setUserFilterOverrideEnabled(isEnabled);
         const label = e.target.closest(".hon-options-checkbox");
@@ -5259,22 +5536,52 @@ Match Stats:`;
         } else {
           state.cachedUrlFilter = null;
         }
-        if (state.battleType === "performers") {
-          const { loadNewPair: loadNewPair2 } = await Promise.resolve().then(() => (init_battle_engine(), battle_engine_exports));
-          loadNewPair2();
-        }
+      });
+    }
+    const disableImagelessCheckbox = vsContainer.querySelector('[data-disable-imageless] input[type="checkbox"]');
+    if (disableImagelessCheckbox) {
+      disableImagelessCheckbox.addEventListener("change", (e) => {
+        const isEnabled = e.target.checked;
+        setDisableImagelessPerformers(isEnabled);
+        const label = e.target.closest(".hon-options-checkbox");
+        if (label)
+          label.classList.toggle("active", isEnabled);
       });
     }
     const savedFilterSelect = vsContainer.querySelector("[data-saved-filter]");
     if (savedFilterSelect) {
-      savedFilterSelect.addEventListener("change", async (e) => {
+      savedFilterSelect.addEventListener("change", (e) => {
         const id = e.target.value;
         setSelectedSavedFilterId(id);
         applySelectedSavedFilter();
-        if (state.battleType === "performers") {
-          const { loadNewPair: loadNewPair2 } = await Promise.resolve().then(() => (init_battle_engine(), battle_engine_exports));
-          loadNewPair2();
+      });
+    }
+    const sceneFilterOverrideCheckbox = vsContainer.querySelector('[data-scene-filter-override] input[type="checkbox"]');
+    if (sceneFilterOverrideCheckbox) {
+      sceneFilterOverrideCheckbox.addEventListener("change", (e) => {
+        const isEnabled = e.target.checked;
+        setSceneFilterOverrideEnabled(isEnabled);
+        const label = e.target.closest(".hon-options-checkbox");
+        if (label)
+          label.classList.toggle("active", isEnabled);
+        const savedSceneFilterSelect2 = vsContainer.querySelector("[data-saved-scene-filter]");
+        if (savedSceneFilterSelect2)
+          savedSceneFilterSelect2.disabled = !isEnabled;
+        if (isEnabled) {
+          applySelectedSavedSceneFilter();
+        } else {
+          state.cachedSceneFilter = null;
         }
+        state.sceneMetadataCache = null;
+      });
+    }
+    const savedSceneFilterSelect = vsContainer.querySelector("[data-saved-scene-filter]");
+    if (savedSceneFilterSelect) {
+      savedSceneFilterSelect.addEventListener("change", (e) => {
+        const id = e.target.value;
+        setSelectedSavedSceneFilterId(id);
+        applySelectedSavedSceneFilter();
+        state.sceneMetadataCache = null;
       });
     }
     fetchSavedPerformerFilters().then(() => {
@@ -5291,6 +5598,21 @@ Match Stats:`;
       `;
       savedFilterSelect2.disabled = !getUserFilterOverrideEnabled();
       applySelectedSavedFilter();
+    });
+    fetchSavedSceneFilters().then(() => {
+      const savedSceneFilterSelect2 = vsContainer.querySelector("[data-saved-scene-filter]");
+      if (!savedSceneFilterSelect2)
+        return;
+      const filters = state.savedSceneFilters || [];
+      const selectedId = getSelectedSavedSceneFilterId();
+      savedSceneFilterSelect2.innerHTML = filters.length === 0 ? `<option value="">No saved scene filters found</option>` : `
+        <option value="">-- Select a saved scene filter --</option>
+        ${filters.map((f) => `
+          <option value="${f.id}" ${String(f.id) === String(selectedId) ? "selected" : ""}>${f.name}</option>
+        `).join("")}
+      `;
+      savedSceneFilterSelect2.disabled = !getSceneFilterOverrideEnabled();
+      applySelectedSavedSceneFilter();
     });
     const closeBtn = vsContainer.querySelector('[data-action="close-options"]');
     if (closeBtn) {
@@ -5309,7 +5631,6 @@ Match Stats:`;
   }
   async function restoreVsContainer() {
     closeOptionsPanel();
-    const mode = state.currentMode;
     const actionsEl = document.querySelector(".hon-actions");
     const selectionContainer = document.getElementById("hon-performer-selection");
     const comparisonArea = document.getElementById("hon-comparison-area");
@@ -5319,7 +5640,7 @@ Match Stats:`;
     if (actionsEl) {
       actionsEl.style.display = "";
     }
-    if (mode === "gauntlet" || mode === "champion") {
+    if (optionsRestoreState.wasSelectionVisible) {
       if (selectionContainer)
         selectionContainer.style.display = "block";
       if (comparisonArea)
@@ -5334,7 +5655,7 @@ Match Stats:`;
       loadNewPair2();
     }
   }
-  var ALL_GENDERS2, TIER_ORDER_FOR_GAP, CARD_DISPLAY_LS_KEY, CARD_DISPLAY_OPTIONS, BADGE_DISPLAY_LS_KEY, BADGE_DISPLAY_OPTIONS, SCENE_MIN_DURATION_LS_KEY, DEFAULT_SCENE_MIN_DURATION, USER_FILTER_OVERRIDE_LS_KEY, DEFAULT_USER_FILTER_OVERRIDE, SAVED_FILTER_LS_KEY, optionsRestoreState, badgeSettingsChangeListeners, sceneMinDurationChangeListeners;
+  var ALL_GENDERS2, TIER_ORDER_FOR_GAP, CARD_DISPLAY_LS_KEY, CARD_DISPLAY_OPTIONS, PICTURE_ONLY_MODE_KEY, ALL_HIDE_OPTIONS, BADGE_DISPLAY_LS_KEY, BADGE_DISPLAY_OPTIONS, SCENE_MIN_DURATION_LS_KEY, DEFAULT_SCENE_MIN_DURATION, USER_FILTER_OVERRIDE_LS_KEY, DEFAULT_USER_FILTER_OVERRIDE, SCENE_FILTER_OVERRIDE_LS_KEY, DEFAULT_SCENE_FILTER_OVERRIDE, DISABLE_IMAGELESS_LS_KEY, DEFAULT_DISABLE_IMAGELESS, SAVED_FILTER_LS_KEY, SAVED_SCENE_FILTER_LS_KEY, optionsRestoreState, badgeSettingsChangeListeners, sceneMinDurationChangeListeners;
   var init_ui_sidebar = __esm({
     "ui-sidebar.js"() {
       init_state();
@@ -5354,16 +5675,20 @@ Match Stats:`;
       TIER_ORDER_FOR_GAP = ["S-Tier", "A-Tier", "B-Tier", "C-Tier", "D-Tier", "F-Tier"];
       CARD_DISPLAY_LS_KEY = "hon_card_display_options";
       CARD_DISPLAY_OPTIONS = [
+        { key: "PictureOnlyMode", label: "Picture Only Mode" },
         { key: "HidePerformerName", label: "Hide Performer Name" },
         { key: "HideAscendedScore", label: "Hide Ascended Score" },
         { key: "HideCountry", label: "Hide Country" },
         { key: "HideHeight", label: "Hide Height" },
         { key: "HideMeasurements", label: "Hide Measurements" },
         { key: "HideFakeTits", label: "Hide Fake Tits" },
+        { key: "HideGender", label: "Hide Gender" },
         { key: "HideTags", label: "Hide Tags" },
         { key: "HideChooseThisPerformerButton", label: "Hide Choose Button" },
         { key: "HideMediaCounters", label: "Hide Media Counters" }
       ];
+      PICTURE_ONLY_MODE_KEY = "PictureOnlyMode";
+      ALL_HIDE_OPTIONS = CARD_DISPLAY_OPTIONS.map((opt) => opt.key).filter((key) => key !== PICTURE_ONLY_MODE_KEY);
       BADGE_DISPLAY_LS_KEY = "hon_badge_display_options";
       BADGE_DISPLAY_OPTIONS = [
         { key: "HideAscRankBadge", label: "Hide Ascension Rank Badge" },
@@ -5373,12 +5698,20 @@ Match Stats:`;
       DEFAULT_SCENE_MIN_DURATION = 0;
       USER_FILTER_OVERRIDE_LS_KEY = "hon_user_filter_override";
       DEFAULT_USER_FILTER_OVERRIDE = false;
+      SCENE_FILTER_OVERRIDE_LS_KEY = "hon_scene_filter_override";
+      DEFAULT_SCENE_FILTER_OVERRIDE = false;
+      DISABLE_IMAGELESS_LS_KEY = "hon_disable_imageless_performers";
+      DEFAULT_DISABLE_IMAGELESS = true;
       SAVED_FILTER_LS_KEY = "hon_selected_saved_filter_id";
+      SAVED_SCENE_FILTER_LS_KEY = "hon_selected_saved_scene_filter_id";
       loadCardDisplayOptions();
       loadBadgeDisplayOptions();
       loadSceneMinDuration();
       loadUserFilterOverride();
+      loadSceneFilterOverride();
+      loadDisableImagelessPerformers();
       loadSelectedSavedFilterId();
+      loadSelectedSavedSceneFilterId();
       optionsRestoreState = {
         wasSelectionVisible: false,
         wasComparisonVisible: false,
@@ -5388,15 +5721,19 @@ Match Stats:`;
       badgeSettingsChangeListeners = /* @__PURE__ */ new Set();
       sceneMinDurationChangeListeners = /* @__PURE__ */ new Set();
       onSceneMinDurationChange(async () => {
-        if (state.battleType === "scenes") {
+        if (state.battleType === "scenes" && !optionsRestoreState.optionsOpen) {
           const { loadNewPair: loadNewPair2 } = await Promise.resolve().then(() => (init_battle_engine(), battle_engine_exports));
           loadNewPair2();
         }
       });
-      (async function initSavedFilterOnStartup() {
+      (async function initSavedFiltersOnStartup() {
         await fetchSavedPerformerFilters();
+        await fetchSavedSceneFilters();
         if (getUserFilterOverrideEnabled()) {
           applySelectedSavedFilter();
+        }
+        if (getSceneFilterOverrideEnabled()) {
+          applySelectedSavedSceneFilter();
         }
       })();
     }
@@ -5410,9 +5747,8 @@ Match Stats:`;
     if (selectedGenders.length > 0) {
       filter.gender = { value_list: selectedGenders, modifier: "INCLUDES" };
     }
-    const hasOtherFilters = Object.keys(filter).some((k) => k !== "gender");
-    if (!hasOtherFilters && !filter.NOT) {
-      filter.NOT = { is_missing: "image" };
+    if (getDisableImagelessPerformers()) {
+      filter.NOT = { ...filter.NOT || {}, is_missing: "image" };
     }
     return filter;
   }
@@ -5502,17 +5838,20 @@ Match Stats:`;
     }
     return allItems;
   }
-  async function fetchAllSceneMetadata() {
+  async function fetchAllSceneMetadata(sceneFilter = null) {
     const queryTemplate = `
-    query FindSceneMetadata($filter: FindFilterType) {
-      findScenes(filter: $filter) {
+    query FindSceneMetadata($filter: FindFilterType, $scene_filter: SceneFilterType) {
+      findScenes(filter: $filter, scene_filter: $scene_filter) {
         scenes { id rating100 custom_fields }
       }
     }
   `;
-    return await fetchAllItems2(queryTemplate, {
+    const variables = {
       filter: { sort: "rating100", direction: "DESC" }
-    }, 1e3);
+    };
+    if (sceneFilter)
+      variables.scene_filter = sceneFilter;
+    return await fetchAllItems2(queryTemplate, variables, 1e3);
   }
   async function fetchScenesByIds(ids) {
     if (!ids || ids.length === 0)
@@ -6642,6 +6981,9 @@ Match Stats:`;
       return true;
     return getSceneDuration(scene) >= minDuration;
   }
+  function getEffectiveSceneFilter() {
+    return getSceneFilterOverrideEnabled() ? state.cachedSceneFilter : null;
+  }
   function attachBattleListeners(area) {
     if (area._battleCleanup) {
       area._battleCleanup();
@@ -6756,11 +7098,11 @@ Match Stats:`;
               e.stopPropagation();
               handleChooseItem(e);
             };
-            const sceneBody = card.querySelector(".hon-scene-body");
-            if (sceneBody) {
-              sceneBody.addEventListener("click", clickHandler);
-              cleanupFunctions2.push(() => sceneBody.removeEventListener("click", clickHandler));
-            }
+            const winnerTargets = card.querySelectorAll("[data-winner]");
+            winnerTargets.forEach((target) => {
+              target.addEventListener("click", clickHandler);
+              cleanupFunctions2.push(() => target.removeEventListener("click", clickHandler));
+            });
             const focusBtn = card.querySelector(".hon-focus-btn");
             if (focusBtn) {
               const focusHandler2 = (e) => {
@@ -6787,15 +7129,15 @@ Match Stats:`;
         }
       }
     } else {
-      const sceneBodies = area.querySelectorAll(".hon-scene-body");
-      sceneBodies.forEach((body) => {
+      const winnerTargets = area.querySelectorAll("[data-winner]");
+      winnerTargets.forEach((target) => {
         const clickHandler = (e) => {
           if (isNonVotingClick(e))
             return;
           handleChooseItem(e);
         };
-        body.addEventListener("click", clickHandler);
-        cleanupFunctions2.push(() => body.removeEventListener("click", clickHandler));
+        target.addEventListener("click", clickHandler);
+        cleanupFunctions2.push(() => target.removeEventListener("click", clickHandler));
       });
       const cards = area.querySelectorAll(".hon-scene-card");
       cards.forEach((card) => {
@@ -6831,7 +7173,7 @@ Match Stats:`;
     const sceneCards = area.querySelectorAll(".hon-scene-card[data-scene-id]");
     sceneCards.forEach((card) => {
       const sceneImageContainer = card.querySelector(".hon-scene-image-container");
-      if (sceneImageContainer && sceneImageContainer.dataset.sceneUrl) {
+      if (sceneImageContainer && sceneImageContainer.dataset.sceneUrl && !card.classList.contains("hon-picture-only")) {
         const sceneUrl = sceneImageContainer.dataset.sceneUrl;
         const imageContainerClickHandler = (e) => {
           e.stopPropagation();
@@ -7128,18 +7470,22 @@ Match Stats:`;
   }
   async function fetchRandomScenes(count = 2) {
     const sceneQuery = `
-    query FindRandomScenes($filter: FindFilterType) {
-      findScenes(filter: $filter) {
+    query FindRandomScenes($filter: FindFilterType, $scene_filter: SceneFilterType) {
+      findScenes(filter: $filter, scene_filter: $scene_filter) {
         scenes { ${SCENE_FRAGMENT} }
       }
     }
   `;
-    const result = await graphqlQuery(sceneQuery, {
+    const variables = {
       filter: {
         per_page: 100,
         sort: "random"
       }
-    });
+    };
+    const sceneFilter = getEffectiveSceneFilter();
+    if (sceneFilter)
+      variables.scene_filter = sceneFilter;
+    const result = await graphqlQuery(sceneQuery, variables);
     const allScenes = result?.findScenes?.scenes || [];
     const eligibleScenes = allScenes.filter(scenePassesMinDuration);
     if (eligibleScenes.length < 2) {
@@ -7150,15 +7496,17 @@ Match Stats:`;
   }
   async function fetchAllScenesSorted() {
     const queryTemplate = `
-    query FindAllScenes($filter: FindFilterType) {
-      findScenes(filter: $filter) {
+    query FindAllScenes($filter: FindFilterType, $scene_filter: SceneFilterType) {
+      findScenes(filter: $filter, scene_filter: $scene_filter) {
         scenes { ${SCENE_FRAGMENT} }
       }
     }
   `;
-    const scenes = await fetchAllItems(queryTemplate, {
-      filter: { sort: "rating100", direction: "DESC" }
-    });
+    const variablesBase = { filter: { sort: "rating100", direction: "DESC" } };
+    const sceneFilter = getEffectiveSceneFilter();
+    if (sceneFilter)
+      variablesBase.scene_filter = sceneFilter;
+    const scenes = await fetchAllItems(queryTemplate, variablesBase);
     const eligible = scenes.filter(scenePassesMinDuration);
     return eligible.sort((a, b) => {
       const ratingDiff = (b.rating100 ?? 1) - (a.rating100 ?? 1);
@@ -7173,12 +7521,14 @@ Match Stats:`;
     });
   }
   async function fetchSwissPairScenes() {
+    const sceneFilter = getEffectiveSceneFilter();
+    sceneMetadata = await fetchAllSceneMetadata(sceneFilter);
     const totalScenes = await fetchSceneCount();
     const config = getSceneSelectionConfig(totalScenes);
     let sceneMetadata = state.sceneMetadataCache;
     state.sceneMetadataRefreshCounter = (state.sceneMetadataRefreshCounter || 0) + 1;
     if (!sceneMetadata || state.sceneMetadataRefreshCounter > config.metadataRefreshInterval) {
-      sceneMetadata = await fetchAllSceneMetadata();
+      sceneMetadata = await fetchAllSceneMetadata(sceneFilter);
       state.sceneMetadataCache = sceneMetadata;
       state.sceneMetadataRefreshCounter = 0;
     }
@@ -7260,7 +7610,7 @@ Match Stats:`;
       state.recentlySelectedScenes = [];
       state.sessionSceneCounts = {};
       state.sceneMetadataRefreshCounter = config.metadataRefreshInterval + 1;
-      sceneMetadata = await fetchAllSceneMetadata();
+      sceneMetadata = await fetchAllSceneMetadata(sceneFilter);
       state.sceneMetadataCache = sceneMetadata;
       state.sceneMetadataRefreshCounter = 0;
       const refreshedWeighted = sceneMetadata.filter(scenePassesMinDuration).map((scene) => {
@@ -7315,13 +7665,27 @@ Match Stats:`;
     return { items: [seedScene, opponentScene], ranks: [null, null] };
   }
   async function fetchSceneCount() {
-    const result = await graphqlQuery(`query { findScenes(filter: { per_page: 0 }) { count } }`);
+    const sceneFilter = getEffectiveSceneFilter();
+    const variables = {};
+    if (sceneFilter)
+      variables.scene_filter = sceneFilter;
+    const result = await graphqlQuery(`
+    query FindSceneCount($scene_filter: SceneFilterType) {
+      findScenes(scene_filter: $scene_filter, filter: { per_page: 0 }) { count }
+    }
+  `, variables);
     return result.findScenes.count;
   }
   async function fetchGauntletPairScenes() {
-    const result = await graphqlQuery(`query FindScenesByRating($filter: FindFilterType) {
-    findScenes(filter: $filter) { scenes { ${SCENE_FRAGMENT} } }
-  }`, { filter: { per_page: -1, sort: "rating100", direction: "DESC" } });
+    const sceneFilter = getEffectiveSceneFilter();
+    const variables = { filter: { per_page: -1, sort: "rating100", direction: "DESC" } };
+    if (sceneFilter)
+      variables.scene_filter = sceneFilter;
+    const result = await graphqlQuery(`
+    query FindScenesByRating($filter: FindFilterType, $scene_filter: SceneFilterType) {
+      findScenes(filter: $filter, scene_filter: $scene_filter) { scenes { ${SCENE_FRAGMENT} } }
+    }
+  `, variables);
     const allScenes = result.findScenes.scenes || [];
     const scenes = allScenes.filter(scenePassesMinDuration);
     state.totalItemsCount = scenes.length;
@@ -7330,9 +7694,15 @@ Match Stats:`;
     return handleMatchmakingLogic(scenes, "scenes");
   }
   async function fetchChampionPairScenes() {
-    const result = await graphqlQuery(`query FindScenesByRating($filter: FindFilterType) {
-    findScenes(filter: $filter) { scenes { ${SCENE_FRAGMENT} } }
-  }`, { filter: { per_page: -1, sort: "rating100", direction: "DESC" } });
+    const sceneFilter = getEffectiveSceneFilter();
+    const variables = { filter: { per_page: -1, sort: "rating100", direction: "DESC" } };
+    if (sceneFilter)
+      variables.scene_filter = sceneFilter;
+    const result = await graphqlQuery(`
+    query FindScenesByRating($filter: FindFilterType, $scene_filter: SceneFilterType) {
+      findScenes(filter: $filter, scene_filter: $scene_filter) { scenes { ${SCENE_FRAGMENT} } }
+    }
+  `, variables);
     const allScenes = result.findScenes.scenes || [];
     const scenes = allScenes.filter(scenePassesMinDuration);
     state.totalItemsCount = scenes.length;
