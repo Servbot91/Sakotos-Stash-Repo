@@ -1599,931 +1599,602 @@
     }
   });
 
-  // parsers.js
-  function getPerformerFilter(cachedUrlFilter, selectedGenders) {
-    const filter = { ...cachedUrlFilter };
-    delete filter.gender;
-    if (selectedGenders.length > 0) {
-      filter.gender = { value_list: selectedGenders, modifier: "INCLUDES" };
-    }
-    const hasOtherFilters = Object.keys(cachedUrlFilter || {}).some((k) => k !== "gender");
-    if (!hasOtherFilters && !filter.NOT) {
-      filter.NOT = { is_missing: "image" };
-    }
-    return filter;
+  // ui-event-log.js
+  function initEventLog() {
+    console.log = function(...args) {
+      originalConsoleLog.apply(console, args);
+      captureLogEntry("log", args);
+    };
+    console.warn = function(...args) {
+      originalConsoleWarn.apply(console, args);
+      captureLogEntry("warn", args);
+    };
+    console.error = function(...args) {
+      originalConsoleError.apply(console, args);
+      captureLogEntry("error", args);
+    };
+    createEventLogUI();
   }
-  var init_parsers = __esm({
-    "parsers.js"() {
-      init_constants();
-    }
-  });
-
-  // api-client.js
-  var api_client_exports = {};
-  __export(api_client_exports, {
-    IMAGE_FRAGMENT: () => IMAGE_FRAGMENT,
-    PERFORMER_FRAGMENT: () => PERFORMER_FRAGMENT,
-    SCENE_FRAGMENT: () => SCENE_FRAGMENT,
-    fetchAllPerformerStats: () => fetchAllPerformerStats,
-    fetchAllPerformersSorted: () => fetchAllPerformersSorted,
-    fetchAllSceneMetadata: () => fetchAllSceneMetadata,
-    fetchGlobalPerformerRatings: () => fetchGlobalPerformerRatings,
-    fetchImageCount: () => fetchImageCount,
-    fetchPerformerById: () => fetchPerformerById,
-    fetchPerformerCount: () => fetchPerformerCount,
-    fetchRandomImages: () => fetchRandomImages,
-    fetchRandomPerformers: () => fetchRandomPerformers,
-    fetchSceneById: () => fetchSceneById,
-    fetchScenesByIds: () => fetchScenesByIds,
-    getAllPerformersSorted: () => getAllPerformersSorted,
-    getHotOrNotConfig: () => getHotOrNotConfig,
-    graphqlQuery: () => graphqlQuery,
-    handleComparison: () => handleComparison,
-    isBattleRankBadgeEnabled: () => isBattleRankBadgeEnabled,
-    undoLastMatch: () => undoLastMatch,
-    updateImageRating: () => updateImageRating,
-    updateItemRating: () => updateItemRating,
-    updatePerformerRating: () => updatePerformerRating,
-    updateSceneRating: () => updateSceneRating
-  });
-  async function graphqlQuery(query, variables = {}) {
-    if (typeof PluginApi !== "undefined" && PluginApi.utils?.StashService?.getClient && PluginApi.libraries?.Apollo) {
-      try {
-        const { gql } = PluginApi.libraries.Apollo;
-        const client = PluginApi.utils.StashService.getClient();
-        const doc = gql(query);
-        const isMutation = doc.definitions.some((def) => def.kind === "OperationDefinition" && def.operation === "mutation");
-        const result2 = isMutation ? await client.mutate({ mutation: doc, variables }) : await client.query({ query: doc, variables, fetchPolicy: "no-cache" });
-        return result2.data;
-      } catch (e) {
-        console.warn("[Ascension] Apollo fallback to fetch:", e.message);
-      }
-    }
-    const response = await fetch("/graphql", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query, variables })
-    });
-    const result = await response.json();
-    if (result.errors && result.errors.length > 0) {
-      if (result.errors.length === 1) {
-        throw new Error(`GraphQL Error: ${result.errors[0].message}`);
-      }
-      const errorMessage = result.errors.map((e) => e.message).join("; ");
-      throw new Error(`GraphQL Errors: ${errorMessage}`);
-    }
-    return result.data;
-  }
-  async function fetchAllItems2(queryTemplate, variablesBase = {}, pageSize = 1e3) {
-    const allItems = [];
-    let currentPage = 1;
-    const baseFilter = variablesBase.filter || {};
-    while (true) {
-      const variables = {
-        ...variablesBase,
-        filter: Object.assign({}, baseFilter, {
-          per_page: pageSize,
-          page: currentPage
-        })
-      };
-      const result = await graphqlQuery(queryTemplate, variables);
-      const items = result.findPerformers?.performers || result.findImages?.images || result.findScenes?.scenes || [];
-      if (items.length === 0)
-        break;
-      allItems.push.apply(allItems, items);
-      if (items.length < pageSize)
-        break;
-      currentPage++;
-    }
-    return allItems;
-  }
-  async function fetchAllSceneMetadata() {
-    const queryTemplate = `
-    query FindSceneMetadata($filter: FindFilterType) {
-      findScenes(filter: $filter) {
-        scenes { id rating100 custom_fields }
-      }
-    }
-  `;
-    return await fetchAllItems2(queryTemplate, {
-      filter: { sort: "rating100", direction: "DESC" }
-    }, 1e3);
-  }
-  async function fetchScenesByIds(ids) {
-    if (!ids || ids.length === 0)
-      return [];
-    const query = `
-    query FindScenesByIds($filter: FindFilterType) {
-      findScenes(filter: $filter) {
-        scenes { ${SCENE_FRAGMENT} }
-      }
-    }
-  `;
-    const result = await graphqlQuery(query, {
-      filter: { per_page: ids.length, ids }
-    });
-    return result?.findScenes?.scenes || [];
-  }
-  function sortPerformersByRating(performers) {
-    const performerStats = /* @__PURE__ */ new Map();
-    return performers.sort((a, b) => {
-      const ratingDiff = (b.rating100 ?? 1) - (a.rating100 ?? 1);
-      if (ratingDiff !== 0)
-        return ratingDiff;
-      if (!performerStats.has(a.id)) {
-        performerStats.set(a.id, parsePerformerEloData(a));
-      }
-      if (!performerStats.has(b.id)) {
-        performerStats.set(b.id, parsePerformerEloData(b));
-      }
-      const statsA = performerStats.get(a.id);
-      const statsB = performerStats.get(b.id);
-      const matchCountDiff = (statsB.total_matches || 0) - (statsA.total_matches || 0);
-      if (matchCountDiff !== 0)
-        return matchCountDiff;
-      if (a.name && b.name) {
-        return a.name.localeCompare(b.name);
-      }
-      const nameA = a.name || "";
-      const nameB = b.name || "";
-      return nameA.localeCompare(nameB);
-    });
-  }
-  async function fetchAllPerformersSorted(sortBy = "rating", direction = "DESC") {
-    const queryTemplate = `
-    query FindAllPerformers($filter: FindFilterType) {
-      findPerformers(filter: $filter) {
-        performers { ${FRAGMENTS.PERFORMER} }
-      }
-    }
-  `;
-    const performers = await fetchAllItems2(queryTemplate, {
-      filter: { sort: sortBy, direction }
-    });
-    return sortPerformersByRating(performers);
-  }
-  async function fetchAllPerformerStats() {
-    return await fetchAllPerformersSorted();
-  }
-  async function fetchGlobalPerformerRatings() {
-    const queryTemplate = `
-    query FindAllPerformers($filter: FindFilterType) {
-      findPerformers(filter: $filter) {
-        performers { id rating100 custom_fields }
-      }
-    }
-  `;
-    const performers = await fetchAllItems2(queryTemplate, {
-      filter: { sort: "rating", direction: "DESC" }
-    });
-    return performers.map((p) => {
-      let total_matches = 0;
-      let wins = 0;
-      let win_margin = 0;
-      const statsJson = p.custom_fields?.["hotornot_stats"];
-      if (statsJson) {
+  function captureLogEntry(level, args) {
+    const fullMessage = args.map((arg) => {
+      if (typeof arg === "object" && arg !== null) {
         try {
-          const stats = typeof statsJson === "string" ? JSON.parse(statsJson) : statsJson;
-          total_matches = stats?.total_matches ?? 0;
-          wins = stats?.wins ?? 0;
-          win_margin = stats?.win_margin ?? 0;
+          return JSON.stringify(arg);
         } catch (e) {
+          return String(arg);
         }
       }
-      return {
-        id: p.id,
-        rating100: p.rating100 ?? 1,
-        total_matches,
-        wins,
-        win_margin
-      };
-    });
-  }
-  async function getAllPerformersSorted() {
-    return await fetchAllPerformersSorted();
-  }
-  async function fetchRandomPerformers(count = 2) {
-    if (state.selectedGenders.length === 0) {
-      throw new Error("No genders selected.");
+      return String(arg);
+    }).join(" ");
+    if (!fullMessage.includes("[Ascension]") && !fullMessage.includes("[HotOrNot]")) {
+      return;
     }
-    const battleGender = state.selectedGenders[Math.floor(Math.random() * state.selectedGenders.length)];
-    const performerFilter = getPerformerFilter(state.cachedUrlFilter, [battleGender]);
-    const totalPerformers = await fetchPerformerCount(performerFilter);
-    if (totalPerformers < 2) {
-      throw new Error("Not enough performers matching the selected gender.");
+    let readableMessage = extractReadableContent(args);
+    if (/Effective ratings/i.test(readableMessage)) {
+      return;
     }
-    const performerQuery = `
-    query FindRandomPerformers($performer_filter: PerformerFilterType, $filter: FindFilterType) {
-      findPerformers(performer_filter: $performer_filter, filter: $filter) {
-        performers {
-          ${FRAGMENTS.PERFORMER}
-        }
+    readableMessage = readableMessage.replace(/\[\s*([\d.]+)\s*\]/g, "[$1]");
+    readableMessage = rewriteWithAscScore(readableMessage);
+    readableMessage = linkPerformerNames(readableMessage);
+    let tierInfo = null;
+    if (readableMessage.includes("Tier Selection:")) {
+      const tierMatch = readableMessage.match(/Tier Selection: ([\w\-]+)/);
+      if (tierMatch && tierMatch[1])
+        tierInfo = tierMatch[1];
+    }
+    let tierFilterTiers = null;
+    if (readableMessage.includes("Tier Filter active:")) {
+      const tierFilterMatch = readableMessage.match(/Tier Filter active: ([\w\-,\s]+)/);
+      if (tierFilterMatch && tierFilterMatch[1]) {
+        tierFilterTiers = tierFilterMatch[1].split(",").map((t) => t.trim()).filter(Boolean);
       }
     }
-  `;
-    const result = await graphqlQuery(performerQuery, {
-      performer_filter: performerFilter,
-      filter: {
-        per_page: Math.min(100, totalPerformers),
-        sort: "random"
-      }
-    });
-    const allPerformers = result?.findPerformers?.performers || [];
-    if (allPerformers.length < 2) {
-      throw new Error("Not enough performers for comparison.");
-    }
-    const shuffled = [...allPerformers].sort(() => Math.random() - 0.5);
-    return shuffled.slice(0, 2);
-  }
-  async function fetchPerformerById(id) {
-    const result = await graphqlQuery(`query($id: ID!) { findPerformer(id: $id) { ${PERFORMER_FRAGMENT} } }`, { id });
-    return result.findPerformer;
-  }
-  async function fetchPerformerCount(filter = {}) {
-    const result = await graphqlQuery(`query($f: PerformerFilterType) { findPerformers(performer_filter: $f, filter: { per_page: 0 }) { count } }`, { f: filter });
-    return result.findPerformers.count;
-  }
-  async function fetchRandomImages(count = 2) {
-    const totalImages = await fetchImageCount();
-    if (totalImages < 2) {
-      throw new Error("Not enough images for comparison. You need at least 2 images.");
-    }
-    const imagesQuery = `
-    query FindRandomImages($filter: FindFilterType) {
-      findImages(filter: $filter) {
-        images {
-          ${IMAGE_FRAGMENT}
-        }
-      }
-    }
-  `;
-    const result = await graphqlQuery(imagesQuery, {
-      filter: {
-        per_page: Math.min(100, totalImages),
-        sort: "random"
-      }
-    });
-    const allImages = result.findImages.images || [];
-    if (allImages.length < 2) {
-      throw new Error("Not enough images returned from query.");
-    }
-    const shuffled = allImages.sort(() => Math.random() - 0.5);
-    return shuffled.slice(0, count);
-  }
-  function formatResultStatus(won, change) {
-    if (won === null || won === void 0)
-      return "UPDATE";
-    const pointChange = change !== null && !isNaN(change) ? (change / 10).toFixed(1) : "?";
-    const signed = change > 0 ? `+${pointChange}` : pointChange;
-    return won ? `WIN(${signed})` : `LOSS(${signed})`;
-  }
-  function getRecordKeyForBattleType(battleType) {
-    if (battleType === "performers")
-      return "performer_record";
-    if (battleType === "scenes")
-      return "scene_record";
-    return null;
-  }
-  function normalizeSceneRecordEntry(entry) {
-    if (!entry || typeof entry !== "object")
-      return null;
-    const normalized = {
-      date: entry.date || (/* @__PURE__ */ new Date()).toISOString(),
-      won: entry.won,
-      ratingAfter: entry.ratingAfter
+    const entry = {
+      id: Date.now() + Math.random(),
+      timestamp: /* @__PURE__ */ new Date(),
+      level,
+      message: readableMessage,
+      formattedMessage: readableMessage,
+      tierInfo,
+      tierFilterTiers,
+      battleType: state.battleType
     };
-    if (entry.opponentId) {
-      normalized.opponentId = entry.opponentId.toString().replace(/\D/g, "") || "0";
-    } else if (entry.opponent && typeof entry.opponent === "string") {
-      normalized.opponentId = entry.opponent.split(":")[0] || "0";
-    } else {
-      normalized.opponentId = "0";
+    eventLogEntries.push(entry);
+    if (eventLogEntries.length > MAX_LOG_ENTRIES) {
+      eventLogEntries.splice(0, eventLogEntries.length - MAX_LOG_ENTRIES);
     }
-    return normalized;
+    updateEventLogDisplay();
   }
-  function getOldStatsSnapshot(itemObj, battleType) {
-    const recordKey = getRecordKeyForBattleType(battleType);
-    const stats = parsePerformerEloData(itemObj) || {};
-    if (!recordKey)
-      return stats;
-    let recordArray = [];
-    const rawRecord = itemObj?.custom_fields?.[recordKey];
-    if (rawRecord) {
-      try {
-        recordArray = typeof rawRecord === "string" ? JSON.parse(rawRecord) : rawRecord;
-        if (!Array.isArray(recordArray))
-          recordArray = [];
-      } catch (e) {
-        console.warn(`[Ascension] Failed to parse ${recordKey} for snapshot, starting fresh.`);
-        recordArray = [];
-      }
-    }
-    if (battleType === "scenes") {
-      recordArray = recordArray.map(normalizeSceneRecordEntry).filter(Boolean);
-    }
-    return {
-      ...stats,
-      [recordKey]: recordArray
-    };
-  }
-  async function handleComparison(winnerId, loserId, winnerCurrentRating, loserCurrentRating, loserRank = null, winnerObj = null, loserObj = null, isDraw = false) {
-    const startTime = performance.now();
-    console.log(`[Ascension Timing] handleComparison started for Winner ID: ${winnerId}, Loser ID: ${loserId}`);
-    let winnerRating = winnerCurrentRating || 1;
-    let loserRating = loserCurrentRating || 1;
-    let freshWinnerObj = null;
-    let freshLoserObj = null;
-    if (state.currentMode === "gauntlet" || state.currentMode === "champion") {
-      console.log(`[Ascension] ${state.currentMode} mode detected - fetching fresh performer data from DB`);
-      try {
-        [freshWinnerObj, freshLoserObj] = await Promise.all([
-          fetchPerformerById(winnerId),
-          fetchPerformerById(loserId)
-        ]);
-        console.log(`[Ascension] Fresh data fetched. Winner record has ${freshWinnerObj.custom_fields?.performer_record?.length || 0} matches, Loser has ${freshLoserObj.custom_fields?.performer_record?.length || 0} matches`);
-        if (freshWinnerObj && freshWinnerObj.rating100 > 0) {
-          winnerRating = freshWinnerObj.rating100;
-        }
-        if (freshLoserObj && freshLoserObj.rating100 > 0) {
-          loserRating = freshLoserObj.rating100;
-        }
-      } catch (fetchError) {
-        console.error(`[Ascension] Failed to fetch fresh data, falling back to provided objects:`, fetchError);
-        freshWinnerObj = winnerObj;
-        freshLoserObj = loserObj;
-      }
-    } else {
-      try {
-        const isWinnerValid = winnerObj && typeof winnerObj === "object" && winnerObj.id != void 0 && winnerObj.id == winnerId && winnerObj.custom_fields !== void 0;
-        const isLoserValid = loserObj && typeof loserObj === "object" && loserObj.id != void 0 && loserObj.id == loserId && loserObj.custom_fields !== void 0;
-        if (isWinnerValid && isLoserValid) {
-          freshWinnerObj = winnerObj;
-          freshLoserObj = loserObj;
-        } else {
-          throw new Error(`Provided objects failed validation`);
-        }
-      } catch (useProvidedError) {
-        console.log(`[Ascension] Falling back to fetching fresh scene data:`, useProvidedError.message);
-        [freshWinnerObj, freshLoserObj] = await Promise.all([
-          fetchSceneById(winnerId),
-          fetchSceneById(loserId)
-        ]);
-      }
-    }
-    let winnerMatchCount = 0;
-    let loserMatchCount = 0;
-    let winnerStats = {};
-    let loserStats = {};
-    winnerStats = parsePerformerEloData(freshWinnerObj) || {};
-    loserStats = parsePerformerEloData(freshLoserObj) || {};
-    winnerMatchCount = winnerStats.total_matches || 0;
-    loserMatchCount = loserStats.total_matches || 0;
-    const isPerformerBattle = state.battleType === "performers";
-    const globalPool = state.globalPerformerPool || [];
-    let winnerTier = null;
-    let loserTier = null;
-    let winnerEffectiveRating = null;
-    let loserEffectiveRating = null;
-    if (isPerformerBattle && globalPool.length > 0) {
-      if (freshWinnerObj) {
-        winnerTier = getRatingTier(freshWinnerObj, globalPool);
-        winnerEffectiveRating = calculateEffectiveEloRating(freshWinnerObj, globalPool);
-      }
-      if (freshLoserObj) {
-        loserTier = getRatingTier(freshLoserObj, globalPool);
-        loserEffectiveRating = calculateEffectiveEloRating(freshLoserObj, globalPool);
-      }
-    }
-    let winnerGain = 0;
-    let loserLoss = 0;
-    if (isDraw) {
-      const ratingDiff2 = (loserEffectiveRating ?? loserRating) - (winnerEffectiveRating ?? winnerRating);
-      const expectedWinner = 1 / (1 + Math.pow(10, ratingDiff2 / 400));
-      const winnerK = getProgressiveKFactor(winnerRating, null, winnerMatchCount, "swiss");
-      const loserK = getProgressiveKFactor(loserRating, null, loserMatchCount, "swiss");
-      winnerGain = Math.round(winnerK * (0.5 - expectedWinner));
-      loserLoss = Math.round(loserK * (1 - expectedWinner - 0.5));
-    } else {
-      const isChampionWinner = !!state.gauntletChampion && winnerId === state.gauntletChampion.id;
-      const isFallingWinner = state.gauntletFalling && !!state.gauntletFallingItem && winnerId === state.gauntletFallingItem.id;
-      const isChampionLoser = !!state.gauntletChampion && loserId === state.gauntletChampion.id;
-      const isFallingLoser = state.gauntletFalling && !!state.gauntletFallingItem && loserId === state.gauntletFallingItem.id;
-      ({ winnerGain, loserLoss } = calculateMatchOutcome({
-        winnerRating,
-        loserRating,
-        winnerEffectiveRating,
-        loserEffectiveRating,
-        winnerTier,
-        loserTier,
-        mode: state.currentMode,
-        winnerMatchCount,
-        loserMatchCount,
-        isChampionWinner,
-        isFallingWinner,
-        isChampionLoser,
-        isFallingLoser,
-        loserRank,
-        winnerStats,
-        loserStats,
-        isSpecialChallenge: state.currentPair?.isSpecialChallenge || false,
-        specialChallengeRules: state.currentPair?.specialChallengeRules || null
-      }));
-    }
-    const newWinnerRating = Math.min(100, Math.max(1, winnerRating + winnerGain));
-    const newLoserRating = Math.min(100, Math.max(1, loserRating - loserLoss));
-    const shouldTrackWinner = state.battleType === "performers" || state.battleType === "scenes";
-    const shouldTrackLoser = state.battleType === "performers" || state.battleType === "scenes";
-    const winnerStatus = isDraw ? null : true;
-    const loserStatus = isDraw ? null : false;
-    const winnerOldStats = shouldTrackWinner ? getOldStatsSnapshot(freshWinnerObj, state.battleType) : null;
-    const loserOldStats = shouldTrackLoser ? getOldStatsSnapshot(freshLoserObj, state.battleType) : null;
-    if (!state.matchHistory)
-      state.matchHistory = [];
-    state.matchHistory.push({
-      winnerId,
-      loserId,
-      winnerOldRating: winnerRating,
-      loserOldRating: loserRating,
-      winnerOldStats,
-      loserOldStats,
-      pairSnapshot: {
-        left: state.currentPair.left ? { ...state.currentPair.left } : null,
-        right: state.currentPair.right ? { ...state.currentPair.right } : null,
-        rankLeft: state.currentRanks.left,
-        rankRight: state.currentRanks.right
-      },
-      gauntletSnapshot: {
-        gauntletChampion: state.gauntletChampion ? { ...state.gauntletChampion } : null,
-        gauntletWins: state.gauntletWins,
-        gauntletDefeated: [...state.gauntletDefeated || []],
-        gauntletFalling: state.gauntletFalling,
-        gauntletFallingItem: state.gauntletFallingItem ? { ...state.gauntletFallingItem } : null
-      }
-    });
-    if (state.matchHistory.length > 10)
-      state.matchHistory.shift();
-    if (!winnerId || !loserId) {
-      console.error("[Ascension] Cannot update rating: One or both IDs are missing", { winnerId, loserId });
-      return { newWinnerRating, newLoserRating, winnerChange: winnerGain, loserChange: -loserLoss };
-    }
-    const updateStartTime = performance.now();
+  function saveEventLogState(updates) {
     try {
-      const [winnerUpdateResult, loserUpdateResult] = await Promise.all([
-        updateItemRating(
-          winnerId,
-          newWinnerRating,
-          freshWinnerObj,
-          winnerStatus,
-          loserId,
-          winnerGain
-        ).catch((err) => {
-          console.error(`[Ascension] Error updating winner (${winnerId}):`, err);
-          throw new Error(`Failed to update winner: ${err.message}`);
-        }),
-        updateItemRating(
-          loserId,
-          newLoserRating,
-          freshLoserObj,
-          loserStatus,
-          winnerId,
-          -loserLoss
-        ).catch((err) => {
-          console.error(`[Ascension] Error updating loser (${loserId}):`, err);
-          throw new Error(`Failed to update loser: ${err.message}`);
-        })
-      ]);
-      const updateEndTime = performance.now();
-      console.log(`[Ascension Timing] Parallel updates completed in ${(updateEndTime - updateStartTime).toFixed(2)} ms.`);
-    } catch (updateError) {
-      const updateEndTime = performance.now();
-      console.error(`[Ascension Timing] One or both updates failed after ${(updateEndTime - updateStartTime).toFixed(2)} ms:`, updateError);
-      throw updateError;
-    }
-    const endTime = performance.now();
-    console.log(`[Ascension Timing] handleComparison completed in ${(endTime - startTime).toFixed(2)} ms.`);
-    return {
-      newWinnerRating,
-      newLoserRating,
-      winnerChange: winnerGain,
-      loserChange: -loserLoss
-    };
-  }
-  async function updateItemRating(itemId, newRating, itemObj = null, won = null, opponentId = null, change = null) {
-    if (state.battleType === "performers") {
-      return await updatePerformerRating(itemId, newRating, itemObj, won, opponentId, change);
-    } else if (state.battleType === "images") {
-      return await updateImageRating(itemId, newRating);
-    } else if (state.battleType === "scenes") {
-      return await updateSceneRating(itemId, newRating, itemObj, won, opponentId, change);
-    } else {
-      console.warn(`[Ascension] Unknown battle type: ${state.battleType}`);
-      return null;
+      const current = loadEventLogState();
+      localStorage.setItem(EVENT_LOG_STORAGE_KEY, JSON.stringify({ ...current, ...updates }));
+    } catch (e) {
+      console.warn("[Ascension] Failed to save event log state:", e);
     }
   }
-  async function fetchImageCount() {
-    const countQuery = `
-      query FindImages {
-        findImages(filter: { per_page: 0 }) {
-          count
-        }
+  function loadEventLogState() {
+    try {
+      const data = localStorage.getItem(EVENT_LOG_STORAGE_KEY);
+      return data ? JSON.parse(data) : {};
+    } catch (e) {
+      console.warn("[Ascension] Failed to load event log state:", e);
+      return {};
+    }
+  }
+  function extractReadableContent(args) {
+    let cleanParts = [];
+    for (let i = 0; i < args.length; i++) {
+      const arg = args[i];
+      if (arg === "%c" || typeof arg === "string" && (arg.startsWith("color:") || arg.startsWith("font-weight:") || arg.startsWith("background:"))) {
+        continue;
       }
+      if (typeof arg === "object" && arg !== null) {
+        try {
+          cleanParts.push(JSON.stringify(arg));
+        } catch (e) {
+          cleanParts.push(String(arg));
+        }
+      } else {
+        cleanParts.push(String(arg));
+      }
+    }
+    return cleanParts.join(" ").replace(/%c/g, "").replace(/\s+/g, " ").trim();
+  }
+  function findPerformerByName(name) {
+    const pool = state.globalPerformerPool;
+    if (!pool || !name)
+      return null;
+    const trimmed = name.trim();
+    if (!trimmed)
+      return null;
+    let found = pool.find((p) => p.name?.trim() === trimmed);
+    if (found)
+      return found;
+    const lowerTrimmed = trimmed.toLowerCase();
+    found = pool.find((p) => p.name?.trim().toLowerCase() === lowerTrimmed);
+    if (found)
+      return found;
+    return pool.find((p) => p.name?.trim().toLowerCase().includes(lowerTrimmed)) || null;
+  }
+  function ascScoreWithTierMarker(performer) {
+    const score = calculateBattleScore(performer);
+    if (score == null || Number.isNaN(score))
+      return null;
+    const tier = getRatingTier(performer, state.globalPerformerPool);
+    const tierColor = getTierColor(tier);
+    return `${tier} Asc.Score: ${score.toFixed(2)} __HON_TIER_FMT__${tierColor}__`;
+  }
+  function rewriteWithAscScore(message) {
+    const isPerformerLine = /\[Ascension\]\s*(?:Match|CROSS-TIER|Custom Cross-Tier|Updating|Champion Selected):/i.test(message) || /\bvs\b/i.test(message);
+    if (!isPerformerLine)
+      return message;
+    if (/(?:Match|CROSS-TIER|Custom Cross-Tier):/i.test(message)) {
+      message = rewriteMatchLine(message);
+    }
+    return message;
+  }
+  function rewriteMatchLine(message) {
+    const pool = state.globalPerformerPool;
+    if (!pool || pool.length === 0)
+      return message;
+    return message.replace(
+      /(Match|CROSS-TIER|Custom Cross-Tier):\s*([^(]+?)\s*\(w:\s*([\d.]+)\)\s*\[([\d.]+)\]\s*vs\s*([^(]+?)\s*\(w:\s*([\d.]+)\)\s*\[([\d.]+)\]/gi,
+      (match, prefix, name1, w1, r1, name2, w2, r2) => {
+        const p1 = findPerformerByName(name1);
+        const p2 = findPerformerByName(name2);
+        const score1 = p1 ? ascScoreWithTierMarker(p1) : null;
+        const score2 = p2 ? ascScoreWithTierMarker(p2) : null;
+        const left = score1 ? `(w: ${w1}, ${score1})` : `(w: ${w1}) [${r1}]`;
+        const right = score2 ? `(w: ${w2}, ${score2})` : `(w: ${w2}) [${r2}]`;
+        return `${prefix}: ${name1} ${left} vs ${name2} ${right}`;
+      }
+    );
+  }
+  function linkPerformerNames(message) {
+    message = message.replace(
+      /(Updating:|Champion Selected:)\s+([^(]+?)\s*\(ID:\s*(\d+)\)/g,
+      (match, prefix, name, id) => {
+        return `${prefix} <a href="/performers/${id}" target="_blank" class="hon-log-performer-link">${name.trim()}</a> (ID: ${id})`;
+      }
+    );
+    message = message.replace(
+      /(Match|CROSS-TIER|Custom Cross-Tier):\s*([^(]+?)\s*\(ID:\s*(\d+)\)\s*\(w:/gi,
+      (match, prefix, name, id) => {
+        return `${prefix}: <a href="/performers/${id}" target="_blank" class="hon-log-performer-link">${name.trim()}</a> (ID: ${id}) (w:`;
+      }
+    );
+    message = message.replace(
+      /vs\s+([^(]+?)\s*\(ID:\s*(\d+)\)\s*\(w:/g,
+      (match, name, id) => {
+        return `vs <a href="/performers/${id}" target="_blank" class="hon-log-performer-link">${name.trim()}</a> (ID: ${id}) (w:`;
+      }
+    );
+    return message;
+  }
+  function createEventLogUI() {
+    if (document.getElementById("hon-event-log")) {
+      return;
+    }
+    const logContainer = document.createElement("div");
+    logContainer.id = "hon-event-log";
+    logContainer.className = "hon-event-log-container";
+    logContainer.innerHTML = `
+    <div class="hon-event-log-header">
+      <span class="hon-event-log-title">\u{1F4D1} Log</span>
+      <div class="hon-event-log-controls">
+        <button id="hon-event-log-export" class="hon-event-log-btn" title="Export Log">\u{1F4BE}</button>
+        <button id="hon-event-log-clear" class="hon-event-log-btn" title="Clear Log">\u{1F5D1}\uFE0F</button>
+        <button id="hon-event-log-toggle" class="hon-event-log-btn" title="Toggle Visibility">\u{1F441}\uFE0F</button>
+        <button id="hon-event-log-close" class="hon-event-log-btn" title="Close Log">\u2715</button>
+      </div>
+    </div>
+    <div class="hon-event-log-content" id="hon-event-log-content"></div>
+    <div class="hon-event-log-resize-handle-left" id="hon-event-log-resize-left" title="Resize left"></div>
+    <div class="hon-event-log-resize-handle" id="hon-event-log-resize" title="Resize height"></div>
+    <div class="hon-event-log-resize-handle-diagonal-left" id="hon-event-log-resize-diagonal-left" title="Resize left and height"></div>
+  `;
+    const savedState = loadEventLogState();
+    if (savedState.height)
+      logContainer.style.height = savedState.height;
+    if (savedState.width)
+      logContainer.style.width = savedState.width;
+    if (savedState.left) {
+      const parsedLeft = parseInt(savedState.left, 10);
+      if (!isNaN(parsedLeft) && parsedLeft >= -2e3) {
+        logContainer.style.left = savedState.left;
+      }
+    }
+    waitForModalAndInject(logContainer);
+  }
+  function waitForModalAndInject(logContainer) {
+    const checkInterval = setInterval(() => {
+      const pluginLayout = document.querySelector(".hon-plugin-layout");
+      if (pluginLayout) {
+        const isMobileView = window.innerWidth <= 768;
+        pluginLayout.appendChild(logContainer);
+        setupEventLogEventListeners();
+        if (!isMobileView) {
+          setupLayoutConstraints(pluginLayout, logContainer);
+        }
+        applySavedLogState(loadEventLogState());
+        updateEventLogDisplay();
+        clearInterval(checkInterval);
+      }
+    }, 100);
+    setTimeout(() => clearInterval(checkInterval), 5e3);
+  }
+  function applySavedLogState(savedState) {
+    const content = document.getElementById("hon-event-log-content");
+    const toggleBtn = document.getElementById("hon-event-log-toggle");
+    if (!content || !toggleBtn)
+      return;
+    if (savedState.closed) {
+      content.style.display = "none";
+      toggleBtn.textContent = "\u{1F441}\uFE0F";
+      toggleBtn.title = "Show Log";
+    } else {
+      content.style.display = "block";
+      toggleBtn.textContent = "\u{1F6AB}";
+      toggleBtn.title = "Hide Log";
+    }
+  }
+  function setupLayoutConstraints(pluginLayout, logContainer) {
+    if (layoutObserver) {
+      layoutObserver.disconnect();
+    }
+    layoutObserver = new ResizeObserver(() => {
+      constrainEventLogPosition(pluginLayout, logContainer);
+    });
+    layoutObserver.observe(pluginLayout);
+    constrainEventLogPosition(pluginLayout, logContainer);
+  }
+  function constrainEventLogPosition(pluginLayout, logContainer) {
+    if (!pluginLayout || !logContainer)
+      return;
+    const mainContent = pluginLayout.querySelector(".hon-main-plugin-content");
+    const defaultLeft = 10;
+    let currentLeft = parseInt(document.defaultView.getComputedStyle(logContainer).left, 10);
+    if (isNaN(currentLeft))
+      currentLeft = defaultLeft;
+    if (currentLeft < -3e3) {
+      logContainer.style.left = `${defaultLeft}px`;
+      currentLeft = defaultLeft;
+    }
+    if (mainContent) {
+      const layoutRect = pluginLayout.getBoundingClientRect();
+      const mainRect = mainContent.getBoundingClientRect();
+      const maxWidth2 = mainRect.left - layoutRect.left - currentLeft - 20;
+      logContainer.style.maxWidth = `${Math.max(200, maxWidth2)}px`;
+    } else {
+      logContainer.style.maxWidth = "none";
+    }
+    const currentWidth = parseInt(document.defaultView.getComputedStyle(logContainer).width, 10);
+    const maxWidth = parseInt(logContainer.style.maxWidth, 10);
+    if (!isNaN(currentWidth) && !isNaN(maxWidth) && currentWidth > maxWidth) {
+      logContainer.style.width = `${maxWidth}px`;
+    }
+  }
+  function setupEventLogEventListeners() {
+    const exportBtn = document.getElementById("hon-event-log-export");
+    const clearBtn = document.getElementById("hon-event-log-clear");
+    const toggleBtn = document.getElementById("hon-event-log-toggle");
+    const closeBtn = document.getElementById("hon-event-log-close");
+    const resizeHandle = document.getElementById("hon-event-log-resize");
+    const leftResizeHandle = document.getElementById("hon-event-log-resize-left");
+    const diagonalLeftResizeHandle = document.getElementById("hon-event-log-resize-diagonal-left");
+    if (exportBtn) {
+      exportBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        exportLogEntries();
+      });
+    }
+    if (clearBtn) {
+      clearBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        eventLogEntries = [];
+        updateEventLogDisplay();
+      });
+    }
+    if (toggleBtn) {
+      toggleBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const content = document.querySelector(".hon-event-log-content");
+        const isVisible = content.style.display !== "none";
+        content.style.display = isVisible ? "none" : "block";
+        toggleBtn.textContent = isVisible ? "\u{1F441}\uFE0F" : "\u{1F6AB}";
+        toggleBtn.title = isVisible ? "Show Log" : "Hide Log";
+        saveEventLogState({ closed: !isVisible });
+      });
+    }
+    if (closeBtn) {
+      closeBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const logContainer = document.getElementById("hon-event-log");
+        if (logContainer) {
+          logContainer.style.display = "none";
+        }
+      });
+    }
+    if (resizeHandle)
+      setupResizeHandler(resizeHandle, "vertical");
+    if (leftResizeHandle)
+      setupResizeHandler(leftResizeHandle, "left");
+    if (diagonalLeftResizeHandle)
+      setupResizeHandler(diagonalLeftResizeHandle, "diagonal-left");
+  }
+  function setupResizeHandler(resizeHandle, direction) {
+    let isResizing = false;
+    resizeHandle.addEventListener("mousedown", (e) => {
+      isResizing = true;
+      e.preventDefault();
+      e.stopPropagation();
+      const logContainer = document.getElementById("hon-event-log");
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const startWidth = parseInt(document.defaultView.getComputedStyle(logContainer).width, 10);
+      const startHeight = parseInt(document.defaultView.getComputedStyle(logContainer).height, 10);
+      const startLeft = parseInt(document.defaultView.getComputedStyle(logContainer).left, 10);
+      const doDrag = (e2) => {
+        if (!isResizing)
+          return;
+        e2.preventDefault();
+        if (direction === "left" || direction === "diagonal-left") {
+          const deltaX = e2.clientX - startX;
+          let newWidth = startWidth - deltaX;
+          let newLeft = startLeft + deltaX;
+          if (newWidth < 200) {
+            newWidth = 200;
+            newLeft = startLeft + startWidth - 200;
+          }
+          if (newLeft < -2e3) {
+            newLeft = -2e3;
+            newWidth = startLeft + startWidth + 2e3;
+          }
+          logContainer.style.width = newWidth + "px";
+          logContainer.style.left = newLeft + "px";
+        }
+        if (direction === "vertical" || direction === "diagonal-left") {
+          let newHeight = startHeight - (e2.clientY - startY);
+          newHeight = Math.max(100, Math.min(600, newHeight));
+          logContainer.style.height = newHeight + "px";
+        }
+        const pluginLayout = document.querySelector(".hon-plugin-layout");
+        if (pluginLayout)
+          constrainEventLogPosition(pluginLayout, logContainer);
+      };
+      const stopDrag = () => {
+        isResizing = false;
+        document.removeEventListener("mousemove", doDrag);
+        document.removeEventListener("mouseup", stopDrag);
+        const logContainer2 = document.getElementById("hon-event-log");
+        if (logContainer2) {
+          saveEventLogState({
+            height: logContainer2.style.height,
+            width: logContainer2.style.width,
+            left: logContainer2.style.left
+          });
+        }
+      };
+      document.addEventListener("mousemove", doDrag);
+      document.addEventListener("mouseup", stopDrag);
+    });
+  }
+  function exportLogEntries() {
+    if (eventLogEntries.length === 0) {
+      alert("No log entries to export");
+      return;
+    }
+    const logText = eventLogEntries.map((entry) => {
+      const timeString = entry.timestamp.toLocaleString();
+      const level = entry.level.toUpperCase();
+      const itemLabel = entry.battleType === "scenes" ? "Scene" : "Performer";
+      let message = entry.message;
+      message = message.replace(
+        /(\[Ascension\] (?:Match|CROSS-TIER|Custom Cross-Tier): )([^(]+)(\s+\([^)]+\))/g,
+        "$1PerformerA$3"
+      );
+      message = message.replace(
+        /(vs\s+)([^(]+)(\s+\([^)]+\))/g,
+        "$1PerformerB$3"
+      );
+      message = message.replace(
+        /(\[Ascension\] Updating: )(.+?)\s*\(ID: (\d+)\)/g,
+        `$1${itemLabel} (ID: $3)`
+      );
+      message = message.replace(
+        /(\[Ascension\] Champion Selected: )([^(]+)(\s+\([^)]+\))/g,
+        "$1PerformerA$3"
+      );
+      return `[${timeString}] ${level}: ${message}`;
+    }).join("\n");
+    const blob = new Blob([logText], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const fileName = `battle-log-${(/* @__PURE__ */ new Date()).toISOString().slice(0, 19).replace(/:/g, "-")}.txt`;
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 100);
+    addEventLog(`Log exported to file: ${fileName}`, "log");
+  }
+  function updateEventLogDisplay() {
+    const content = document.getElementById("hon-event-log-content");
+    if (!content)
+      return;
+    const isScrolledToBottom = content.scrollHeight - content.clientHeight <= content.scrollTop + 1;
+    const existingEntriesCount = content.querySelectorAll(".hon-log-entry").length;
+    const tierColors = {
+      "any": "#00ff00",
+      "newcomers": "#00ff00",
+      "S-Tier": "#eb9834",
+      "A-Tier": "#e014aa",
+      "B-Tier": "#7f1e82",
+      "C-Tier": "#14bbe0",
+      "D-Tier": "#92e014",
+      "F-Tier": "#808080"
+    };
+    const allEntriesHTML = eventLogEntries.map((entry, index) => {
+      const timeString = entry.timestamp.toLocaleTimeString();
+      const levelClass = `hon-log-${entry.level}`;
+      const isNewEntry = index >= existingEntriesCount;
+      const animationClass = isNewEntry ? "new-entry" : "";
+      let messageText = entry.formattedMessage.replace(/%c/g, "").trim();
+      let messageHtml = messageText;
+      messageHtml = messageHtml.replace(
+        /\[Ascension\]/g,
+        '[<span style="color: #1cb4d6; font-weight: bold;">Ascension</span>]'
+      );
+      messageHtml = messageHtml.replace(/\bWIN\b/g, '<span style="color: #4CAF50; font-weight: bold;">WIN</span>').replace(/\bLOSS\b/g, '<span style="color: #F44336; font-weight: bold;">LOSS</span>').replace(/\bDRAW\b/g, '<span style="color: #9E9E9E; font-weight: bold;">DRAW</span>');
+      const placeholders = [];
+      function addPlaceholder(html) {
+        const key = `__HON_FMT_${placeholders.length}__`;
+        placeholders.push({ key, html });
+        return key;
+      }
+      messageHtml = messageHtml.replace(/\(\+(\d+(?:\.\d+)?)\)/g, (_, num) => addPlaceholder(`(<span style="color: #4CAF50; font-weight: bold;">+${num}</span>)`)).replace(/\(-(\d+(?:\.\d+)?)\)/g, (_, num) => addPlaceholder(`(<span style="color: #F44336; font-weight: bold;">-${num}</span>)`));
+      messageHtml = messageHtml.replace(
+        /\b(S-Tier|A-Tier|B-Tier|C-Tier|D-Tier|F-Tier)\s+Asc\.Score:\s*(\d+(?:\.\d+)?)\s*__HON_TIER_FMT__#?([0-9a-fA-F]{6})__/g,
+        (_, tier, num, hexColor) => {
+          return addPlaceholder(
+            `<span style="color: #${hexColor}; font-weight: bold;">${tier}</span> Asc.Score: <span style="color: #${hexColor}; font-weight: bold;">${num}</span>`
+          );
+        }
+      );
+      messageHtml = messageHtml.replace(
+        /\b(S-Tier|A-Tier|B-Tier|C-Tier|D-Tier|F-Tier)\s+Asc\.Score:\s*(\d+(?:\.\d+)?)/g,
+        (_, tier, num) => {
+          const color = tierColors[tier] || "#00ff00";
+          return addPlaceholder(
+            `<span style="color: ${color}; font-weight: bold;">${tier}</span> Asc.Score: <span style="color: ${color}; font-weight: bold;">${num}</span>`
+          );
+        }
+      );
+      messageHtml = messageHtml.replace(
+        /(\(\s*w\s*:\s*)([\d.]+)/g,
+        (_, prefix, num) => addPlaceholder(`${prefix}<span style="color: #1cb4d6; font-weight: bold;">${num}</span>`)
+      );
+      messageHtml = messageHtml.replace(
+        /\(\s*ID\s*:\s*(\d+)\s*\)/g,
+        '(<span style="color: #1cb4d6;">ID: $1</span>)'
+      );
+      messageHtml = messageHtml.replace(
+        /\[([\d\.]+)\]/g,
+        '[<span style="color: #1cb4d6;">$1</span>]'
+      );
+      messageHtml = messageHtml.replace(
+        /\bvs\b/g,
+        '<span style="color: #888;">vs</span>'
+      );
+      messageHtml = messageHtml.replace(
+        /Weight\s*:/g,
+        '<span style="color: #888;">Weight:</span>'
+      );
+      messageHtml = messageHtml.replace(
+        /Total Match Count\s*:/g,
+        '<span style="color: #888;">Total Match Count:</span>'
+      );
+      messageHtml = messageHtml.replace(
+        /\b(\d+\.\d+)\b/g,
+        '<span style="color: #FF69B4; font-weight: bold;">$1</span>'
+      );
+      messageHtml = messageHtml.replace(
+        /(CROSS-TIER:)/g,
+        '<span style="color: #E91E63; font-weight: bold;">$1</span>'
+      );
+      messageHtml = messageHtml.replace(
+        /(Custom Cross-Tier:)/g,
+        '<span style="color: #E91E63; font-weight: bold;">$1</span>'
+      );
+      placeholders.forEach(({ key, html }) => {
+        messageHtml = messageHtml.replace(key, html);
+      });
+      if (entry.tierInfo) {
+        let tierColor = tierColors[entry.tierInfo] || "#00ff00";
+        const tierRegex = new RegExp(`(Tier Selection:)\\\\s+(${entry.tierInfo})`);
+        messageHtml = messageHtml.replace(
+          tierRegex,
+          `$1 <span style="color: ${tierColor}; font-weight: bold;">$2</span>`
+        );
+      }
+      if (entry.tierFilterTiers && entry.tierFilterTiers.length > 0) {
+        const tierListHtml = entry.tierFilterTiers.map((tier) => {
+          const color = tierColors[tier] || "#00ff00";
+          return `<span style="color: ${color}; font-weight: bold;">${tier}</span>`;
+        }).join('<span style="color: #888;">, </span>');
+        messageHtml = messageHtml.replace(
+          /(Tier Filter active:)\s+([\w\-,\s]+)/,
+          `$1 ${tierListHtml}`
+        );
+      }
+      return `
+      <div class="hon-log-entry ${levelClass} ${animationClass}" data-entry-id="${entry.id}">
+        <span class="hon-log-timestamp">${timeString}</span>
+        <span class="hon-log-message">${messageHtml}</span>
+      </div>
     `;
-    const countResult = await graphqlQuery(countQuery);
-    return countResult.findImages.count;
+    }).join("");
+    content.innerHTML = allEntriesHTML;
+    if (isScrolledToBottom) {
+      content.scrollTop = content.scrollHeight;
+    }
+    setTimeout(() => {
+      const newEntries = content.querySelectorAll(".new-entry");
+      newEntries.forEach((entry) => {
+        entry.classList.remove("new-entry");
+      });
+    }, 400);
   }
-  async function updateSceneRating(id, rating, sceneObj = null, won = null, opponentId = null, change = null) {
-    if (!id) {
-      console.error("[Ascension] Cannot update scene: ID is missing");
-      return;
-    }
-    let sceneTitle = "Unknown Scene";
-    if (sceneObj?.title && sceneObj.title.trim() !== "") {
-      sceneTitle = sceneObj.title;
-    } else if (state.currentPair) {
-      if (state.currentPair.left?.id == id) {
-        sceneTitle = state.currentPair.left.title || extractTitleFromFile(state.currentPair.left);
-      } else if (state.currentPair.right?.id == id) {
-        sceneTitle = state.currentPair.right.title || extractTitleFromFile(state.currentPair.right);
-      }
-    } else if (sceneObj) {
-      sceneTitle = extractTitleFromFile(sceneObj);
-    }
-    let cleanRating = Math.round(Number(rating));
-    if (isNaN(cleanRating)) {
-      console.warn(`[Ascension] Invalid rating for scene ${id}, falling back to existing data.`);
-      cleanRating = sceneObj?.rating100 || 1;
-    }
-    if (change === null && sceneObj && !isNaN(sceneObj.rating100)) {
-      change = cleanRating - Math.round(Number(sceneObj.rating100));
-    }
-    const statusText = formatResultStatus(won, change);
-    const statusColor = won === true ? "#4CAF50" : won === false ? "#F44336" : "#9E9E9E";
-    const displayRating = (cleanRating / 10).toFixed(1);
-    console.log(
-      `%c[Ascension] %cUpdating: %c${sceneTitle || "???"} %c(ID: ${id})%c, %cNew Rating: %c${displayRating}%c, %cResult: %c${statusText}`,
-      "color: #1cb4d6; font-weight: bold;",
-      "color: #1cb4d6;",
-      "color: #1cb4d6; font-weight: bold;",
-      "color: #1cb4d6;",
-      "color: #888;",
-      "color: #FF69B4;",
-      "color: #FF69B4; font-weight: bold;",
-      "color: #888;",
-      "color: #1cb4d6;",
-      `color: ${statusColor}; font-weight: bold;`
-    );
-    const variables = {
-      id: id.toString(),
-      rating: cleanRating,
-      fields: {}
+  function addEventLog(message, level = "log") {
+    const entry = {
+      id: Date.now() + Math.random(),
+      timestamp: /* @__PURE__ */ new Date(),
+      level,
+      message: `[Ascension] ${message}`,
+      formattedMessage: message,
+      battleType: state.battleType
     };
-    if (sceneObj) {
-      try {
-        const currentStats = parsePerformerEloData(sceneObj);
-        const updatedStats = updatePerformerStats(currentStats, won, change);
-        if (updatedStats) {
-          const statsToStore = { ...updatedStats };
-          delete statsToStore.performer_record;
-          variables.fields.hotornot_stats = JSON.stringify(statsToStore);
-        }
-      } catch (e) {
-        console.error(`[Ascension] Stats update failed for scene ${id}:`, e);
-      }
-      let matchHistory = [];
-      try {
-        const rawRecord = sceneObj.custom_fields?.scene_record;
-        if (rawRecord) {
-          matchHistory = typeof rawRecord === "string" ? JSON.parse(rawRecord) : rawRecord;
-          if (!Array.isArray(matchHistory))
-            matchHistory = [];
-        }
-      } catch (e) {
-        console.warn(`[Ascension] Failed to parse scene_record for ${id}, resetting history.`);
-        matchHistory = [];
-      }
-      matchHistory = matchHistory.map(normalizeSceneRecordEntry).filter(Boolean);
-      let opponentIdValue = "0";
-      if (opponentId) {
-        if (typeof opponentId === "string" && opponentId.includes(":")) {
-          opponentIdValue = opponentId.split(":")[0];
-        } else {
-          opponentIdValue = (typeof opponentId === "object" ? opponentId.id : opponentId).toString().replace(/\D/g, "");
-        }
-      }
-      matchHistory.push({
-        date: (/* @__PURE__ */ new Date()).toISOString(),
-        opponentId: opponentIdValue,
-        won,
-        ratingAfter: cleanRating
-      });
-      if (matchHistory.length > 30)
-        matchHistory = matchHistory.slice(-30);
-      variables.fields.scene_record = JSON.stringify(matchHistory);
+    eventLogEntries.push(entry);
+    if (eventLogEntries.length > MAX_LOG_ENTRIES) {
+      eventLogEntries.splice(0, eventLogEntries.length - MAX_LOG_ENTRIES);
     }
-    variables.fields = variables.fields || {};
+    updateEventLogDisplay();
+  }
+  function destroyEventLog() {
+    console.log = originalConsoleLog;
+    console.warn = originalConsoleWarn;
+    console.error = originalConsoleError;
+    const logContainer = document.getElementById("hon-event-log");
+    if (logContainer) {
+      logContainer.remove();
+    }
+    eventLogEntries = [];
+    if (layoutObserver) {
+      layoutObserver.disconnect();
+      layoutObserver = null;
+    }
     try {
-      return await graphqlQuery(`
-      mutation($id: ID!, $rating: Int!, $fields: Map) {
-        sceneUpdate(input: {
-          id: $id,
-          rating100: $rating,
-          custom_fields: { partial: $fields }
-        }) {
-          id
-        }
-      }`, variables);
-    } catch (err) {
-      console.error(`[Ascension] GraphQL Update Failed for scene ${id}:`, err);
-      throw err;
+      localStorage.removeItem(EVENT_LOG_STORAGE_KEY);
+    } catch (e) {
+      console.warn("[Ascension] Failed to clear event log state:", e);
     }
   }
-  function extractTitleFromFile(sceneObj) {
-    if (!sceneObj || !sceneObj.files || sceneObj.files.length === 0) {
-      return "Unknown Scene";
-    }
-    const file = sceneObj.files[0];
-    if (!file.path) {
-      return "Unknown Scene";
-    }
-    let title = file.path.split(/[\/\\]/).pop();
-    if (title.includes(".")) {
-      title = title.substring(0, title.lastIndexOf("."));
-    }
-    return title || "Unknown Scene";
-  }
-  async function fetchSceneById(id) {
-    const SCENE_COMPLETE_FRAGMENT = `
-    id
-    title
-    rating100
-    custom_fields
-    files {
-      path
-    }
-  `;
-    const query = `query FindSceneComplete($id: ID!) { findScene(id: $id) { ${SCENE_COMPLETE_FRAGMENT} } }`;
-    try {
-      const result = await graphqlQuery(query, { id });
-      return result.findScene;
-    } catch (error) {
-      console.error(`[Ascension] Failed to fetch complete scene data for ID ${id}:`, error);
-      throw error;
-    }
-  }
-  async function updateImageRating(id, rating) {
-    await graphqlQuery(`mutation($i: ImageUpdateInput!) { imageUpdate(input: $i) { id } }`, {
-      i: { id, rating100: Math.max(1, Math.min(100, rating)) }
-    });
-  }
-  async function updatePerformerRating(id, rating, performerObj = null, won = null, opponentId = null, change = null) {
-    if (!id) {
-      console.error("[Ascension] Cannot update performer: ID is missing");
-      return;
-    }
-    let performerName = "Unknown";
-    if (performerObj?.name) {
-      performerName = performerObj.name;
-    } else if (state.currentPair) {
-      if (state.currentPair.left?.id == id)
-        performerName = state.currentPair.left.name;
-      else if (state.currentPair.right?.id == id)
-        performerName = state.currentPair.right.name;
-    }
-    let cleanRating = Math.round(Number(rating));
-    if (isNaN(cleanRating)) {
-      console.warn(`[Ascension] Invalid rating for ${id}, falling back to existing data.`);
-      cleanRating = performerObj?.rating100 || 1;
-    }
-    if (change === null && performerObj && !isNaN(performerObj.rating100)) {
-      change = cleanRating - Math.round(Number(performerObj.rating100));
-    }
-    let updatedPerformerObj = performerObj ? { ...performerObj, rating100: cleanRating } : null;
-    if (performerObj && updatedPerformerObj) {
-      try {
-        const currentStats = parsePerformerEloData(performerObj);
-        const updatedStats = updatePerformerStats(currentStats, won, change);
-        if (updatedStats) {
-          updatedPerformerObj.custom_fields = { ...performerObj.custom_fields };
-          updatedPerformerObj.custom_fields.hotornot_stats = JSON.stringify(updatedStats);
-        }
-      } catch (e) {
-        console.error(`[Ascension] Stats update failed for ${id}:`, e);
-      }
-    }
-    const newTier = getRatingTier(updatedPerformerObj, state.globalPerformerPool);
-    const newTierColor = getTierColor(newTier);
-    const newBattleScore = calculateBattleScore(updatedPerformerObj);
-    const newBattleScoreStr = Number.isFinite(newBattleScore) ? newBattleScore.toFixed(2) : (cleanRating / 10).toFixed(1);
-    const statusText = formatResultStatus(won, change);
-    const statusColor = won === true ? "#4CAF50" : won === false ? "#F44336" : "#9E9E9E";
-    console.log(
-      `%c[Ascension] %cUpdating: %c${performerName || "???"} %c(ID: ${id})%c, %cNew %c${newTier}%c Asc.Score: %c${newBattleScoreStr}%c, %cResult: %c${statusText}`,
-      "color: #1cb4d6; font-weight: bold;",
-      // [Ascension]
-      "color: #1cb4d6;",
-      // Updating:
-      "color: #1cb4d6; font-weight: bold;",
-      // performerName
-      "color: #1cb4d6;",
-      // (ID:
-      "color: #888;",
-      // )
-      `color: ${newTierColor}; font-weight: bold;`,
-      // New
-      `color: ${newTierColor}; font-weight: bold;`,
-      // tier
-      "color: #888;",
-      // Asc.Score:
-      `color: ${newTierColor}; font-weight: bold;`,
-      // score
-      "color: #888;",
-      // ,
-      "color: #1cb4d6;",
-      // Result:
-      `color: ${statusColor}; font-weight: bold;`
-      // WIN/LOSS
-    );
-    const variables = {
-      id: id.toString(),
-      rating: cleanRating,
-      fields: {}
-    };
-    if (performerObj) {
-      try {
-        const currentStats = parsePerformerEloData(performerObj);
-        const updatedStats = updatePerformerStats(currentStats, won, change);
-        if (updatedStats) {
-          const statsToStore = { ...updatedStats };
-          delete statsToStore.performer_record;
-          variables.fields.hotornot_stats = JSON.stringify(statsToStore);
-        }
-      } catch (e) {
-        console.error(`[Ascension] Stats update failed for ${id}:`, e);
-      }
-      let matchHistory = [];
-      try {
-        const rawRecord = performerObj.custom_fields?.performer_record;
-        if (rawRecord) {
-          matchHistory = typeof rawRecord === "string" ? JSON.parse(rawRecord) : rawRecord;
-        }
-      } catch (e) {
-        console.warn(`[Ascension] Failed to parse performer_record for ${id}, resetting history.`);
-        matchHistory = [];
-      }
-      let opponentData = "0:Unknown";
-      if (opponentId) {
-        if (typeof opponentId === "string" && opponentId.includes(":")) {
-          opponentData = opponentId;
-        } else {
-          const oppId = (typeof opponentId === "object" ? opponentId.id : opponentId).toString().replace(/\D/g, "");
-          let oppName = "Unknown";
-          if (opponentId.name) {
-            oppName = opponentId.name;
-          } else if (state.currentPair) {
-            if (state.currentPair.left?.id == oppId)
-              oppName = state.currentPair.left.name;
-            else if (state.currentPair.right?.id == oppId)
-              oppName = state.currentPair.right.name;
-          }
-          opponentData = `${oppId}:${oppName || "Unknown"}`;
-        }
-      }
-      matchHistory.push({
-        date: (/* @__PURE__ */ new Date()).toISOString(),
-        opponent: opponentData,
-        won,
-        ratingAfter: cleanRating
-      });
-      if (matchHistory.length > 30)
-        matchHistory = matchHistory.slice(-30);
-      variables.fields.performer_record = JSON.stringify(matchHistory);
-    }
-    variables.fields = variables.fields || {};
-    try {
-      return await graphqlQuery(`
-      mutation($id: ID!, $rating: Int!, $fields: Map) {
-        performerUpdate(input: {
-          id: $id,
-          rating100: $rating,
-          custom_fields: { partial: $fields }
-        }) {
-          id
-        }
-      }`, {
-        id: id.toString(),
-        rating: cleanRating,
-        fields: variables.fields
-      });
-    } catch (err) {
-      console.error(`[Ascension] GraphQL Update Failed for ${id}:`, err);
-      throw err;
-    }
-  }
-  async function undoLastMatch() {
-    if (!state.matchHistory || state.matchHistory.length === 0) {
-      console.log("[Ascension] No match history to undo");
-      return null;
-    }
-    const last = state.matchHistory.pop();
-    console.log("[Ascension] Undoing match:", last);
-    try {
-      await Promise.all([
-        updateItemRatingDirect(last.winnerId, last.winnerOldRating, last.winnerOldStats),
-        updateItemRatingDirect(last.loserId, last.loserOldRating, last.loserOldStats)
-      ]);
-      console.log("[Ascension] Successfully restored ratings and records");
-    } catch (error) {
-      state.matchHistory.push(last);
-      console.error("[Ascension] Failed to restore ratings:", error);
-      throw new Error(`Failed to undo match: ${error.message}`);
-    }
-    if (last.gauntletSnapshot) {
-      const snap = last.gauntletSnapshot;
-      state.gauntletChampion = snap.gauntletChampion;
-      state.gauntletWins = snap.gauntletWins;
-      state.gauntletDefeated = [...snap.gauntletDefeated];
-      state.gauntletFalling = snap.gauntletFalling;
-      state.gauntletFallingItem = snap.gauntletFallingItem ? { ...snap.gauntletFallingItem } : null;
-      console.log("[Ascension] Restored gauntlet state");
-    }
-    let restoredPairSnapshot = null;
-    if (last.pairSnapshot) {
-      const { left, right } = last.pairSnapshot;
-      state.currentPair = { left, right };
-      state.currentRanks = { left: last.pairSnapshot.rankLeft, right: last.pairSnapshot.rankRight };
-      restoredPairSnapshot = last.pairSnapshot;
-      console.log("[Ascension] Restored pair snapshot");
-    }
-    return restoredPairSnapshot || null;
-  }
-  async function updateItemRatingDirect(itemId, rating, statsObj) {
-    const recordKey = getRecordKeyForBattleType(state.battleType);
-    if (state.battleType === "performers" || state.battleType === "scenes") {
-      const fields = {};
-      if (statsObj) {
-        const statsToRestore = { ...statsObj };
-        if (recordKey)
-          delete statsToRestore[recordKey];
-        fields.hotornot_stats = JSON.stringify(statsToRestore);
-        if (recordKey && recordKey in statsObj) {
-          const recordData = statsObj[recordKey];
-          console.log(`[Ascension] Restoring ${recordKey} for ${itemId}:`, recordData);
-          if (recordData !== void 0 && recordData !== null) {
-            fields[recordKey] = Array.isArray(recordData) ? JSON.stringify(recordData) : recordData;
-          } else {
-            fields[recordKey] = "[]";
-          }
-        }
-      }
-      const mutationName = state.battleType === "performers" ? "performerUpdate" : "sceneUpdate";
-      console.log(`[Ascension] Restoring ${state.battleType} ${itemId} with fields:`, fields);
-      await graphqlQuery(`
-      mutation($id: ID!, $rating: Int!, $fields: Map) {
-        ${mutationName}(input: {
-          id: $id,
-          rating100: $rating,
-          custom_fields: { partial: $fields }
-        }) {
-          id
-        }
-      }`, {
-        id: itemId,
-        rating: Math.round(rating),
-        fields
-      });
-    } else if (state.battleType === "images") {
-      await updateImageRating(itemId, rating);
-    } else {
-      console.warn(`[Ascension] Unknown battle type for direct update: ${state.battleType}`);
-    }
-  }
-  async function getHotOrNotConfig() {
-    if (pluginConfigCache)
-      return pluginConfigCache;
-    const result = await graphqlQuery(`query { configuration { plugins } }`);
-    pluginConfigCache = (result.configuration.plugins || {})["HotOrNot"] || {};
-    return pluginConfigCache;
-  }
-  async function isBattleRankBadgeEnabled() {
-    const config = await getHotOrNotConfig();
-    return config.showBattleRankBadge !== false;
-  }
-  var FRAGMENTS, PERFORMER_FRAGMENT, IMAGE_FRAGMENT, SCENE_FRAGMENT, pluginConfigCache;
-  var init_api_client = __esm({
-    "api-client.js"() {
-      init_rating_utils();
-      init_parsers();
-      init_math_utils();
+  var eventLogEntries, MAX_LOG_ENTRIES, originalConsoleLog, originalConsoleWarn, originalConsoleError, layoutObserver, EVENT_LOG_STORAGE_KEY;
+  var init_ui_event_log = __esm({
+    "ui-event-log.js"() {
       init_state();
-      FRAGMENTS = {
-        PERFORMER: `id name image_path rating100 details custom_fields birthdate ethnicity country gender height_cm measurements fake_tits scene_count image_count gallery_count tags { name }`,
-        IMAGE: `id rating100 paths { thumbnail image }`,
-        SCENE: `id title date rating100 organized details director files { duration path } paths { screenshot preview } performers { id name image_path rating100 } studio { id name } tags { id name } play_count last_played_at play_duration o_counter custom_fields`
-      };
-      PERFORMER_FRAGMENT = FRAGMENTS.PERFORMER;
-      IMAGE_FRAGMENT = FRAGMENTS.IMAGE;
-      SCENE_FRAGMENT = FRAGMENTS.SCENE;
-      pluginConfigCache = null;
+      init_rating_utils();
+      eventLogEntries = [];
+      MAX_LOG_ENTRIES = 100;
+      originalConsoleLog = console.log;
+      originalConsoleWarn = console.warn;
+      originalConsoleError = console.error;
+      layoutObserver = null;
+      EVENT_LOG_STORAGE_KEY = "hon-event-log-state";
     }
   });
 
@@ -2596,30 +2267,6 @@
       isCacheInitializing = false;
     }
   }
-  async function getPluginSettings() {
-    try {
-      const response = await fetch("/graphql", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          query: `{
-          configuration {
-            plugins
-          }
-        }`
-        })
-      });
-      const result = await response.json();
-      const pluginSettings = result.data.configuration.plugins.ascension;
-      return {
-        hideBadge: pluginSettings?.HideAscRankBadge === true,
-        hideRecord: pluginSettings?.HideBadgeRecord === true
-      };
-    } catch (e) {
-      console.error("Ascension: Could not fetch config", e);
-      return { hideBadge: false, hideRecord: false };
-    }
-  }
   function cleanup() {
     if (observer) {
       observer.disconnect();
@@ -2663,6 +2310,9 @@
   function isOnPerformerListPage() {
     return window.location.pathname === "/performers" || window.location.pathname.startsWith("/performers?");
   }
+  function isOnMainPage() {
+    return window.location.pathname === "/" || window.location.pathname === "";
+  }
   function isOnScenePage() {
     return window.location.pathname.includes("/scenes/");
   }
@@ -2701,7 +2351,7 @@
       <span class="hon-asc-separator" style="margin: 0 6px; opacity: 0.6;">|</span>
     `;
     }
-    const hideRecordOnList = HIDE_BADGE_RECORD && isOnPerformerListPage();
+    const hideRecordOnList = HIDE_BADGE_RECORD && (isOnPerformerListPage() || isOnMainPage());
     let matchStatsHTML = "";
     let winRate = "0.0";
     const hasMatchStats = stats && stats.total_matches > 0;
@@ -3318,9 +2968,22 @@ Match Stats:`;
   }
   async function initPlugin() {
     cleanup();
-    const settings = await getPluginSettings();
-    HIDE_ASC_RANK_BADGE = settings.hideBadge;
-    HIDE_BADGE_RECORD = settings.hideRecord;
+    HIDE_ASC_RANK_BADGE = getBadgeDisplayOption("HideAscRankBadge", false);
+    HIDE_BADGE_RECORD = getBadgeDisplayOption("HideBadgeRecord", false);
+    onBadgeSettingsChange(() => {
+      HIDE_ASC_RANK_BADGE = getBadgeDisplayOption("HideAscRankBadge", false);
+      HIDE_BADGE_RECORD = getBadgeDisplayOption("HideBadgeRecord", false);
+      document.querySelectorAll(".hon-battle-rank-badge").forEach((el) => el.remove());
+      document.querySelectorAll(".hon-rating-overlay").forEach((el) => el.remove());
+      document.querySelectorAll(".hon-tier-change-notification").forEach((el) => el.remove());
+      document.querySelectorAll(".thumbnail-section.processed").forEach((card) => {
+        processedCards.delete(card);
+        card.classList.remove("processed");
+      });
+      injectBattleRankBadge();
+      replaceAllRatingBannersWithBadges();
+      setTimeout(setupScenePageTooltips, 500);
+    });
     setupNavigationListener();
     setupMutationObserver();
     if (document.readyState === "loading") {
@@ -3342,8 +3005,9 @@ Match Stats:`;
       init_api_client();
       init_rating_utils();
       init_battle_engine();
-      HIDE_ASC_RANK_BADGE = false;
-      HIDE_BADGE_RECORD = false;
+      init_ui_sidebar();
+      HIDE_ASC_RANK_BADGE = getBadgeDisplayOption("HideAscRankBadge", false);
+      HIDE_BADGE_RECORD = getBadgeDisplayOption("HideBadgeRecord", false);
       attachedListeners = /* @__PURE__ */ new Set();
       observer = null;
       processedCards = /* @__PURE__ */ new WeakSet();
@@ -3642,1830 +3306,6 @@ Match Stats:`;
       init_ui_badge();
       init_rating_utils();
       init_constants();
-    }
-  });
-
-  // match-handler.js
-  var match_handler_exports = {};
-  __export(match_handler_exports, {
-    handleChooseItem: () => handleChooseItem,
-    handleSkip: () => handleSkip,
-    handleUndo: () => handleUndo
-  });
-  function useBattleScoreDisplay(performer) {
-    if (!performer || state.battleType !== "performers")
-      return false;
-    return true;
-  }
-  function getDisplayRating(performer) {
-    if (!performer || state.battleType !== "performers") {
-      return parseInt(performer?.rating100) || 1;
-    }
-    const battleScore = calculateBattleScore(performer);
-    return Math.round(battleScore * 10);
-  }
-  async function handleChooseItem(event) {
-    if (state.disableChoice)
-      return;
-    state.disableChoice = true;
-    const body = event.currentTarget;
-    const winnerId = body.dataset.winner;
-    const isLeftWinner = winnerId === state.currentPair.left.id;
-    const winnerItem = isLeftWinner ? state.currentPair.left : state.currentPair.right;
-    const loserItem = isLeftWinner ? state.currentPair.right : state.currentPair.left;
-    const loserId = loserItem.id;
-    const winnerCard = body.closest(".hon-scene-card");
-    const loserCard = document.querySelector(`[data-performer-id="${loserId}"], [data-scene-id="${loserId}"], [data-image-id="${loserId}"]`);
-    const winnerRating = parseInt(winnerCard.dataset.rating) || 1;
-    const loserRating = parseInt(loserCard?.dataset.rating) || 1;
-    const winnerDisplayRating = getDisplayRating(winnerItem);
-    const loserDisplayRating = getDisplayRating(loserItem);
-    const loserRank = isLeftWinner ? state.currentRanks.right : state.currentRanks.left;
-    if (state.battleType === "images") {
-      const outcome2 = await handleComparison(winnerId, loserId, winnerRating, loserRating, null, winnerItem, loserItem);
-      applyVisualFeedback(winnerCard, loserCard, winnerItem, loserItem, winnerDisplayRating, loserDisplayRating, outcome2);
-      setTimeout(() => loadNewPair(), 800);
-      return;
-    }
-    const recordModeOutcome = async () => {
-      const outcome2 = await handleComparison(
-        winnerId,
-        loserId,
-        winnerRating,
-        loserRating,
-        null,
-        winnerItem,
-        loserItem,
-        false
-      );
-      applyVisualFeedback(winnerCard, loserCard, winnerItem, loserItem, winnerDisplayRating, loserDisplayRating, outcome2);
-      return outcome2;
-    };
-    if (state.currentMode === "gauntlet") {
-      if (state.gauntletFalling && state.gauntletFallingItem) {
-        const outcome2 = await recordModeOutcome();
-        winnerItem.rating100 = outcome2.newWinnerRating;
-        loserItem.rating100 = outcome2.newLoserRating;
-        if (winnerId === state.gauntletFallingItem.id) {
-          const placedRank = isLeftWinner ? state.currentRanks.left : state.currentRanks.right;
-          setTimeout(() => {
-            showPlacementScreen(winnerItem, placedRank, outcome2.newWinnerRating, state.battleType, state.totalItemsCount);
-          }, 800);
-          return;
-        }
-        state.gauntletFallingItem = loserItem;
-        setTimeout(() => loadNewPair(), 800);
-        return;
-      }
-      if (winnerId === state.gauntletChampion?.id) {
-        const outcome2 = await recordModeOutcome();
-        winnerItem.rating100 = outcome2.newWinnerRating;
-        loserItem.rating100 = outcome2.newLoserRating;
-        state.gauntletChampion = winnerItem;
-        state.gauntletWins++;
-        state.gauntletDefeated.push(loserId);
-        if (state.gauntletWins >= state.totalItemsCount - 1) {
-          setTimeout(() => {
-            const victoryScreen = createVictoryScreen(state.gauntletChampion, state.battleType, state.gauntletWins, state.totalItemsCount);
-            const area = document.getElementById("hon-comparison-area");
-            if (area) {
-              area.innerHTML = victoryScreen;
-              document.getElementById("hon-new-gauntlet")?.addEventListener("click", () => {
-                resetBattleState();
-                loadNewPair();
-              });
-            }
-          }, 800);
-          return;
-        }
-        setTimeout(() => loadNewPair(), 800);
-        return;
-      }
-      if (loserId === state.gauntletChampion?.id) {
-        const outcome2 = await recordModeOutcome();
-        winnerItem.rating100 = outcome2.newWinnerRating;
-        loserItem.rating100 = outcome2.newLoserRating;
-        state.gauntletChampion = winnerItem;
-        state.gauntletWins = 0;
-        state.gauntletDefeated = [];
-        state.gauntletFalling = true;
-        state.gauntletFallingItem = loserItem;
-        setTimeout(() => loadNewPair(), 800);
-        return;
-      }
-    }
-    if (state.currentMode === "champion") {
-      const outcome2 = await recordModeOutcome();
-      winnerItem.rating100 = outcome2.newWinnerRating;
-      loserItem.rating100 = outcome2.newLoserRating;
-      if (winnerId === state.gauntletChampion?.id) {
-        state.gauntletChampion = winnerItem;
-        state.gauntletWins++;
-        state.gauntletDefeated.push(loserId);
-      } else if (loserId === state.gauntletChampion?.id) {
-        state.gauntletChampion = winnerItem;
-        state.gauntletWins++;
-        state.gauntletDefeated.push(loserId);
-      } else if (!state.gauntletChampion) {
-        state.gauntletChampion = winnerItem;
-        state.gauntletWins = 1;
-        state.gauntletDefeated = [loserId];
-      }
-      setTimeout(() => loadNewPair(), 800);
-      return;
-    }
-    const outcome = await handleComparison(
-      winnerId,
-      loserId,
-      winnerRating,
-      loserRating,
-      loserRank,
-      winnerItem,
-      loserItem,
-      false
-    );
-    applyVisualFeedback(winnerCard, loserCard, winnerItem, loserItem, winnerDisplayRating, loserDisplayRating, outcome);
-    setTimeout(() => loadNewPair(), 800);
-  }
-  async function handleSkip(event) {
-    if (state.disableChoice)
-      return;
-    const skipBtn = event?.currentTarget;
-    let skippedIds = [];
-    if (skipBtn?.dataset?.skip) {
-      skippedIds.push(skipBtn.dataset.skip);
-    }
-    if (skippedIds.length === 0) {
-      if (state.currentPair?.left?.id)
-        skippedIds.push(state.currentPair.left.id);
-      if (state.currentPair?.right?.id)
-        skippedIds.push(state.currentPair.right.id);
-    }
-    if (skippedIds.length === 0) {
-      console.log("[Ascension] No IDs to skip");
-      return;
-    }
-    console.log(`[Ascension] Skipping item(s): ${skippedIds.join(", ")}`);
-    state.skippedIds = state.skippedIds || [];
-    skippedIds.forEach((id) => state.skippedIds.push(id));
-    if (state.skippedIds.length > 100) {
-      state.skippedIds = state.skippedIds.slice(-100);
-    }
-    loadNewPair();
-  }
-  function applyVisualFeedback(winnerCard, loserCard, winnerItem, loserItem, winnerDisplayRating, loserDisplayRating, outcome) {
-    winnerCard.classList.add("hon-winner");
-    if (loserCard)
-      loserCard.classList.add("hon-loser");
-    const winnerBody = winnerCard.querySelector(".hon-scene-body");
-    const loserBody = loserCard ? loserCard.querySelector(".hon-scene-body") : null;
-    if (winnerBody) {
-      const winnerBtn = winnerBody.querySelector(".hon-choose-btn");
-      if (winnerBtn) {
-        winnerBtn.classList.add("chosen-btn");
-        if (!winnerBtn.classList.contains("hon-choose-btn-icon")) {
-          winnerBtn.innerHTML = "\u2705";
-        }
-      }
-    }
-    if (loserBody) {
-      const loserBtn = loserBody.querySelector(".hon-choose-btn");
-      if (loserBtn) {
-        loserBtn.classList.add("not-chosen-btn");
-        if (!loserBtn.classList.contains("hon-choose-btn-icon")) {
-          loserBtn.innerHTML = "\u274C";
-        }
-      }
-    }
-    const winnerIsBattleScore = useBattleScoreDisplay(winnerItem);
-    const loserIsBattleScore = useBattleScoreDisplay(loserItem);
-    const winnerNewDisplayRating = winnerIsBattleScore ? winnerDisplayRating + outcome.winnerChange : outcome.newWinnerRating;
-    const winnerDisplayChange = outcome.winnerChange;
-    const loserNewDisplayRating = loserIsBattleScore ? loserDisplayRating + outcome.loserChange : outcome.newLoserRating;
-    const loserDisplayChange = outcome.loserChange;
-    showRatingAnimation(winnerCard, winnerDisplayRating, winnerNewDisplayRating, winnerDisplayChange, true);
-    if (loserCard) {
-      showRatingAnimation(loserCard, loserDisplayRating, loserNewDisplayRating, loserDisplayChange, false);
-    }
-    setTimeout(() => {
-      winnerCard.classList.add("hon-transition-out");
-      if (loserCard)
-        loserCard.classList.add("hon-transition-out");
-    }, 400);
-  }
-  async function handleUndo() {
-    if (!state.matchHistory || state.matchHistory.length === 0) {
-      console.log("[Ascension] Nothing to undo.");
-      return;
-    }
-    const undoBtn = document.getElementById("hon-undo-btn");
-    if (undoBtn) {
-      undoBtn.disabled = true;
-      undoBtn.textContent = "\u{1F504}";
-    }
-    try {
-      console.log("[Ascension] Starting undo operation...");
-      const pairSnapshot = await undoLastMatch();
-      if (pairSnapshot?.left && pairSnapshot?.right) {
-        console.log("[Ascension] Re-rendering previous pair from snapshot");
-        const { renderCard: renderCard2 } = await Promise.resolve().then(() => (init_ui_manager(), ui_manager_exports));
-        const { attachBattleListeners: attachBattleListeners2 } = await Promise.resolve().then(() => (init_battle_engine(), battle_engine_exports));
-        const area = document.getElementById("hon-comparison-area");
-        if (area) {
-          state.disableChoice = false;
-          area.innerHTML = `
-          <div class="hon-vs-container">
-            ${renderCard2(pairSnapshot.left, "left", pairSnapshot.rankLeft)}
-            <div class="hon-vs-divider"><span>VS</span></div>
-            ${renderCard2(pairSnapshot.right, "right", pairSnapshot.rankRight)}
-          </div>
-        `;
-          attachBattleListeners2(area);
-        }
-        console.log("[Ascension] Undo successful \u2014 previous pair restored.");
-      } else {
-        console.log("[Ascension] No snapshot available, loading fresh pair");
-        loadNewPair();
-      }
-    } catch (err) {
-      console.error("[Ascension] Undo failed:", err);
-      const area = document.getElementById("hon-comparison-area");
-      if (area) {
-        area.innerHTML = `<div class="hon-error">Undo failed: ${err.message}</div>`;
-      }
-      setTimeout(() => {
-        loadNewPair();
-      }, 2e3);
-    } finally {
-      state.disableChoice = false;
-      const btn = document.getElementById("hon-undo-btn");
-      if (btn) {
-        btn.disabled = false;
-        btn.textContent = "\u21A9";
-        btn.style.display = state.matchHistory && state.matchHistory.length > 0 ? "inline-block" : "none";
-      }
-    }
-  }
-  var init_match_handler = __esm({
-    "match-handler.js"() {
-      init_state();
-      init_api_client();
-      init_ui_manager();
-      init_battle_engine();
-      init_rating_utils();
-    }
-  });
-
-  // battle-engine.js
-  var battle_engine_exports = {};
-  __export(battle_engine_exports, {
-    attachBattleListeners: () => attachBattleListeners,
-    fetchAllScenesSorted: () => fetchAllScenesSorted,
-    fetchChampionPairPerformers: () => fetchChampionPairPerformers,
-    fetchChampionPairScenes: () => fetchChampionPairScenes,
-    fetchGauntletPairPerformers: () => fetchGauntletPairPerformers,
-    fetchGauntletPairScenes: () => fetchGauntletPairScenes,
-    fetchPair: () => fetchPair,
-    fetchRandomScenes: () => fetchRandomScenes,
-    fetchSceneCount: () => fetchSceneCount,
-    fetchSwissPairImages: () => fetchSwissPairImages,
-    fetchSwissPairPerformers: () => fetchSwissPairPerformers,
-    fetchSwissPairScenes: () => fetchSwissPairScenes,
-    handleMatchmakingLogic: () => handleMatchmakingLogic,
-    loadNewPair: () => loadNewPair
-  });
-  function isNonVotingClick(e) {
-    return !!e.target.closest("a.hon-scene-link, a.hon-performer-link, .hon-tags-more, .hon-focus-btn");
-  }
-  function attachBattleListeners(area) {
-    if (area._battleCleanup) {
-      area._battleCleanup();
-    }
-    const cleanupFunctions2 = [];
-    let carouselInstance = null;
-    let autoPlayTimeout = null;
-    let focusTimeout = null;
-    let clickTimeout = null;
-    let activeCard = null;
-    let activeVideo = null;
-    let mobileBlurHandler = null;
-    const clearAllTimers = () => {
-      clearTimeout(autoPlayTimeout);
-      clearTimeout(focusTimeout);
-      clearTimeout(clickTimeout);
-      autoPlayTimeout = null;
-      focusTimeout = null;
-      clickTimeout = null;
-    };
-    if (isMobile()) {
-      const clearAutoPlay = () => {
-        if (autoPlayTimeout) {
-          clearTimeout(autoPlayTimeout);
-          autoPlayTimeout = null;
-        }
-      };
-      const showPreviewVideo = (video) => {
-        video.style.display = "block";
-        video.style.position = "absolute";
-        video.style.top = "0";
-        video.style.left = "0";
-        video.style.width = "100%";
-        video.style.height = "100%";
-        video.style.objectFit = "contain";
-        video.style.zIndex = "10";
-      };
-      const hidePreviewVideo = (video) => {
-        video.style.display = "none";
-        video.style.position = "";
-        video.style.top = "";
-        video.style.left = "";
-        video.style.width = "";
-        video.style.height = "";
-        video.style.objectFit = "";
-        video.style.zIndex = "";
-      };
-      const startAutoPlay = (card) => {
-        clearAutoPlay();
-        const video = card.querySelector(".hon-hover-preview");
-        if (!video)
-          return;
-        activeVideo = video;
-        showPreviewVideo(video);
-        video.muted = true;
-        const playPromise = video.play();
-        if (playPromise) {
-          playPromise.catch((error) => {
-            console.warn("[Ascension] Video autoplay failed:", error);
-          });
-        }
-      };
-      const handleFocus = (card) => {
-        if (activeCard === card)
-          return;
-        clearAutoPlay();
-        if (activeVideo) {
-          activeVideo.pause();
-          activeVideo.currentTime = 0;
-          hidePreviewVideo(activeVideo);
-          activeVideo = null;
-        }
-        if (activeCard) {
-          activeCard.classList.remove("focused");
-        }
-        activeCard = card;
-        card.classList.add("focused");
-        startAutoPlay(card);
-      };
-      const handleBlur = () => {
-        clearAutoPlay();
-        if (activeVideo) {
-          activeVideo.pause();
-          activeVideo.currentTime = 0;
-          hidePreviewVideo(activeVideo);
-          activeVideo = null;
-        }
-        if (activeCard) {
-          activeCard.classList.remove("focused");
-          activeCard = null;
-        }
-      };
-      mobileBlurHandler = handleBlur;
-      const container = area.querySelector(".hon-vs-container");
-      if (container) {
-        const cards = Array.from(container.querySelectorAll(".hon-scene-card"));
-        if (cards.length >= 2) {
-          const carousel = enableCardCarousel(container, cards, {
-            onFocus: (card) => handleFocus(card),
-            onBlur: () => handleBlur()
-          });
-          carouselInstance = carousel;
-          cards.forEach((card) => {
-            const clickHandler = (e) => {
-              if (isNonVotingClick(e))
-                return;
-              if (clickTimeout)
-                clearTimeout(clickTimeout);
-              clickTimeout = setTimeout(() => {
-                clickTimeout = null;
-              }, 500);
-              e.stopPropagation();
-              handleChooseItem(e);
-            };
-            const sceneBody = card.querySelector(".hon-scene-body");
-            if (sceneBody) {
-              sceneBody.addEventListener("click", clickHandler);
-              cleanupFunctions2.push(() => sceneBody.removeEventListener("click", clickHandler));
-            }
-            const focusBtn = card.querySelector(".hon-focus-btn");
-            if (focusBtn) {
-              const focusHandler2 = (e) => {
-                e.stopPropagation();
-                focusBtn.classList.add("pressed");
-                setTimeout(() => focusBtn.classList.remove("pressed"), 200);
-                handleFocus(card);
-              };
-              focusBtn.addEventListener("click", focusHandler2);
-              cleanupFunctions2.push(() => focusBtn.removeEventListener("click", focusHandler2));
-            }
-            const focusHandler = () => handleFocus(card);
-            const blurHandler = handleBlur;
-            card.addEventListener("focus", focusHandler);
-            card.addEventListener("blur", blurHandler);
-            cleanupFunctions2.push(() => {
-              card.removeEventListener("focus", focusHandler);
-              card.removeEventListener("blur", blurHandler);
-            });
-          });
-          focusTimeout = setTimeout(() => {
-            handleFocus(cards[0]);
-          }, 100);
-        }
-      }
-    } else {
-      const sceneBodies = area.querySelectorAll(".hon-scene-body");
-      sceneBodies.forEach((body) => {
-        const clickHandler = (e) => {
-          if (isNonVotingClick(e))
-            return;
-          handleChooseItem(e);
-        };
-        body.addEventListener("click", clickHandler);
-        cleanupFunctions2.push(() => body.removeEventListener("click", clickHandler));
-      });
-      const cards = area.querySelectorAll(".hon-scene-card");
-      cards.forEach((card) => {
-        const video = card.querySelector(".hon-hover-preview");
-        if (!video)
-          return;
-        const mouseEnterHandler = () => {
-          if (video.style.display === "none")
-            video.style.display = "block";
-          video.muted = true;
-          video.style.position = "absolute";
-          video.style.top = "0";
-          video.style.left = "0";
-          video.style.width = "100%";
-          video.style.height = "100%";
-          video.style.objectFit = "contain";
-          video.play().catch(() => {
-          });
-        };
-        const mouseLeaveHandler = () => {
-          video.style.display = "none";
-          video.pause();
-          video.currentTime = 0;
-        };
-        card.addEventListener("mouseenter", mouseEnterHandler);
-        card.addEventListener("mouseleave", mouseLeaveHandler);
-        cleanupFunctions2.push(() => {
-          card.removeEventListener("mouseenter", mouseEnterHandler);
-          card.removeEventListener("mouseleave", mouseLeaveHandler);
-        });
-      });
-    }
-    const sceneCards = area.querySelectorAll(".hon-scene-card[data-scene-id]");
-    sceneCards.forEach((card) => {
-      const sceneImageContainer = card.querySelector(".hon-scene-image-container");
-      if (sceneImageContainer && sceneImageContainer.dataset.sceneUrl) {
-        const sceneUrl = sceneImageContainer.dataset.sceneUrl;
-        const imageContainerClickHandler = (e) => {
-          e.stopPropagation();
-          const link = document.createElement("a");
-          link.href = sceneUrl;
-          link.target = "_blank";
-          link.rel = "noopener noreferrer";
-          link.style.display = "none";
-          document.body.appendChild(link);
-          link.click();
-          setTimeout(() => {
-            if (link.parentNode)
-              link.parentNode.removeChild(link);
-          }, 0);
-        };
-        sceneImageContainer.style.cursor = "pointer";
-        sceneImageContainer.addEventListener("click", imageContainerClickHandler);
-        cleanupFunctions2.push(() => sceneImageContainer.removeEventListener("click", imageContainerClickHandler));
-      }
-    });
-    const tagElements = area.querySelectorAll(".hon-tags-more");
-    tagElements.forEach((tagElement) => {
-      const clickHandler = function(e) {
-        e.stopPropagation();
-        const container = this.parentElement;
-        const displayedTags = container.querySelector(".hon-tags-displayed");
-        const ellipsis = container.querySelector(".hon-tags-ellipsis");
-        const moreLink = this;
-        const expandedTags = container.querySelector(".hon-tags-expanded");
-        if (displayedTags)
-          displayedTags.style.display = "none";
-        if (ellipsis)
-          ellipsis.style.display = "none";
-        moreLink.style.display = "none";
-        if (expandedTags)
-          expandedTags.style.display = "inline";
-      };
-      tagElement.addEventListener("click", clickHandler);
-      cleanupFunctions2.push(() => tagElement.removeEventListener("click", clickHandler));
-    });
-    area._battleCleanup = () => {
-      if (mobileBlurHandler)
-        mobileBlurHandler();
-      clearAllTimers();
-      if (carouselInstance && typeof carouselInstance.destroy === "function") {
-        carouselInstance.destroy();
-        carouselInstance = null;
-      }
-      activeCard = null;
-      activeVideo = null;
-      cleanupFunctions2.forEach((cleanup3) => cleanup3());
-      delete area._battleCleanup;
-    };
-  }
-  async function fetchPair() {
-    const { battleType, currentMode } = state;
-    if (currentMode === "swiss") {
-      if (battleType === "performers")
-        return await fetchSwissPairPerformers(state.selectedGenders);
-      if (battleType === "images")
-        return await fetchSwissPairImages();
-      if (battleType === "scenes")
-        return await fetchSwissPairScenes();
-    }
-    if (currentMode === "gauntlet") {
-      if (battleType === "performers")
-        return await fetchGauntletPairPerformers();
-      if (battleType === "scenes")
-        return await fetchGauntletPairScenes();
-      if (battleType === "images")
-        return await fetchSwissPairImages();
-    }
-    if (currentMode === "champion") {
-      if (battleType === "performers")
-        return await fetchChampionPairPerformers();
-      if (battleType === "scenes")
-        return await fetchChampionPairScenes();
-      if (battleType === "images")
-        return await fetchSwissPairImages();
-    }
-    if (battleType === "scenes") {
-      return { items: await fetchRandomScenes(2), ranks: [null, null], isVictory: false };
-    }
-    return { items: await fetchRandomPerformers(2), ranks: [null, null], isVictory: false };
-  }
-  async function loadNewPair() {
-    state.disableChoice = false;
-    const area = document.getElementById("hon-comparison-area");
-    if (!area)
-      return;
-    const undoBtn = document.getElementById("hon-undo-btn");
-    if (undoBtn) {
-      undoBtn.style.display = state.matchHistory && state.matchHistory.length > 0 ? "inline-block" : "none";
-      undoBtn.disabled = false;
-      undoBtn.textContent = "\u21A9";
-    }
-    if ((state.currentMode === "gauntlet" || state.currentMode === "champion") && state.battleType === "performers" && !state.gauntletChampion && !state.gauntletFalling) {
-      if (area._battleCleanup)
-        area._battleCleanup();
-      showPerformerSelection();
-      return;
-    }
-    try {
-      const result = await fetchPair();
-      if (result.isVictory) {
-        if (area._battleCleanup)
-          area._battleCleanup();
-        area.innerHTML = createVictoryScreen(result.items[0], state.battleType, state.gauntletWins, state.totalItemsCount);
-        attachVictoryHandlers(area);
-        return;
-      }
-      if (result.isPlacement) {
-        if (area._battleCleanup)
-          area._battleCleanup();
-        showPlacementScreen(result.items[0], result.placementRank, result.placementRating, state.battleType, state.totalItemsCount);
-        return;
-      }
-      const [left, right] = result.items;
-      state.currentPair = { left, right };
-      state.currentRanks = { left: result.ranks[0], right: result.ranks[1] };
-      const oldContainer = area.querySelector(".hon-vs-container");
-      const newContainer = document.createElement("div");
-      newContainer.className = "hon-vs-container hon-pair-entering";
-      newContainer.innerHTML = `
-      ${renderCard(left, "left", result.ranks[0])}
-      <div class="hon-vs-divider"><span>VS</span></div>
-      ${renderCard(right, "right", result.ranks[1])}
-    `;
-      if (oldContainer) {
-        oldContainer.replaceWith(newContainer);
-      } else {
-        area.innerHTML = "";
-        area.appendChild(newContainer);
-      }
-      attachBattleListeners(area);
-    } catch (err) {
-      area.innerHTML = `<div class="hon-error">Error: ${err.message}</div>`;
-    }
-  }
-  function attachVictoryHandlers(area) {
-    const btn = area.querySelector("#hon-new-gauntlet");
-    if (btn) {
-      if (btn._victoryCleanup)
-        btn._victoryCleanup();
-      const clickHandler = () => {
-        resetBattleState();
-        if (state.currentMode === "gauntlet" && state.battleType === "performers") {
-          Promise.resolve().then(() => (init_gauntlet_selection(), gauntlet_selection_exports)).then((m) => m.showPerformerSelection());
-        } else {
-          loadNewPair();
-        }
-      };
-      btn.addEventListener("click", clickHandler);
-      btn._victoryCleanup = () => {
-        btn.removeEventListener("click", clickHandler);
-        delete btn._victoryCleanup;
-      };
-    }
-  }
-  function shouldForceCrossTierMatch() {
-    return Math.random() < 0.1;
-  }
-  function getTierPercentileWindow(tier) {
-    switch (tier) {
-      case "S-Tier":
-        return 8;
-      case "A-Tier":
-        return 12;
-      case "B-Tier":
-        return 16;
-      case "C-Tier":
-        return 20;
-      case "D-Tier":
-        return 28;
-      case "F-Tier":
-        return 40;
-      default:
-        return 25;
-    }
-  }
-  function getAdjacentTiers(tier) {
-    const index = TIER_ORDER.indexOf(tier);
-    if (index === -1)
-      return [];
-    const adjacent = [];
-    if (index > 0)
-      adjacent.push(TIER_ORDER[index - 1]);
-    if (index < TIER_ORDER.length - 1)
-      adjacent.push(TIER_ORDER[index + 1]);
-    return adjacent;
-  }
-  function isCustomTierMode() {
-    return state.selectedTiers && Array.isArray(state.selectedTiers) && !state.selectedTiers.includes("any");
-  }
-  function performerMatchesSelectedTiers(performer, tierPool) {
-    const selected = state.selectedTiers;
-    if (!selected || selected.includes("any"))
-      return true;
-    const allowed = new Set(selected);
-    if (allowed.has("newcomers")) {
-      const stats = parsePerformerEloData(performer);
-      if (stats.total_matches < 6)
-        return true;
-    }
-    const tier = getRatingTier(performer, tierPool);
-    return allowed.has(tier);
-  }
-  function canBattleInSelectedTiers(tier1, tier2) {
-    if (!isCustomTierMode())
-      return canBattleByTier(tier1, tier2);
-    const allowed = new Set(state.selectedTiers);
-    if (allowed.has("newcomers"))
-      return true;
-    return allowed.has(tier1) && allowed.has(tier2);
-  }
-  function getSelectedTierWindowMultiplier() {
-    if (!isCustomTierMode())
-      return 1;
-    const letters = state.selectedTiers.filter((t) => t !== "newcomers" && t !== "any");
-    if (letters.length < 2)
-      return 1;
-    const indices = letters.map((t) => TIER_ORDER.indexOf(t)).filter((i) => i !== -1);
-    if (indices.length < 2)
-      return 1;
-    const gap = Math.max(...indices) - Math.min(...indices);
-    if (gap <= 1)
-      return 1;
-    if (gap === 2)
-      return 2.5;
-    if (gap === 3)
-      return 4;
-    return 6;
-  }
-  function getCustomTierRatingWindow() {
-    if (!isCustomTierMode())
-      return 15;
-    const letters = state.selectedTiers.filter((t) => t !== "newcomers" && t !== "any");
-    if (letters.length < 2)
-      return 15;
-    const indices = letters.map((t) => TIER_ORDER.indexOf(t)).filter((i) => i !== -1);
-    if (indices.length < 2)
-      return 15;
-    const gap = Math.max(...indices) - Math.min(...indices);
-    if (gap <= 1)
-      return 30;
-    if (gap === 2)
-      return 55;
-    if (gap === 3)
-      return 90;
-    return 140;
-  }
-  function getCrossTierWeightMultiplier(seedTier, opponentTier) {
-    if (!isCustomTierMode())
-      return 1;
-    const gap = Math.abs(TIER_ORDER.indexOf(seedTier) - TIER_ORDER.indexOf(opponentTier));
-    if (gap <= 1)
-      return 1.8;
-    if (gap === 2)
-      return 2.5;
-    if (gap === 3)
-      return 3.5;
-    return 5;
-  }
-  async function fetchSwissPairImages() {
-    const totalImages = await fetchImageCount();
-    const useSampling = totalImages > 1e3;
-    const sampleSize = useSampling ? Math.min(500, totalImages) : totalImages;
-    const query = `query FindImagesByRating($filter: FindFilterType) {
-    findImages(filter: $filter) { images { ${IMAGE_FRAGMENT} } }
-  }`;
-    const result = await graphqlQuery(query, {
-      filter: {
-        per_page: sampleSize,
-        sort: useSampling ? "random" : "rating",
-        direction: useSampling ? void 0 : "DESC"
-      }
-    });
-    const images = result.findImages.images || [];
-    if (images.length < 2)
-      return { items: await fetchRandomImages(2), ranks: [null, null] };
-    const image1 = images[Math.floor(Math.random() * images.length)];
-    const rating1 = image1.rating100 || 1;
-    const matchWindow = images.length > 1 ? 10 : 20;
-    const similar = images.filter((s) => s.id !== image1.id && Math.abs((s.rating100 || 1) - rating1) <= matchWindow);
-    const image2 = similar.length > 0 ? similar[Math.floor(Math.random() * similar.length)] : images.filter((s) => s.id !== image1.id)[0];
-    let ranks = [null, null];
-    if (!useSampling && images.length > 0) {
-      const sortedImages = [...images].sort((a, b) => (b.rating100 || 0) - (a.rating100 || 0));
-      const rank1 = sortedImages.findIndex((img) => img.id === image1.id) + 1;
-      const rank2 = sortedImages.findIndex((img) => img.id === image2.id) + 1;
-      ranks = [rank1 || null, rank2 || null];
-    }
-    return { items: [image1, image2], ranks };
-  }
-  async function fetchRandomScenes(count = 2) {
-    const sceneQuery = `
-    query FindRandomScenes($filter: FindFilterType) {
-      findScenes(filter: $filter) {
-        scenes { ${SCENE_FRAGMENT} }
-      }
-    }
-  `;
-    const result = await graphqlQuery(sceneQuery, {
-      filter: {
-        per_page: 100,
-        sort: "random"
-      }
-    });
-    const allScenes = result?.findScenes?.scenes || [];
-    if (allScenes.length < 2) {
-      throw new Error("Not enough scenes for comparison.");
-    }
-    const shuffled = [...allScenes].sort(() => Math.random() - 0.5);
-    return shuffled.slice(0, 2);
-  }
-  async function fetchAllScenesSorted() {
-    const queryTemplate = `
-    query FindAllScenes($filter: FindFilterType) {
-      findScenes(filter: $filter) {
-        scenes { ${SCENE_FRAGMENT} }
-      }
-    }
-  `;
-    const scenes = await fetchAllItems(queryTemplate, {
-      filter: { sort: "rating100", direction: "DESC" }
-    });
-    return scenes.sort((a, b) => {
-      const ratingDiff = (b.rating100 ?? 1) - (a.rating100 ?? 1);
-      if (ratingDiff !== 0)
-        return ratingDiff;
-      const playCountDiff = (b.play_count || 0) - (a.play_count || 0);
-      if (playCountDiff !== 0)
-        return playCountDiff;
-      const titleA = a.title?.toLowerCase() || "";
-      const titleB = b.title?.toLowerCase() || "";
-      return titleA.localeCompare(titleB);
-    });
-  }
-  async function fetchSwissPairScenes() {
-    const totalScenes = await fetchSceneCount();
-    const config = getSceneSelectionConfig(totalScenes);
-    let sceneMetadata = state.sceneMetadataCache;
-    state.sceneMetadataRefreshCounter = (state.sceneMetadataRefreshCounter || 0) + 1;
-    if (!sceneMetadata || state.sceneMetadataRefreshCounter > config.metadataRefreshInterval) {
-      sceneMetadata = await fetchAllSceneMetadata();
-      state.sceneMetadataCache = sceneMetadata;
-      state.sceneMetadataRefreshCounter = 0;
-    }
-    if (sceneMetadata.length < 2) {
-      return { items: await fetchRandomScenes(2), ranks: [null, null] };
-    }
-    const avgMatches = calculateAverageMatches(sceneMetadata.map((scene) => parsePerformerEloData(scene)));
-    const weightedScenes = sceneMetadata.map((scene) => {
-      const stats = parsePerformerEloData(scene);
-      const rawMatches = stats.total_matches || 0;
-      const cappedMatches = Math.min(rawMatches, config.lowMatchThreshold);
-      const recencyWeight = getSceneRecencyWeight(scene);
-      const baseWeight = Math.pow(recencyWeight, 3) + Math.random() * 0.01;
-      const lowMatchBoost = getLowMatchBoost({ ...scene, total_matches: cappedMatches }, avgMatches);
-      const distributionBoost = getMatchCountDistributionBoost(scene, sceneMetadata);
-      const sessionPenalty = getSceneSessionPenalty(scene.id);
-      const finalWeight = baseWeight * lowMatchBoost * distributionBoost * sessionPenalty;
-      return {
-        scene,
-        weight: finalWeight,
-        rating: scene.rating100 || 1,
-        matches: rawMatches,
-        recencyWeight
-      };
-    });
-    weightedScenes.sort((a, b) => b.weight - a.weight);
-    const seedWeights = weightedScenes.map((item) => item.weight);
-    const seedItem = weightedRandomSelect(weightedScenes, seedWeights) || weightedScenes[0];
-    const seedSceneMeta = seedItem.scene;
-    const seedRating = seedSceneMeta.rating100 || 1;
-    const seedMatches = parsePerformerEloData(seedSceneMeta).total_matches || 0;
-    let ratingWindow = config.ratingWindowInitial;
-    if (seedMatches > 20) {
-      ratingWindow = config.ratingWindowMin;
-    } else if (seedMatches > 10) {
-      ratingWindow = config.ratingWindowInitial;
-    } else if (seedMatches > 0) {
-      ratingWindow = Math.min(config.ratingWindowMax, config.ratingWindowInitial + 15);
-    } else {
-      ratingWindow = config.ratingWindowMax;
-    }
-    const isSceneHardExcluded = (scene) => {
-      const stats = parsePerformerEloData(scene);
-      if (!stats.last_match)
-        return false;
-      const lastMatch = new Date(stats.last_match).getTime();
-      if (isNaN(lastMatch))
-        return false;
-      const hoursSince = (Date.now() - lastMatch) / (1e3 * 60 * 60);
-      return hoursSince < config.hardRepeatWindowHours;
-    };
-    function filterCandidates(pool, window2, allowHardRepeat = false) {
-      return pool.filter((item) => {
-        if (item.scene.id === seedSceneMeta.id)
-          return false;
-        if (isSceneOnCooldown(item.scene.id) || isSceneRecentlySelected(item.scene.id))
-          return false;
-        if (!allowHardRepeat && isSceneHardExcluded(item.scene))
-          return false;
-        return Math.abs(seedRating - item.rating) <= window2;
-      });
-    }
-    let candidates = filterCandidates(weightedScenes, ratingWindow);
-    if (candidates.length < 10) {
-      candidates = filterCandidates(weightedScenes, ratingWindow * 3);
-    }
-    let inDrainMode = false;
-    if (candidates.length < 2) {
-      console.log("[Ascension] Scene pool exhausted within hard-repeat window; entering drain mode");
-      candidates = filterCandidates(weightedScenes, ratingWindow * 3, true).map((item) => ({
-        ...item,
-        weight: item.weight * config.drainModeRepeatPenalty
-      }));
-      inDrainMode = true;
-    }
-    if (candidates.length < 2) {
-      console.log("[Ascension] Scene pool exhausted; clearing session cooldown and re-sampling");
-      state.recentlySelectedScenes = [];
-      state.sessionSceneCounts = {};
-      state.sceneMetadataRefreshCounter = config.metadataRefreshInterval + 1;
-      sceneMetadata = await fetchAllSceneMetadata();
-      state.sceneMetadataCache = sceneMetadata;
-      state.sceneMetadataRefreshCounter = 0;
-      const refreshedWeighted = sceneMetadata.map((scene) => {
-        const stats = parsePerformerEloData(scene);
-        const rawMatches = stats.total_matches || 0;
-        const cappedMatches = Math.min(rawMatches, config.lowMatchThreshold);
-        const recencyWeight = getSceneRecencyWeight(scene);
-        const baseWeight = Math.pow(recencyWeight, 3) + Math.random() * 0.01;
-        const lowMatchBoost = getLowMatchBoost({ ...scene, total_matches: cappedMatches }, avgMatches);
-        const distributionBoost = getMatchCountDistributionBoost(scene, sceneMetadata);
-        const finalWeight = baseWeight * lowMatchBoost * distributionBoost;
-        return { scene, weight: finalWeight, rating: scene.rating100 || 1, matches: rawMatches };
-      });
-      refreshedWeighted.sort((a, b) => b.weight - a.weight);
-      candidates = refreshedWeighted.filter((item) => {
-        if (item.scene.id === seedSceneMeta.id)
-          return false;
-        return Math.abs(seedRating - item.rating) <= ratingWindow * 3;
-      });
-    }
-    if (candidates.length === 0) {
-      const fallback = weightedScenes.find((item) => item.scene.id !== seedSceneMeta.id);
-      candidates = fallback ? [fallback] : weightedScenes.slice(1, 2);
-      console.warn("[Ascension] Scene opponent selection fell back to last-resort");
-    }
-    candidates.sort((a, b) => b.weight - a.weight);
-    const topCandidates = candidates.slice(0, 20);
-    const candidateIds = [seedSceneMeta.id, ...topCandidates.map((c) => c.scene.id)];
-    const fullScenes = await fetchScenesByIds(candidateIds);
-    const seedFull = fullScenes.find((s) => s.id === seedSceneMeta.id) || seedSceneMeta;
-    const candidatesWithSimilarity = topCandidates.map((item) => {
-      const full = fullScenes.find((s) => s.id === item.scene.id);
-      if (!full)
-        return { ...item, similarity: 0 };
-      const similarity = calculateSceneSimilarity(seedFull, full);
-      const similarityPenalty = Math.max(config.maxSimilarityPenalty, 1 - similarity * config.similarityPenalty);
-      return {
-        ...item,
-        weight: item.weight * similarityPenalty,
-        similarity
-      };
-    });
-    const opponentWeights = candidatesWithSimilarity.map((c) => c.weight);
-    const opponentItem = weightedRandomSelect(candidatesWithSimilarity, opponentWeights);
-    const opponentSceneMeta = opponentItem ? opponentItem.scene : candidatesWithSimilarity[0].scene;
-    const seedScene = fullScenes.find((s) => s.id === seedSceneMeta.id) || seedSceneMeta;
-    const opponentScene = fullScenes.find((s) => s.id === opponentSceneMeta.id) || opponentSceneMeta;
-    trackSceneSelection(seedScene.id);
-    trackSceneSelection(opponentScene.id);
-    addToRecentlySelectedScenes(seedScene.id, config.recentCooldownSize);
-    addToRecentlySelectedScenes(opponentScene.id, config.recentCooldownSize);
-    return { items: [seedScene, opponentScene], ranks: [null, null] };
-  }
-  async function fetchSceneCount() {
-    const result = await graphqlQuery(`query { findScenes(filter: { per_page: 0 }) { count } }`);
-    return result.findScenes.count;
-  }
-  async function fetchGauntletPairScenes() {
-    const result = await graphqlQuery(`query FindScenesByRating($filter: FindFilterType) {
-    findScenes(filter: $filter) { scenes { ${SCENE_FRAGMENT} } }
-  }`, { filter: { per_page: -1, sort: "rating100", direction: "DESC" } });
-    const scenes = result.findScenes.scenes || [];
-    state.totalItemsCount = scenes.length;
-    if (scenes.length < 2)
-      return { items: await fetchRandomScenes(2), ranks: [null, null], isVictory: false };
-    return handleMatchmakingLogic(scenes, "scenes");
-  }
-  async function fetchChampionPairScenes() {
-    const result = await graphqlQuery(`query FindScenesByRating($filter: FindFilterType) {
-    findScenes(filter: $filter) { scenes { ${SCENE_FRAGMENT} } }
-  }`, { filter: { per_page: -1, sort: "rating100", direction: "DESC" } });
-    const scenes = result.findScenes.scenes || [];
-    state.totalItemsCount = scenes.length;
-    if (scenes.length < 2)
-      return { items: await fetchRandomScenes(2), ranks: [null, null] };
-    if (!state.gauntletChampion) {
-      const shuffled = [...scenes].sort(() => Math.random() - 0.5);
-      return { items: [shuffled[0], shuffled[1]], ranks: [null, null] };
-    }
-    return handleMatchmakingLogic(scenes, "scenes");
-  }
-  function canBattleByTier(tier1, tier2) {
-    const restrictedTiers = ["S-Tier", "A-Tier"];
-    if (restrictedTiers.includes(tier1) || restrictedTiers.includes(tier2)) {
-      const allowed = ["S-Tier", "A-Tier", "B-Tier"];
-      return allowed.includes(tier1) && allowed.includes(tier2);
-    }
-    return true;
-  }
-  function isPerformerRecentlySelected(performerId) {
-    if (!state.recentlySelectedPerformers) {
-      state.recentlySelectedPerformers = [];
-    }
-    return state.recentlySelectedPerformers.includes(performerId);
-  }
-  function isPerformerOnCooldown(performerId) {
-    if (!state.recentlySelectedPerformers) {
-      state.recentlySelectedPerformers = [];
-    }
-    return state.recentlySelectedPerformers.includes(performerId);
-  }
-  function addToRecentlySelected(performerId) {
-    if (!state.recentlySelectedPerformers) {
-      state.recentlySelectedPerformers = [];
-    }
-    state.recentlySelectedPerformers.push(performerId);
-    if (state.recentlySelectedPerformers.length > RECENT_PERFORMER_COOLDOWN) {
-      state.recentlySelectedPerformers.shift();
-    }
-  }
-  function isSceneRecentlySelected(sceneId) {
-    if (!state.recentlySelectedScenes) {
-      state.recentlySelectedScenes = [];
-    }
-    return state.recentlySelectedScenes.includes(sceneId);
-  }
-  function isSceneOnCooldown(sceneId) {
-    if (!state.recentlySelectedScenes) {
-      state.recentlySelectedScenes = [];
-    }
-    return state.recentlySelectedScenes.includes(sceneId);
-  }
-  function addToRecentlySelectedScenes(sceneId, maxSize = 200) {
-    if (!state.recentlySelectedScenes) {
-      state.recentlySelectedScenes = [];
-    }
-    state.recentlySelectedScenes.push(sceneId);
-    if (state.recentlySelectedScenes.length > maxSize) {
-      state.recentlySelectedScenes.shift();
-    }
-  }
-  function getSceneSessionPenalty(sceneId) {
-    if (!state.sessionSceneCounts) {
-      state.sessionSceneCounts = {};
-    }
-    const count = state.sessionSceneCounts[sceneId] || 0;
-    if (count > 2)
-      return 0.1;
-    if (count > 1)
-      return 0.3;
-    if (count > 0)
-      return 0.6;
-    return 1;
-  }
-  function trackSceneSelection(sceneId) {
-    if (!state.sessionSceneCounts) {
-      state.sessionSceneCounts = {};
-    }
-    state.sessionSceneCounts[sceneId] = (state.sessionSceneCounts[sceneId] || 0) + 1;
-    const keys = Object.keys(state.sessionSceneCounts);
-    if (keys.length > MAX_SESSION_SCENE_COUNTS) {
-      const sortedByCount = keys.sort((a, b) => state.sessionSceneCounts[a] - state.sessionSceneCounts[b]);
-      const toRemove = Math.ceil(keys.length * 0.2);
-      for (let i = 0; i < toRemove; i++) {
-        delete state.sessionSceneCounts[sortedByCount[i]];
-      }
-    }
-  }
-  function getTierFilteredPerformers(allPerformers, focusTier, tierPool) {
-    if (focusTier === "any")
-      return allPerformers;
-    if (focusTier === "newcomers") {
-      return allPerformers.filter((p) => {
-        const stats = parsePerformerEloData(p);
-        return stats.total_matches < 6;
-      });
-    }
-    return allPerformers.filter((p) => {
-      const tier = getRatingTier(p, tierPool);
-      return tier === focusTier;
-    });
-  }
-  function updateTierFocus(performers, tierPool) {
-    state.tierRotation.matchCount = (state.tierRotation.matchCount || 0) + 1;
-    const matchesUntilChange = 7 + Math.floor(Math.random() * 13);
-    if (state.tierRotation.sessionMatches >= matchesUntilChange) {
-      const tierMap = /* @__PURE__ */ new Map();
-      performers.forEach((p) => {
-        const tier = getRatingTier(p, tierPool);
-        if (!tierMap.has(tier)) {
-          tierMap.set(tier, []);
-        }
-        tierMap.get(tier).push(p);
-      });
-      const cycle = state.tierRotation.cycle;
-      const startIndex = (state.tierRotation.currentIndex + 1) % cycle.length;
-      let selectedTier = "any";
-      let examined = 0;
-      while (examined < cycle.length) {
-        const idx = (startIndex + examined) % cycle.length;
-        const tier = cycle[idx];
-        console.log(`[Ascension] Rotation examining tier: ${tier} (cycle index ${idx})`);
-        if (tier === "any") {
-          selectedTier = "any";
-          state.tierRotation.currentIndex = idx;
-          console.log(`[Ascension] Selected tier: ${selectedTier}`);
-          break;
-        }
-        let tierPerformers;
-        if (tier === "newcomers") {
-          tierPerformers = performers.filter((p) => {
-            const stats = parsePerformerEloData(p);
-            return stats.total_matches < 6;
-          });
-        } else {
-          tierPerformers = tierMap.get(tier) || [];
-        }
-        console.log(`[Ascension] Tier ${tier}: ${tierPerformers.length} performers`);
-        if (tierPerformers.length >= 20) {
-          const totalWeight = tierPerformers.reduce((sum, p) => sum + getRecencyWeight(p), 0);
-          const avgRecencyWeight = tierPerformers.length > 0 ? totalWeight / tierPerformers.length : 0;
-          console.log(`[Ascension] Tier ${tier}: avg recency weight: ${avgRecencyWeight.toFixed(2)}`);
-          if (avgRecencyWeight >= 0.8) {
-            selectedTier = tier;
-            state.tierRotation.currentIndex = idx;
-            console.log(`[Ascension] Selected tier: ${selectedTier}`);
-            break;
-          } else {
-            console.log(`[Ascension] Tier ${tier} rejected - avg recency weight ${avgRecencyWeight.toFixed(2)} < 0.80`);
-          }
-        } else {
-          console.log(`[Ascension] Tier ${tier} rejected - not enough performers (${tierPerformers.length} < 20)`);
-        }
-        examined++;
-      }
-      state.tierRotation.focusTier = selectedTier;
-      state.tierRotation.sessionMatches = 0;
-      state.tierRotation.lastSeen[selectedTier] = Date.now();
-    }
-    state.tierRotation.sessionMatches++;
-    return state.tierRotation.focusTier || "any";
-  }
-  function applyTemporaryWeightBoost(performers) {
-    console.log("[Ascension] Applying temporary weight boost to increase performer pool");
-    return performers.map((p) => {
-      const currentWeight = p.weight || 0;
-      const boostedWeight = Math.max(1, currentWeight + 2);
-      return {
-        ...p,
-        boosted: true,
-        originalWeight: currentWeight,
-        weight: boostedWeight
-      };
-    });
-  }
-  async function fetchSwissPairPerformers() {
-    if (!state.sampleCounter)
-      state.sampleCounter = 0;
-    state.sampleCounter++;
-    const shouldRefreshSample = state.sampleCounter > 50;
-    if (shouldRefreshSample) {
-      state.sampleCounter = 0;
-      console.log("[Ascension] Refreshing performer sample pool");
-    }
-    const performerFilter = getPerformerFilter(state.cachedUrlFilter, state.selectedGenders);
-    const countQuery = `query CountPerformers($performer_filter: PerformerFilterType) {
-    findPerformers(performer_filter: $performer_filter, filter: { per_page: 0 }) { count }
-  }`;
-    const countResult = await graphqlQuery(countQuery, { performer_filter: performerFilter });
-    const totalPerformers = countResult.findPerformers.count;
-    const query = `query FindPerformersByRating($performer_filter: PerformerFilterType, $filter: FindFilterType) {
-    findPerformers(performer_filter: $performer_filter, filter: $filter) {
-      performers { ${PERFORMER_FRAGMENT} }
-    }
-  }`;
-    const useRandomFetch = Math.random() < 0.05;
-    const effectiveSort = useRandomFetch ? "random" : "updated_at";
-    const effectiveDirection = useRandomFetch ? "DESC" : "ASC";
-    const result = await graphqlQuery(query, {
-      performer_filter: performerFilter,
-      filter: {
-        per_page: useRandomFetch ? 200 : 800,
-        sort: effectiveSort,
-        direction: effectiveDirection
-      }
-    });
-    const performers = result.findPerformers.performers || [];
-    state.totalItemsCount = totalPerformers;
-    if (shouldRefreshSample || !state.globalPerformerPool || state.globalPerformerPool.length === 0) {
-      try {
-        state.globalPerformerPool = await fetchGlobalPerformerRatings();
-        console.log(`[Ascension] Loaded global performer pool: ${state.globalPerformerPool.length} performers`);
-      } catch (e) {
-        console.warn("[Ascension] Failed to load global performer pool, falling back to local pool for tiers", e);
-        state.globalPerformerPool = performers;
-      }
-    }
-    const tierPool = state.globalPerformerPool && state.globalPerformerPool.length > 0 ? state.globalPerformerPool : performers;
-    const logMatch = (type, p1, p2, w1, w2, color) => {
-      const tierPool2 = state.globalPerformerPool && state.globalPerformerPool.length > 0 ? state.globalPerformerPool : performers;
-      const tier1 = getRatingTier(p1, tierPool2);
-      const tier2 = getRatingTier(p2, tierPool2);
-      const score1 = calculateBattleScore(p1);
-      const score2 = calculateBattleScore(p2);
-      const tierColor1 = getTierColor(tier1);
-      const tierColor2 = getTierColor(tier2);
-      console.log(
-        `%c[Ascension] ${type}: %c${p1.name || "???"} %c(ID: ${p1.id})%c (w:${w1.toFixed(2)}, %c${tier1} Asc.Score: ${score1.toFixed(2)}%c) %cvs %c${p2.name || "???"} %c(ID: ${p2.id})%c (w:${w2.toFixed(2)}, %c${tier2} Asc.Score: ${score2.toFixed(2)}%c)`,
-        "color: #1cb4d6; font-weight: bold;",
-        // [Ascension]
-        `color: ${color}; font-weight: bold;`,
-        // p1.name
-        "color: #1cb4d6;",
-        // (ID:
-        "color: #888;",
-        // )
-        "color: #888;",
-        // (w:
-        `color: ${tierColor1}; font-weight: bold;`,
-        // tier1 + score1
-        "color: #888;",
-        // )
-        "color: #888;",
-        // vs
-        `color: ${color}; font-weight: bold;`,
-        // p2.name
-        "color: #1cb4d6;",
-        // (ID:
-        "color: #888;",
-        // )
-        "color: #888;",
-        // (w:
-        `color: ${tierColor2}; font-weight: bold;`,
-        // tier2 + score2
-        "color: #888;"
-        // )
-      );
-    };
-    async function performWeightedSelection(sampledPerformers, targetFocusTier) {
-      const avgMatches = calculateAverageMatches(sampledPerformers);
-      let tierFilteredPerformers = sampledPerformers;
-      if (targetFocusTier === "custom") {
-        tierFilteredPerformers = sampledPerformers.filter((p) => performerMatchesSelectedTiers(p, tierPool));
-      } else if (targetFocusTier !== "any") {
-        tierFilteredPerformers = getTierFilteredPerformers(sampledPerformers, targetFocusTier, tierPool);
-      }
-      const weightMap = /* @__PURE__ */ new Map();
-      const eligiblePerformers = [];
-      const backupPerformers = [];
-      for (const p of tierFilteredPerformers) {
-        const cacheKey = `${p.id}-${p.last_match || "null"}`;
-        let weightData;
-        if (weightMap.has(cacheKey)) {
-          weightData = weightMap.get(cacheKey);
-        } else {
-          const stats2 = parsePerformerEloData(p);
-          const rawMatches = stats2.total_matches || 0;
-          const cappedMatches = Math.min(rawMatches, 10);
-          const baseWeight = Math.pow(getRecencyWeight(p), 3) + Math.random() * 0.01;
-          const lowMatchBoost = getLowMatchBoost({ ...p, total_matches: cappedMatches }, avgMatches);
-          const matchDistributionBoost = getMatchCountDistributionBoost(p, sampledPerformers);
-          const sessionMatchPenalty = getSessionMatchPenalty(p.id);
-          const finalWeight = baseWeight * lowMatchBoost * matchDistributionBoost * sessionMatchPenalty;
-          weightData = {
-            p,
-            weight: finalWeight,
-            rating: p.rating100 || 1,
-            matches: rawMatches,
-            cappedMatches
-          };
-          weightMap.set(cacheKey, weightData);
-        }
-        const stats = parsePerformerEloData(weightData.p);
-        if (targetFocusTier === "newcomers") {
-          if (weightData.matches < 6) {
-            if (!isPerformerOnCooldown(weightData.p.id) && !isPerformerRecentlySelected(weightData.p.id)) {
-              eligiblePerformers.push(weightData);
-            }
-          }
-          backupPerformers.push(weightData);
-        } else {
-          const isUnrated = stats.total_matches === 0;
-          const isHighWeight = weightData.weight > 1;
-          const isUndermatched = weightData.matches > 0 && weightData.matches < avgMatches * 0.2;
-          if (targetFocusTier === "any" || targetFocusTier === "custom") {
-            backupPerformers.push(weightData);
-          }
-          if (isUnrated || isHighWeight || isUndermatched) {
-            if (!isPerformerOnCooldown(weightData.p.id) && !isPerformerRecentlySelected(weightData.p.id)) {
-              eligiblePerformers.push(weightData);
-            }
-          }
-        }
-      }
-      if ((targetFocusTier === "any" || targetFocusTier === "custom") && eligiblePerformers.length < 2 && backupPerformers.length >= 2) {
-        const availablePerformers = backupPerformers.filter((item) => !isPerformerOnCooldown(item.p.id) && !isPerformerRecentlySelected(item.p.id)).sort((a, b) => b.weight - a.weight);
-        if (availablePerformers.length >= 2) {
-          eligiblePerformers.push(...availablePerformers.slice(0, Math.min(10, availablePerformers.length)));
-        }
-      }
-      if (targetFocusTier === "newcomers" && eligiblePerformers.length < 2 && backupPerformers.length >= 2) {
-        const availablePerformers = backupPerformers.filter((item) => item.matches < 6 && !isPerformerOnCooldown(item.p.id) && !isPerformerRecentlySelected(item.p.id)).sort((a, b) => b.weight - a.weight);
-        if (availablePerformers.length >= 2) {
-          eligiblePerformers.push(...availablePerformers.slice(0, Math.min(10, availablePerformers.length)));
-        }
-      }
-      eligiblePerformers.sort((a, b) => b.weight - a.weight);
-      if (eligiblePerformers.length < 2) {
-        console.log(`[Ascension] Not enough eligible performers (${eligiblePerformers.length}) in tier context '${targetFocusTier}' after weighting/filtering.`);
-        return null;
-      }
-      let seed;
-      const weights = eligiblePerformers.map((item) => item.weight);
-      const selected = weightedRandomSelect(eligiblePerformers, weights);
-      seed = selected || eligiblePerformers[0];
-      if (seed && seed.p) {
-        trackPerformerSelection(seed.p.id);
-        addToRecentlySelected(seed.p.id);
-      }
-      const tier1 = getRatingTier(seed.p, tierPool);
-      const percentileMap = buildPercentileMap(tierPool);
-      const seedPercentile = percentileMap.get(seed.p.id) ?? 50;
-      if (targetFocusTier === "custom") {
-        const selectedLetterTiers = state.selectedTiers.filter((t) => t !== "newcomers" && t !== "any");
-        const otherSelectedTiers = selectedLetterTiers.filter((t) => t !== tier1);
-        if (otherSelectedTiers.length > 0) {
-          const ratingWindow = getCustomTierRatingWindow();
-          let crossTierOpponents = eligiblePerformers.filter((item) => {
-            if (item.p.id === seed.p.id)
-              return false;
-            const itemTier = getRatingTier(item.p, tierPool);
-            if (!otherSelectedTiers.includes(itemTier))
-              return false;
-            if (!canBattleInSelectedTiers(tier1, itemTier))
-              return false;
-            if (isPerformerOnCooldown(item.p.id) || isPerformerRecentlySelected(item.p.id))
-              return false;
-            const ratingDiff = Math.abs(seed.rating - item.rating);
-            return ratingDiff <= ratingWindow;
-          });
-          if (crossTierOpponents.length < 3) {
-            const relaxedWindow = ratingWindow * 1.5;
-            crossTierOpponents = eligiblePerformers.filter((item) => {
-              if (item.p.id === seed.p.id)
-                return false;
-              const itemTier = getRatingTier(item.p, tierPool);
-              if (!otherSelectedTiers.includes(itemTier))
-                return false;
-              if (!canBattleInSelectedTiers(tier1, itemTier))
-                return false;
-              if (isPerformerOnCooldown(item.p.id) || isPerformerRecentlySelected(item.p.id))
-                return false;
-              const ratingDiff = Math.abs(seed.rating - item.rating);
-              return ratingDiff <= relaxedWindow;
-            });
-          }
-          if (crossTierOpponents.length > 0) {
-            const ctWeights = crossTierOpponents.map((candidate) => {
-              const itemTier = getRatingTier(candidate.p, tierPool);
-              return candidate.weight * getCrossTierWeightMultiplier(tier1, itemTier);
-            });
-            const crossTierOpponentItem = weightedRandomSelect(crossTierOpponents, ctWeights);
-            if (crossTierOpponentItem) {
-              logMatch(
-                "Custom Cross-Tier",
-                seed.p,
-                crossTierOpponentItem.p,
-                seed.weight,
-                crossTierOpponentItem.weight * getCrossTierWeightMultiplier(tier1, getRatingTier(crossTierOpponentItem.p, tierPool)),
-                "#E91E63"
-              );
-              const rank1 = getPerformerRankInList(seed.p, sampledPerformers);
-              const rank2 = getPerformerRankInList(crossTierOpponentItem.p, sampledPerformers);
-              return { items: [seed.p, crossTierOpponentItem.p], ranks: [rank1, rank2] };
-            }
-          }
-        }
-      }
-      if (targetFocusTier !== "custom" && shouldForceCrossTierMatch()) {
-        const crossTierCandidates = eligiblePerformers.filter(
-          (item) => item.p.id !== seed.p.id && (item.p.rating100 || 1) >= seed.rating + 20 && canBattleByTier(tier1, getRatingTier(item.p, tierPool)) && !isPerformerOnCooldown(item.p.id) && !isPerformerRecentlySelected(item.p.id)
-        );
-        if (crossTierCandidates.length >= 10) {
-          const crossTierWeights = crossTierCandidates.map((candidate) => candidate.weight);
-          const crossTierOpponentItem = weightedRandomSelect(crossTierCandidates, crossTierWeights);
-          if (crossTierOpponentItem) {
-            logMatch(
-              "CROSS-TIER",
-              seed.p,
-              crossTierOpponentItem.p,
-              seed.weight,
-              crossTierOpponentItem.weight,
-              "#E91E63"
-            );
-            const rank1 = getPerformerRankInList(seed.p, sampledPerformers);
-            const rank2 = getPerformerRankInList(crossTierOpponentItem.p, sampledPerformers);
-            return { items: [seed.p, crossTierOpponentItem.p], ranks: [rank1, rank2] };
-          }
-        }
-      }
-      const standardWindow = getTierPercentileWindow(tier1) * getSelectedTierWindowMultiplier();
-      const validOpponents = eligiblePerformers.filter((item) => {
-        if (item.p.id === seed.p.id)
-          return false;
-        const itemPercentile = percentileMap.get(item.p.id) ?? 50;
-        if (Math.abs(seedPercentile - itemPercentile) > standardWindow)
-          return false;
-        if (!canBattleInSelectedTiers(tier1, getRatingTier(item.p, tierPool)))
-          return false;
-        if (isPerformerOnCooldown(item.p.id) || isPerformerRecentlySelected(item.p.id))
-          return false;
-        return true;
-      });
-      if (validOpponents.length > 0) {
-        const weights_op = validOpponents.map((opponent) => opponent.weight);
-        const opponentItem = weightedRandomSelect(validOpponents, weights_op);
-        if (opponentItem) {
-          logMatch("Match", seed.p, opponentItem.p, seed.weight, opponentItem.weight, "#2196F3");
-          const rank1 = getPerformerRankInList(seed.p, sampledPerformers);
-          const rank2 = getPerformerRankInList(opponentItem.p, sampledPerformers);
-          return { items: [seed.p, opponentItem.p], ranks: [rank1, rank2] };
-        }
-      }
-      if (targetFocusTier === "any") {
-        const adjacentTiers = getAdjacentTiers(tier1);
-        const adjacentWindow = getTierPercentileWindow(tier1) * 1.25;
-        const adjacentOpponents = eligiblePerformers.filter((item) => {
-          if (item.p.id === seed.p.id)
-            return false;
-          const itemTier = getRatingTier(item.p, tierPool);
-          if (!adjacentTiers.includes(itemTier))
-            return false;
-          const itemPercentile = percentileMap.get(item.p.id) ?? 50;
-          if (Math.abs(seedPercentile - itemPercentile) > adjacentWindow)
-            return false;
-          if (!canBattleByTier(tier1, itemTier))
-            return false;
-          if (isPerformerOnCooldown(item.p.id) || isPerformerRecentlySelected(item.p.id))
-            return false;
-          return true;
-        });
-        if (adjacentOpponents.length > 0) {
-          const adjacentWeights = adjacentOpponents.map((opponent) => opponent.weight);
-          const opponentItem = weightedRandomSelect(adjacentOpponents, adjacentWeights);
-          if (opponentItem) {
-            logMatch("Adjacent-Tier", seed.p, opponentItem.p, seed.weight, opponentItem.weight, "#9C27B0");
-            const rank1 = getPerformerRankInList(seed.p, sampledPerformers);
-            const rank2 = getPerformerRankInList(opponentItem.p, sampledPerformers);
-            return { items: [seed.p, opponentItem.p], ranks: [rank1, rank2] };
-          }
-        }
-      }
-      const looseWindow = getTierPercentileWindow(tier1) * 1.5 * getSelectedTierWindowMultiplier();
-      const looseRangeOpponents = eligiblePerformers.filter(
-        (item) => item.p.id !== seed.p.id && Math.abs(seedPercentile - (percentileMap.get(item.p.id) ?? 50)) <= looseWindow && !isPerformerOnCooldown(item.p.id) && !isPerformerRecentlySelected(item.p.id) && canBattleInSelectedTiers(tier1, getRatingTier(item.p, tierPool))
-      );
-      if (looseRangeOpponents.length > 0) {
-        const looseWeights = looseRangeOpponents.map((opponent) => opponent.weight);
-        const opponentItem = weightedRandomSelect(looseRangeOpponents, looseWeights);
-        if (opponentItem) {
-          logMatch("Loose Match", seed.p, opponentItem.p, seed.weight, opponentItem.weight, "#FF9800");
-          const rank1 = getPerformerRankInList(seed.p, sampledPerformers);
-          const rank2 = getPerformerRankInList(opponentItem.p, sampledPerformers);
-          return { items: [seed.p, opponentItem.p], ranks: [rank1, rank2] };
-        }
-      }
-      const fallbackOpponents = eligiblePerformers.filter(
-        (item) => item.p.id !== seed.p.id && !isPerformerOnCooldown(item.p.id) && !isPerformerRecentlySelected(item.p.id) && canBattleInSelectedTiers(tier1, getRatingTier(item.p, tierPool))
-      );
-      if (fallbackOpponents.length > 0) {
-        const fallbackWeights = fallbackOpponents.map((opponent) => opponent.weight);
-        const fallbackItem = weightedRandomSelect(fallbackOpponents, fallbackWeights);
-        if (fallbackItem && fallbackItem.p.id !== seed.p.id) {
-          logMatch("FALLBACK-DIFF", seed.p, fallbackItem.p, seed.weight, fallbackItem.weight, "#F44336");
-          const rank1 = getPerformerRankInList(seed.p, sampledPerformers);
-          const rank2 = getPerformerRankInList(fallbackItem.p, sampledPerformers);
-          return { items: [seed.p, fallbackItem.p], ranks: [rank1, rank2] };
-        }
-      }
-      console.warn(`[Ascension] Found eligible performers for tier context '${targetFocusTier}' but failed to pair them.`);
-      return null;
-    }
-    const customTierMode = isCustomTierMode();
-    let initialFocusTier;
-    let tierColor;
-    if (customTierMode) {
-      initialFocusTier = "custom";
-      tierColor = "#00ff00";
-      console.log(
-        `%c[Ascension] Tier Filter active: ${state.selectedTiers.join(", ")}`,
-        "color: #00ff00; font-weight: bold;"
-      );
-    } else {
-      initialFocusTier = updateTierFocus(performers, tierPool);
-      tierColor = initialFocusTier === "newcomers" || initialFocusTier === "any" ? "#00ff00" : getTierColor(initialFocusTier);
-      console.log(
-        `%c[Ascension] Tier Selection: ${initialFocusTier}`,
-        `color: ${tierColor}; font-weight: bold;`
-      );
-    }
-    let pairingResult = await performWeightedSelection(performers, initialFocusTier);
-    if (!pairingResult && initialFocusTier !== "any") {
-      console.warn(`[Ascension] Failed to create match with ${customTierMode ? "tier filter" : "tier focus"} '${customTierMode ? state.selectedTiers.join(", ") : initialFocusTier}'. Attempting fallback to 'any' tier.`);
-      pairingResult = await performWeightedSelection(performers, "any");
-      if (pairingResult) {
-        console.log(`[Ascension] Successfully created match using 'any' tier fallback.`);
-      }
-    }
-    if (!pairingResult) {
-      console.warn(`[Ascension] Failed to create match even with 'any' tier fallback. Applying temporary weight boost.`);
-      const boostedPerformers = applyTemporaryWeightBoost(performers);
-      const boostedPairingResult = await performWeightedSelection(boostedPerformers, "any");
-      if (boostedPairingResult) {
-        console.log("[Ascension] Successfully created match using temporary weight boost.");
-        return boostedPairingResult;
-      }
-      console.warn("[Ascension] Temporary weight boost failed. Using basic random fallback.");
-      return { items: await fetchRandomPerformers(2), ranks: [null, null] };
-    }
-    return pairingResult;
-  }
-  function getMatchCountDistributionBoost(performer, allPerformers) {
-    const stats = parsePerformerEloData(performer);
-    const targetMatches = stats.total_matches || 0;
-    let fewerCount = 0;
-    const totalPerformers = allPerformers.length;
-    for (const p of allPerformers) {
-      const s = parsePerformerEloData(p);
-      const matches = s.total_matches || 0;
-      if (matches < targetMatches) {
-        fewerCount++;
-      }
-    }
-    const percentile = fewerCount / totalPerformers * 100;
-    if (percentile < 10)
-      return 1.5;
-    else if (percentile < 25)
-      return 1.3;
-    else if (percentile < 50)
-      return 1.1;
-    else if (percentile > 90)
-      return 0.7;
-    return 1;
-  }
-  function getSessionMatchPenalty(performerId) {
-    if (!state.sessionMatchCounts) {
-      state.sessionMatchCounts = {};
-    }
-    const sessionCount = state.sessionMatchCounts[performerId] || 0;
-    if (sessionCount > 2)
-      return 0.1;
-    if (sessionCount > 1)
-      return 0.3;
-    if (sessionCount > 0)
-      return 0.6;
-    return 1;
-  }
-  function trackPerformerSelection(performerId) {
-    if (!state.sessionMatchCounts) {
-      state.sessionMatchCounts = {};
-    }
-    state.sessionMatchCounts[performerId] = (state.sessionMatchCounts[performerId] || 0) + 1;
-    const keys = Object.keys(state.sessionMatchCounts);
-    if (keys.length > MAX_SESSION_MATCH_COUNTS) {
-      const sortedByCount = keys.sort((a, b) => state.sessionMatchCounts[a] - state.sessionMatchCounts[b]);
-      const toRemove = Math.ceil(keys.length * 0.2);
-      for (let i = 0; i < toRemove; i++) {
-        delete state.sessionMatchCounts[sortedByCount[i]];
-      }
-    }
-  }
-  function getPerformerRankInList(performer, allPerformers) {
-    if (!performer || performer.rating100 === null || performer.rating100 === 1)
-      return null;
-    const targetRating = performer.rating100 || 0;
-    let rank = 1;
-    for (const p of allPerformers) {
-      if (p.id !== performer.id && p.rating100 !== null && p.rating100 > 1 && (p.rating100 || 0) > targetRating) {
-        rank++;
-      }
-    }
-    return rank;
-  }
-  function buildPercentileMap(allPerformers) {
-    if (!Array.isArray(allPerformers) || allPerformers.length === 0)
-      return /* @__PURE__ */ new Map();
-    const scored = allPerformers.map((p) => ({ p, score: calculateBattleScore(p) }));
-    scored.sort((a, b) => b.score - a.score);
-    const total = scored.length;
-    const map = /* @__PURE__ */ new Map();
-    scored.forEach((item, index) => {
-      map.set(item.p.id, index / total * 100);
-    });
-    return map;
-  }
-  async function fetchGauntletPairPerformers() {
-    const gender = state.gauntletChampion?.gender || state.selectedGenders[0];
-    const performerFilter = getPerformerFilter(state.cachedUrlFilter, [gender]);
-    const result = await graphqlQuery(`query FindPerformersByRating($performer_filter: PerformerFilterType, $filter: FindFilterType) {
-    findPerformers(performer_filter: $performer_filter, filter: $filter) { count, performers { ${PERFORMER_FRAGMENT} } }
-  }`, { performer_filter: performerFilter, filter: { per_page: -1, sort: "rating", direction: "DESC" } });
-    const performers = result.findPerformers.performers || [];
-    state.totalItemsCount = performers.length;
-    if (!state.globalPerformerPool || state.globalPerformerPool.length === 0) {
-      try {
-        state.globalPerformerPool = await fetchGlobalPerformerRatings();
-        console.log(`[Ascension] Loaded global performer pool: ${state.globalPerformerPool.length} performers`);
-      } catch (e) {
-        console.warn("[Ascension] Failed to load global performer pool, falling back to local pool for tiers", e);
-        state.globalPerformerPool = performers;
-      }
-    }
-    if (performers.length < 2)
-      return { items: await fetchRandomPerformers(2), ranks: [null, null], isVictory: false };
-    return handleMatchmakingLogic(performers, "performers");
-  }
-  async function fetchChampionPairPerformers() {
-    const performerFilter = getPerformerFilter(state.cachedUrlFilter, state.selectedGenders);
-    const result = await graphqlQuery(`query FindPerformersByRating($performer_filter: PerformerFilterType, $filter: FindFilterType) {
-    findPerformers(performer_filter: $performer_filter, filter: $filter) { performers { ${PERFORMER_FRAGMENT} } }
-  }`, { performer_filter: performerFilter, filter: { per_page: -1, sort: "rating", direction: "DESC" } });
-    const performers = result.findPerformers.performers || [];
-    state.totalItemsCount = performers.length;
-    if (!state.globalPerformerPool || state.globalPerformerPool.length === 0) {
-      try {
-        state.globalPerformerPool = await fetchGlobalPerformerRatings();
-        console.log(`[Ascension] Loaded global performer pool: ${state.globalPerformerPool.length} performers`);
-      } catch (e) {
-        console.warn("[Ascension] Failed to load global performer pool, falling back to local pool for tiers", e);
-        state.globalPerformerPool = performers;
-      }
-    }
-    if (performers.length < 2)
-      return { items: await fetchRandomPerformers(2), ranks: [null, null] };
-    if (!state.gauntletChampion) {
-      const shuffled = [...performers].sort(() => Math.random() - 0.5);
-      return { items: [shuffled[0], shuffled[1]], ranks: [null, null] };
-    }
-    return handleMatchmakingLogic(performers, "performers");
-  }
-  function handleMatchmakingLogic(list, type) {
-    if (!state.totalItemsCount || state.totalItemsCount !== list.length) {
-      state.totalItemsCount = list.length;
-    }
-    if (state.gauntletChampion) {
-      const freshChampion = list.find((i) => i.id === state.gauntletChampion.id);
-      if (freshChampion)
-        state.gauntletChampion = freshChampion;
-    }
-    if (state.gauntletFallingItem) {
-      const freshFalling = list.find((i) => i.id === state.gauntletFallingItem.id);
-      if (freshFalling)
-        state.gauntletFallingItem = freshFalling;
-    }
-    if (!state.gauntletChampion) {
-      console.warn("[Ascension] No champion selected, picking a random starter.");
-      const randomStarter = list[Math.floor(Math.random() * list.length)];
-      const starterRating = randomStarter.rating100 || 1;
-      const isStarterUnrated = starterRating <= 1;
-      let candidate = list.find((i) => {
-        const candidateRating = i.rating100 || 1;
-        const isCandidateUnrated = candidateRating <= 1;
-        if (isStarterUnrated && isCandidateUnrated)
-          return false;
-        return i.id !== randomStarter.id;
-      });
-      if (state.seenPairs && state.seenPairs.size > 0) {
-        const candidates = list.filter((i) => {
-          const candidateRating = i.rating100 || 1;
-          const isCandidateUnrated = candidateRating <= 1;
-          if (isStarterUnrated && isCandidateUnrated)
-            return false;
-          return i.id !== randomStarter.id && !hasBeenRecentlyPaired(randomStarter.id, i.id);
-        });
-        if (candidates.length > 0) {
-          candidate = candidates[Math.floor(Math.random() * candidates.length)];
-        }
-      }
-      if (!candidate) {
-        candidate = list.find((i) => i.id !== randomStarter.id);
-      }
-      return {
-        items: [randomStarter, candidate],
-        ranks: [null, null],
-        isVictory: false
-      };
-    }
-    if (state.currentMode === "gauntlet" && state.gauntletFalling && state.gauntletFallingItem) {
-      const fallingItem = state.gauntletFallingItem;
-      const fallingRating = fallingItem.rating100 || 1;
-      const isFallingUnrated = fallingRating <= 1;
-      let potentialOpponents2 = list.filter((item) => {
-        const itemRating = item.rating100 || 1;
-        const isItemUnrated = itemRating <= 1;
-        if (isFallingUnrated && isItemUnrated)
-          return false;
-        return item.id !== fallingItem.id && itemRating < fallingRating && !state.gauntletDefeated.includes(item.id) && !state.skippedIds.includes(item.id) && !hasBeenRecentlyPaired(fallingItem.id, item.id);
-      });
-      potentialOpponents2.sort((a, b) => (b.rating100 || 1) - (a.rating100 || 1));
-      if (potentialOpponents2.length === 0) {
-        const lowestRank = list.length;
-        return {
-          items: [fallingItem],
-          placementRank: lowestRank,
-          placementRating: fallingItem.rating100 || 1,
-          isPlacement: true
-        };
-      }
-      const nextOpponent2 = potentialOpponents2[0];
-      trackSeenPair(fallingItem.id, nextOpponent2.id);
-      const fallingRank = list.findIndex((i) => i.id === fallingItem.id) + 1;
-      const opponentRank = list.findIndex((i) => i.id === nextOpponent2.id) + 1;
-      return {
-        items: [fallingItem, nextOpponent2],
-        ranks: [fallingRank, opponentRank],
-        isVictory: false
-      };
-    }
-    const champIdx = list.findIndex((i) => i.id === state.gauntletChampion.id);
-    let potentialOpponents = list.filter(
-      (item, idx) => idx < champIdx && !state.gauntletDefeated.includes(item.id) && !state.skippedIds.includes(item.id) && !hasBeenRecentlyPaired(state.gauntletChampion.id, item.id)
-    );
-    if (potentialOpponents.length === 0) {
-      if (state.skippedIds.length > 0) {
-        state.skippedIds = [];
-        potentialOpponents = list.filter(
-          (item, idx) => idx < champIdx && !state.gauntletDefeated.includes(item.id) && !hasBeenRecentlyPaired(state.gauntletChampion.id, item.id)
-        );
-      }
-      if (state.currentMode === "champion" && potentialOpponents.length === 0) {
-        state.gauntletDefeated = [];
-        const belowOpponents = list.filter(
-          (item, idx) => idx > champIdx && item.id !== state.gauntletChampion.id && !state.skippedIds.includes(item.id) && !hasBeenRecentlyPaired(state.gauntletChampion.id, item.id)
-        );
-        if (belowOpponents.length > 0) {
-          const proximityWindow2 = Math.min(5, belowOpponents.length);
-          let filteredOpponents2 = belowOpponents.slice(0, proximityWindow2).filter(
-            (opponent) => !hasBeenRecentlyPaired(state.gauntletChampion.id, opponent.id)
-          );
-          if (filteredOpponents2.length === 0) {
-            filteredOpponents2 = belowOpponents.slice(0, proximityWindow2);
-          }
-          const randomIdx2 = Math.floor(Math.random() * filteredOpponents2.length);
-          const nextOpponent2 = filteredOpponents2[randomIdx2];
-          trackSeenPair(state.gauntletChampion.id, nextOpponent2.id);
-          capSkippedIds();
-          return {
-            items: [state.gauntletChampion, nextOpponent2],
-            ranks: [champIdx + 1, list.indexOf(nextOpponent2) + 1],
-            isVictory: false
-          };
-        }
-        const fallback = list.find((i) => i.id !== state.gauntletChampion.id);
-        if (fallback) {
-          return {
-            items: [state.gauntletChampion, fallback],
-            ranks: [champIdx + 1, list.indexOf(fallback) + 1],
-            isVictory: false
-          };
-        }
-      }
-      return { items: [state.gauntletChampion], ranks: [1], isVictory: true };
-    }
-    const proximityWindow = Math.min(5, potentialOpponents.length);
-    let filteredOpponents = potentialOpponents.slice(-proximityWindow).filter(
-      (opponent) => !hasBeenRecentlyPaired(state.gauntletChampion.id, opponent.id)
-    );
-    if (filteredOpponents.length === 0) {
-      filteredOpponents = potentialOpponents.slice(-proximityWindow);
-    }
-    const randomIdx = Math.floor(Math.random() * filteredOpponents.length);
-    const nextOpponent = filteredOpponents[randomIdx];
-    trackSeenPair(state.gauntletChampion.id, nextOpponent.id);
-    capSkippedIds();
-    return {
-      items: [state.gauntletChampion, nextOpponent],
-      ranks: [champIdx + 1, list.indexOf(nextOpponent) + 1],
-      isVictory: false
-    };
-  }
-  function trackSeenPair(id1, id2) {
-    if (!state.seenPairs) {
-      state.seenPairs = /* @__PURE__ */ new Set();
-    }
-    const pairKey = [id1, id2].sort().join("-");
-    state.seenPairs.add(pairKey);
-    while (state.seenPairs.size > MAX_SEEN_PAIRS) {
-      const [first] = state.seenPairs;
-      state.seenPairs.delete(first);
-    }
-  }
-  function capSkippedIds() {
-    if (!state.skippedIds) {
-      state.skippedIds = [];
-    }
-    while (state.skippedIds.length > MAX_SKIPPED_IDS) {
-      state.skippedIds.shift();
-    }
-  }
-  function hasBeenRecentlyPaired(id1, id2) {
-    if (!state.seenPairs)
-      return false;
-    const pairKey = [id1, id2].sort().join("-");
-    return state.seenPairs.has(pairKey);
-  }
-  var MAX_SEEN_PAIRS, MAX_SKIPPED_IDS, MAX_SESSION_MATCH_COUNTS, MAX_SESSION_SCENE_COUNTS, TIER_ORDER, RECENT_PERFORMER_COOLDOWN;
-  var init_battle_engine = __esm({
-    "battle-engine.js"() {
-      init_api_client();
-      init_math_utils();
-      init_parsers();
-      init_state();
-      init_ui_manager();
-      init_gauntlet_selection();
-      init_match_handler();
-      init_ui_swipe();
-      init_rating_utils();
-      MAX_SEEN_PAIRS = 500;
-      MAX_SKIPPED_IDS = 100;
-      MAX_SESSION_MATCH_COUNTS = 500;
-      MAX_SESSION_SCENE_COUNTS = 1e3;
-      TIER_ORDER = ["S-Tier", "A-Tier", "B-Tier", "C-Tier", "D-Tier", "F-Tier"];
-      RECENT_PERFORMER_COOLDOWN = 50;
     }
   });
 
@@ -6724,838 +4564,27 @@ Match Stats:`;
     }
   });
 
-  // ui-dashboard.js
-  var ui_dashboard_exports = {};
-  __export(ui_dashboard_exports, {
-    attachEventListeners: () => attachEventListeners,
-    createMainUI: () => createMainUI,
-    handleGenderToggle: () => handleGenderToggle,
-    setMode: () => setMode,
-    updateSkipButtonVisibility: () => updateSkipButtonVisibility
-  });
-  function createSkeletonHTML(count, extraClass = "") {
-    const cards = Array.from({ length: count }, () => `
-    <div class="hon-skeleton-card">
-      <div class="hon-skeleton-img"></div>
-      <div class="hon-skeleton-text"></div>
-      <div class="hon-skeleton-text short"></div>
-    </div>
-  `).join("");
-    return `<div class="hon-skeleton-grid ${extraClass}">${cards}</div>`;
-  }
-  function createMainUI() {
-    const isPerformers = state.battleType === "performers";
-    const genderFilterHTML = isPerformers ? `
-    <div class="hon-gender-filter">
-      <div class="hon-gender-btns">
-        ${ALL_GENDERS.map((g) => `
-          <button
-            class="hon-gender-btn ${state.selectedGenders.includes(g.value) ? "active" : ""}"
-            data-gender="${g.value}"
-          >
-            ${g.label}
-          </button>`).join("")}
-      </div>
-    </div>` : "";
-    return `
-    <div id="hotornot-container" class="hon-container">
-      <div class="hon-header">
-        <h1 class="hon-title">Ascension</h1>
-
-        ${genderFilterHTML}
-        ${isPerformers ? `<button id="hon-stats-btn" class="btn btn-primary">\u{1F4CA} View All Stats</button>` : ""}
-      </div>
-      <div id="hon-performer-selection" style="display: none;">
-        <div id="hon-performer-list">${createSkeletonHTML(6)}</div>
-      </div>
-      <div class="hon-content">
-        <div id="hon-comparison-area">${createSkeletonHTML(2, "hon-comparison-skeleton")}</div>
-        <div class="hon-actions">
-          <div class="hon-action-buttons">
-            <button id="hon-skip-btn" class="hon-action-btn" title="Skip">\u23ED\uFE0F</button>
-            <button id="hon-undo-btn" class="hon-action-btn" title="">\u21A9</button>
-          </div>
-        </div>
-        <div class="hon-keyboard-hints">
-          <span class="hon-hint"><strong>\u2B05\uFE0F</strong> Choose Left</span>
-          <span class="hon-hint"><strong>\u27A1\uFE0F</strong> Choose Right</span>
-          <span class="hon-hint"><strong>Space</strong> to Skip</span>
-          <span class="hon-hint"><strong>Ctrl+Z</strong> to Undo</span>
-          <span class="hon-hint"><strong>ESC</strong> to Exit</span>
-        </div>
-      </div>
-    </div>`;
-  }
-  function updateSkipButtonVisibility() {
-    const skipBtn = document.getElementById("hon-skip-btn");
-    if (!skipBtn)
-      return;
-    const isSkippableMode = state.currentMode === "swiss" || state.currentMode === "scenes" || state.currentMode === "gauntlet" || state.currentMode === "champion";
-    skipBtn.style.display = isSkippableMode ? "inline-block" : "none";
-  }
-  function attachEventListeners(parent = document) {
-    if (!attachedElements.has(parent)) {
-      attachedElements.set(parent, /* @__PURE__ */ new Set());
-    }
-    const attachedSet = attachedElements.get(parent);
-    const statsBtn = parent.querySelector("#hon-stats-btn");
-    if (statsBtn && !attachedSet.has("statsBtn")) {
-      const handler = () => {
-        Promise.resolve().then(() => (init_ui_stats(), ui_stats_exports)).then((m) => m.openStatsModal());
-      };
-      statsBtn.addEventListener("click", handler);
-      attachedSet.add("statsBtn");
-    }
-    const performerLinks = parent.querySelectorAll(".hon-performer-link, .hon-gauntlet-select-img");
-    performerLinks.forEach((link, index) => {
-      const key = `link-${index}`;
-      if (!attachedSet.has(key)) {
-        const handler = (e) => e.stopPropagation();
-        link.addEventListener("click", handler);
-        attachedSet.add(key);
-      }
-    });
-    const skipBtn = parent.querySelector("#hon-skip-btn");
-    if (skipBtn && !attachedSet.has("skipBtn")) {
-      updateSkipButtonVisibility();
-      const handler = async (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const isSkippableMode = state.currentMode === "swiss" || state.currentMode === "scenes" || state.currentMode === "gauntlet" || state.currentMode === "champion";
-        if (isSkippableMode) {
-          const { handleSkip: handleSkip2 } = await Promise.resolve().then(() => (init_match_handler(), match_handler_exports));
-          handleSkip2();
-        }
-      };
-      skipBtn.addEventListener("click", handler);
-      attachedSet.add("skipBtn");
-    }
-    const undoBtn = parent.querySelector("#hon-undo-btn");
-    if (undoBtn && !attachedSet.has("undoBtn")) {
-      const handler = () => handleUndo();
-      undoBtn.onclick = handler;
-      undoBtn.style.display = state.matchHistory && state.matchHistory.length > 0 ? "inline-block" : "none";
-      attachedSet.add("undoBtn");
-    }
-    const genderButtons = parent.querySelectorAll(".hon-gender-btn");
-    genderButtons.forEach((btn, index) => {
-      const key = `gender-${index}`;
-      if (!attachedSet.has(key)) {
-        const handler = () => handleGenderToggle(btn.dataset.gender);
-        btn.addEventListener("click", handler);
-        attachedSet.add(key);
-      }
-    });
-    const modeButtons = parent.querySelectorAll(".hon-mode-btn");
-    modeButtons.forEach((btn, index) => {
-      const key = `mode-${index}`;
-      if (!attachedSet.has(key)) {
-        const handler = async () => {
-          const rawMode = btn.dataset.mode;
-          const newMode = rawMode === "placement" ? "gauntlet" : rawMode;
-          if (newMode === "gauntlet" || newMode === "champion") {
-            resetBattleState();
-          }
-          state.currentMode = newMode;
-          modeButtons.forEach((button) => {
-            const buttonRawMode = button.dataset.mode;
-            const buttonNormalizedMode = buttonRawMode === "placement" ? "gauntlet" : buttonRawMode;
-            button.classList.toggle("active", buttonNormalizedMode === newMode);
-          });
-          const modal = document.getElementById("hon-modal");
-          if (modal) {
-            modal.classList.remove("hon-mode-champion", "hon-mode-swiss", "hon-mode-gauntlet", "hon-mode-placement");
-            modal.classList.add(`hon-mode-${rawMode}`);
-          }
-          const selectionContainer = document.getElementById("hon-performer-selection");
-          const comparisonArea = document.getElementById("hon-comparison-area");
-          const actionsEl = document.querySelector(".hon-actions");
-          if (newMode === "swiss") {
-            if (selectionContainer)
-              selectionContainer.style.display = "none";
-            if (comparisonArea)
-              comparisonArea.style.display = "";
-            if (actionsEl)
-              actionsEl.style.display = "";
-            loadNewPair();
-          } else if (newMode === "gauntlet" || newMode === "champion") {
-            if (selectionContainer)
-              selectionContainer.style.display = "block";
-            if (comparisonArea)
-              comparisonArea.style.display = "none";
-            if (actionsEl)
-              actionsEl.style.display = "none";
-            Promise.resolve().then(() => (init_gauntlet_selection(), gauntlet_selection_exports)).then((m) => m.loadPerformerSelection());
-          }
-          updateSkipButtonVisibility();
-        };
-        btn.addEventListener("click", handler);
-        attachedSet.add(key);
-      }
-    });
-  }
-  function handleGenderToggle(gender) {
-    const isSelected = state.selectedGenders.includes(gender);
-    if (isSelected) {
-      state.selectedGenders = state.selectedGenders.filter((g) => g !== gender);
-    } else {
-      state.selectedGenders.push(gender);
-    }
-    try {
-      localStorage.setItem("hotornot_selected_genders", JSON.stringify(state.selectedGenders));
-    } catch (e) {
-      console.warn("[Ascension] Could not save gender selection to localStorage:", e);
-    }
-    console.log(`[Ascension] Gender Filter Updated: ${state.selectedGenders.join(", ")}`);
-    const genderBtns = document.querySelectorAll(`.hon-gender-btn[data-gender="${gender}"]`);
-    genderBtns.forEach((btn) => {
-      btn.classList.toggle("active", !isSelected);
-    });
-    loadNewPair();
-  }
-  function setMode(mode) {
-    const rawMode = mode;
-    const normalizedMode = rawMode === "placement" ? "gauntlet" : rawMode;
-    if (normalizedMode === "gauntlet" || normalizedMode === "champion") {
-      resetBattleState();
-    }
-    state.currentMode = normalizedMode;
-    const selEl = document.getElementById("hon-performer-selection");
-    const compEl = document.getElementById("hon-comparison-area");
-    if (selEl)
-      selEl.style.display = "none";
-    if (compEl)
-      compEl.style.display = "none";
-    const modal = document.getElementById("hon-modal");
-    if (modal) {
-      modal.classList.remove("hon-mode-champion", "hon-mode-swiss", "hon-mode-gauntlet", "hon-mode-placement");
-      modal.classList.add(`hon-mode-${rawMode}`);
-    }
-    if (normalizedMode === "gauntlet" || normalizedMode === "champion") {
-      Promise.resolve().then(() => (init_gauntlet_selection(), gauntlet_selection_exports)).then((m) => m.loadPerformerSelection());
-    }
-    updateSkipButtonVisibility();
-  }
-  var attachedElements;
-  var init_ui_dashboard = __esm({
-    "ui-dashboard.js"() {
-      init_state();
-      init_dom_utils();
-      init_constants();
-      init_battle_engine();
-      init_match_handler();
-      attachedElements = /* @__PURE__ */ new WeakMap();
-    }
-  });
-
-  // ui-event-log.js
-  function initEventLog() {
-    console.log = function(...args) {
-      originalConsoleLog.apply(console, args);
-      captureLogEntry("log", args);
-    };
-    console.warn = function(...args) {
-      originalConsoleWarn.apply(console, args);
-      captureLogEntry("warn", args);
-    };
-    console.error = function(...args) {
-      originalConsoleError.apply(console, args);
-      captureLogEntry("error", args);
-    };
-    createEventLogUI();
-  }
-  function captureLogEntry(level, args) {
-    const fullMessage = args.map((arg) => {
-      if (typeof arg === "object" && arg !== null) {
-        try {
-          return JSON.stringify(arg);
-        } catch (e) {
-          return String(arg);
-        }
-      }
-      return String(arg);
-    }).join(" ");
-    if (!fullMessage.includes("[Ascension]") && !fullMessage.includes("[HotOrNot]")) {
-      return;
-    }
-    let readableMessage = extractReadableContent(args);
-    if (/Effective ratings/i.test(readableMessage)) {
-      return;
-    }
-    readableMessage = readableMessage.replace(/\[\s*([\d.]+)\s*\]/g, "[$1]");
-    readableMessage = rewriteWithAscScore(readableMessage);
-    readableMessage = linkPerformerNames(readableMessage);
-    let tierInfo = null;
-    if (readableMessage.includes("Tier Selection:")) {
-      const tierMatch = readableMessage.match(/Tier Selection: ([\w\-]+)/);
-      if (tierMatch && tierMatch[1])
-        tierInfo = tierMatch[1];
-    }
-    let tierFilterTiers = null;
-    if (readableMessage.includes("Tier Filter active:")) {
-      const tierFilterMatch = readableMessage.match(/Tier Filter active: ([\w\-,\s]+)/);
-      if (tierFilterMatch && tierFilterMatch[1]) {
-        tierFilterTiers = tierFilterMatch[1].split(",").map((t) => t.trim()).filter(Boolean);
-      }
-    }
-    const entry = {
-      id: Date.now() + Math.random(),
-      timestamp: /* @__PURE__ */ new Date(),
-      level,
-      message: readableMessage,
-      formattedMessage: readableMessage,
-      tierInfo,
-      tierFilterTiers,
-      battleType: state.battleType
-    };
-    eventLogEntries.push(entry);
-    if (eventLogEntries.length > MAX_LOG_ENTRIES) {
-      eventLogEntries.splice(0, eventLogEntries.length - MAX_LOG_ENTRIES);
-    }
-    updateEventLogDisplay();
-  }
-  function saveEventLogState(updates) {
-    try {
-      const current = loadEventLogState();
-      localStorage.setItem(EVENT_LOG_STORAGE_KEY, JSON.stringify({ ...current, ...updates }));
-    } catch (e) {
-      console.warn("[Ascension] Failed to save event log state:", e);
-    }
-  }
-  function loadEventLogState() {
-    try {
-      const data = localStorage.getItem(EVENT_LOG_STORAGE_KEY);
-      return data ? JSON.parse(data) : {};
-    } catch (e) {
-      console.warn("[Ascension] Failed to load event log state:", e);
-      return {};
-    }
-  }
-  function extractReadableContent(args) {
-    let cleanParts = [];
-    for (let i = 0; i < args.length; i++) {
-      const arg = args[i];
-      if (arg === "%c" || typeof arg === "string" && (arg.startsWith("color:") || arg.startsWith("font-weight:") || arg.startsWith("background:"))) {
-        continue;
-      }
-      if (typeof arg === "object" && arg !== null) {
-        try {
-          cleanParts.push(JSON.stringify(arg));
-        } catch (e) {
-          cleanParts.push(String(arg));
-        }
-      } else {
-        cleanParts.push(String(arg));
-      }
-    }
-    return cleanParts.join(" ").replace(/%c/g, "").replace(/\s+/g, " ").trim();
-  }
-  function findPerformerByName(name) {
-    const pool = state.globalPerformerPool;
-    if (!pool || !name)
-      return null;
-    const trimmed = name.trim();
-    if (!trimmed)
-      return null;
-    let found = pool.find((p) => p.name?.trim() === trimmed);
-    if (found)
-      return found;
-    const lowerTrimmed = trimmed.toLowerCase();
-    found = pool.find((p) => p.name?.trim().toLowerCase() === lowerTrimmed);
-    if (found)
-      return found;
-    return pool.find((p) => p.name?.trim().toLowerCase().includes(lowerTrimmed)) || null;
-  }
-  function ascScoreWithTierMarker(performer) {
-    const score = calculateBattleScore(performer);
-    if (score == null || Number.isNaN(score))
-      return null;
-    const tier = getRatingTier(performer, state.globalPerformerPool);
-    const tierColor = getTierColor(tier);
-    return `${tier} Asc.Score: ${score.toFixed(2)} __HON_TIER_FMT__${tierColor}__`;
-  }
-  function rewriteWithAscScore(message) {
-    const isPerformerLine = /\[Ascension\]\s*(?:Match|CROSS-TIER|Custom Cross-Tier|Updating|Champion Selected):/i.test(message) || /\bvs\b/i.test(message);
-    if (!isPerformerLine)
-      return message;
-    if (/(?:Match|CROSS-TIER|Custom Cross-Tier):/i.test(message)) {
-      message = rewriteMatchLine(message);
-    }
-    return message;
-  }
-  function rewriteMatchLine(message) {
-    const pool = state.globalPerformerPool;
-    if (!pool || pool.length === 0)
-      return message;
-    return message.replace(
-      /(Match|CROSS-TIER|Custom Cross-Tier):\s*([^(]+?)\s*\(w:\s*([\d.]+)\)\s*\[([\d.]+)\]\s*vs\s*([^(]+?)\s*\(w:\s*([\d.]+)\)\s*\[([\d.]+)\]/gi,
-      (match, prefix, name1, w1, r1, name2, w2, r2) => {
-        const p1 = findPerformerByName(name1);
-        const p2 = findPerformerByName(name2);
-        const score1 = p1 ? ascScoreWithTierMarker(p1) : null;
-        const score2 = p2 ? ascScoreWithTierMarker(p2) : null;
-        const left = score1 ? `(w: ${w1}, ${score1})` : `(w: ${w1}) [${r1}]`;
-        const right = score2 ? `(w: ${w2}, ${score2})` : `(w: ${w2}) [${r2}]`;
-        return `${prefix}: ${name1} ${left} vs ${name2} ${right}`;
-      }
-    );
-  }
-  function linkPerformerNames(message) {
-    message = message.replace(
-      /(Updating:|Champion Selected:)\s+([^(]+?)\s*\(ID:\s*(\d+)\)/g,
-      (match, prefix, name, id) => {
-        return `${prefix} <a href="/performers/${id}" target="_blank" class="hon-log-performer-link">${name.trim()}</a> (ID: ${id})`;
-      }
-    );
-    message = message.replace(
-      /(Match|CROSS-TIER|Custom Cross-Tier):\s*([^(]+?)\s*\(ID:\s*(\d+)\)\s*\(w:/gi,
-      (match, prefix, name, id) => {
-        return `${prefix}: <a href="/performers/${id}" target="_blank" class="hon-log-performer-link">${name.trim()}</a> (ID: ${id}) (w:`;
-      }
-    );
-    message = message.replace(
-      /vs\s+([^(]+?)\s*\(ID:\s*(\d+)\)\s*\(w:/g,
-      (match, name, id) => {
-        return `vs <a href="/performers/${id}" target="_blank" class="hon-log-performer-link">${name.trim()}</a> (ID: ${id}) (w:`;
-      }
-    );
-    return message;
-  }
-  function createEventLogUI() {
-    if (document.getElementById("hon-event-log")) {
-      return;
-    }
-    const logContainer = document.createElement("div");
-    logContainer.id = "hon-event-log";
-    logContainer.className = "hon-event-log-container";
-    logContainer.innerHTML = `
-    <div class="hon-event-log-header">
-      <span class="hon-event-log-title">\u{1F4D1} Log</span>
-      <div class="hon-event-log-controls">
-        <button id="hon-event-log-export" class="hon-event-log-btn" title="Export Log">\u{1F4BE}</button>
-        <button id="hon-event-log-clear" class="hon-event-log-btn" title="Clear Log">\u{1F5D1}\uFE0F</button>
-        <button id="hon-event-log-toggle" class="hon-event-log-btn" title="Toggle Visibility">\u{1F441}\uFE0F</button>
-        <button id="hon-event-log-close" class="hon-event-log-btn" title="Close Log">\u2715</button>
-      </div>
-    </div>
-    <div class="hon-event-log-content" id="hon-event-log-content"></div>
-    <div class="hon-event-log-resize-handle-left" id="hon-event-log-resize-left" title="Resize left"></div>
-    <div class="hon-event-log-resize-handle" id="hon-event-log-resize" title="Resize height"></div>
-    <div class="hon-event-log-resize-handle-diagonal-left" id="hon-event-log-resize-diagonal-left" title="Resize left and height"></div>
-  `;
-    const savedState = loadEventLogState();
-    if (savedState.height)
-      logContainer.style.height = savedState.height;
-    if (savedState.width)
-      logContainer.style.width = savedState.width;
-    if (savedState.left) {
-      const parsedLeft = parseInt(savedState.left, 10);
-      if (!isNaN(parsedLeft) && parsedLeft >= -2e3) {
-        logContainer.style.left = savedState.left;
-      }
-    }
-    waitForModalAndInject(logContainer);
-  }
-  function waitForModalAndInject(logContainer) {
-    const checkInterval = setInterval(() => {
-      const pluginLayout = document.querySelector(".hon-plugin-layout");
-      if (pluginLayout) {
-        const isMobileView = window.innerWidth <= 768;
-        pluginLayout.appendChild(logContainer);
-        setupEventLogEventListeners();
-        if (!isMobileView) {
-          setupLayoutConstraints(pluginLayout, logContainer);
-        }
-        applySavedLogState(loadEventLogState());
-        updateEventLogDisplay();
-        clearInterval(checkInterval);
-      }
-    }, 100);
-    setTimeout(() => clearInterval(checkInterval), 5e3);
-  }
-  function applySavedLogState(savedState) {
-    const content = document.getElementById("hon-event-log-content");
-    const toggleBtn = document.getElementById("hon-event-log-toggle");
-    if (!content || !toggleBtn)
-      return;
-    if (savedState.closed) {
-      content.style.display = "none";
-      toggleBtn.textContent = "\u{1F441}\uFE0F";
-      toggleBtn.title = "Show Log";
-    } else {
-      content.style.display = "block";
-      toggleBtn.textContent = "\u{1F6AB}";
-      toggleBtn.title = "Hide Log";
-    }
-  }
-  function setupLayoutConstraints(pluginLayout, logContainer) {
-    if (layoutObserver) {
-      layoutObserver.disconnect();
-    }
-    layoutObserver = new ResizeObserver(() => {
-      constrainEventLogPosition(pluginLayout, logContainer);
-    });
-    layoutObserver.observe(pluginLayout);
-    constrainEventLogPosition(pluginLayout, logContainer);
-  }
-  function constrainEventLogPosition(pluginLayout, logContainer) {
-    if (!pluginLayout || !logContainer)
-      return;
-    const mainContent = pluginLayout.querySelector(".hon-main-plugin-content");
-    const defaultLeft = 10;
-    let currentLeft = parseInt(document.defaultView.getComputedStyle(logContainer).left, 10);
-    if (isNaN(currentLeft))
-      currentLeft = defaultLeft;
-    if (currentLeft < -3e3) {
-      logContainer.style.left = `${defaultLeft}px`;
-      currentLeft = defaultLeft;
-    }
-    if (mainContent) {
-      const layoutRect = pluginLayout.getBoundingClientRect();
-      const mainRect = mainContent.getBoundingClientRect();
-      const maxWidth2 = mainRect.left - layoutRect.left - currentLeft - 20;
-      logContainer.style.maxWidth = `${Math.max(200, maxWidth2)}px`;
-    } else {
-      logContainer.style.maxWidth = "none";
-    }
-    const currentWidth = parseInt(document.defaultView.getComputedStyle(logContainer).width, 10);
-    const maxWidth = parseInt(logContainer.style.maxWidth, 10);
-    if (!isNaN(currentWidth) && !isNaN(maxWidth) && currentWidth > maxWidth) {
-      logContainer.style.width = `${maxWidth}px`;
-    }
-  }
-  function setupEventLogEventListeners() {
-    const exportBtn = document.getElementById("hon-event-log-export");
-    const clearBtn = document.getElementById("hon-event-log-clear");
-    const toggleBtn = document.getElementById("hon-event-log-toggle");
-    const closeBtn = document.getElementById("hon-event-log-close");
-    const resizeHandle = document.getElementById("hon-event-log-resize");
-    const leftResizeHandle = document.getElementById("hon-event-log-resize-left");
-    const diagonalLeftResizeHandle = document.getElementById("hon-event-log-resize-diagonal-left");
-    if (exportBtn) {
-      exportBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        exportLogEntries();
-      });
-    }
-    if (clearBtn) {
-      clearBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        eventLogEntries = [];
-        updateEventLogDisplay();
-      });
-    }
-    if (toggleBtn) {
-      toggleBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const content = document.querySelector(".hon-event-log-content");
-        const isVisible = content.style.display !== "none";
-        content.style.display = isVisible ? "none" : "block";
-        toggleBtn.textContent = isVisible ? "\u{1F441}\uFE0F" : "\u{1F6AB}";
-        toggleBtn.title = isVisible ? "Show Log" : "Hide Log";
-        saveEventLogState({ closed: !isVisible });
-      });
-    }
-    if (closeBtn) {
-      closeBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const logContainer = document.getElementById("hon-event-log");
-        if (logContainer) {
-          logContainer.style.display = "none";
-        }
-      });
-    }
-    if (resizeHandle)
-      setupResizeHandler(resizeHandle, "vertical");
-    if (leftResizeHandle)
-      setupResizeHandler(leftResizeHandle, "left");
-    if (diagonalLeftResizeHandle)
-      setupResizeHandler(diagonalLeftResizeHandle, "diagonal-left");
-  }
-  function setupResizeHandler(resizeHandle, direction) {
-    let isResizing = false;
-    resizeHandle.addEventListener("mousedown", (e) => {
-      isResizing = true;
-      e.preventDefault();
-      e.stopPropagation();
-      const logContainer = document.getElementById("hon-event-log");
-      const startX = e.clientX;
-      const startY = e.clientY;
-      const startWidth = parseInt(document.defaultView.getComputedStyle(logContainer).width, 10);
-      const startHeight = parseInt(document.defaultView.getComputedStyle(logContainer).height, 10);
-      const startLeft = parseInt(document.defaultView.getComputedStyle(logContainer).left, 10);
-      const doDrag = (e2) => {
-        if (!isResizing)
-          return;
-        e2.preventDefault();
-        if (direction === "left" || direction === "diagonal-left") {
-          const deltaX = e2.clientX - startX;
-          let newWidth = startWidth - deltaX;
-          let newLeft = startLeft + deltaX;
-          if (newWidth < 200) {
-            newWidth = 200;
-            newLeft = startLeft + startWidth - 200;
-          }
-          if (newLeft < -2e3) {
-            newLeft = -2e3;
-            newWidth = startLeft + startWidth + 2e3;
-          }
-          logContainer.style.width = newWidth + "px";
-          logContainer.style.left = newLeft + "px";
-        }
-        if (direction === "vertical" || direction === "diagonal-left") {
-          let newHeight = startHeight - (e2.clientY - startY);
-          newHeight = Math.max(100, Math.min(600, newHeight));
-          logContainer.style.height = newHeight + "px";
-        }
-        const pluginLayout = document.querySelector(".hon-plugin-layout");
-        if (pluginLayout)
-          constrainEventLogPosition(pluginLayout, logContainer);
-      };
-      const stopDrag = () => {
-        isResizing = false;
-        document.removeEventListener("mousemove", doDrag);
-        document.removeEventListener("mouseup", stopDrag);
-        const logContainer2 = document.getElementById("hon-event-log");
-        if (logContainer2) {
-          saveEventLogState({
-            height: logContainer2.style.height,
-            width: logContainer2.style.width,
-            left: logContainer2.style.left
-          });
-        }
-      };
-      document.addEventListener("mousemove", doDrag);
-      document.addEventListener("mouseup", stopDrag);
-    });
-  }
-  function exportLogEntries() {
-    if (eventLogEntries.length === 0) {
-      alert("No log entries to export");
-      return;
-    }
-    const logText = eventLogEntries.map((entry) => {
-      const timeString = entry.timestamp.toLocaleString();
-      const level = entry.level.toUpperCase();
-      const itemLabel = entry.battleType === "scenes" ? "Scene" : "Performer";
-      let message = entry.message;
-      message = message.replace(
-        /(\[Ascension\] (?:Match|CROSS-TIER|Custom Cross-Tier): )([^(]+)(\s+\([^)]+\))/g,
-        "$1PerformerA$3"
-      );
-      message = message.replace(
-        /(vs\s+)([^(]+)(\s+\([^)]+\))/g,
-        "$1PerformerB$3"
-      );
-      message = message.replace(
-        /(\[Ascension\] Updating: )(.+?)\s*\(ID: (\d+)\)/g,
-        `$1${itemLabel} (ID: $3)`
-      );
-      message = message.replace(
-        /(\[Ascension\] Champion Selected: )([^(]+)(\s+\([^)]+\))/g,
-        "$1PerformerA$3"
-      );
-      return `[${timeString}] ${level}: ${message}`;
-    }).join("\n");
-    const blob = new Blob([logText], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const fileName = `battle-log-${(/* @__PURE__ */ new Date()).toISOString().slice(0, 19).replace(/:/g, "-")}.txt`;
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = fileName;
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => {
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    }, 100);
-    addEventLog(`Log exported to file: ${fileName}`, "log");
-  }
-  function updateEventLogDisplay() {
-    const content = document.getElementById("hon-event-log-content");
-    if (!content)
-      return;
-    const isScrolledToBottom = content.scrollHeight - content.clientHeight <= content.scrollTop + 1;
-    const existingEntriesCount = content.querySelectorAll(".hon-log-entry").length;
-    const tierColors = {
-      "any": "#00ff00",
-      "newcomers": "#00ff00",
-      "S-Tier": "#eb9834",
-      "A-Tier": "#e014aa",
-      "B-Tier": "#7f1e82",
-      "C-Tier": "#14bbe0",
-      "D-Tier": "#92e014",
-      "F-Tier": "#808080"
-    };
-    const allEntriesHTML = eventLogEntries.map((entry, index) => {
-      const timeString = entry.timestamp.toLocaleTimeString();
-      const levelClass = `hon-log-${entry.level}`;
-      const isNewEntry = index >= existingEntriesCount;
-      const animationClass = isNewEntry ? "new-entry" : "";
-      let messageText = entry.formattedMessage.replace(/%c/g, "").trim();
-      let messageHtml = messageText;
-      messageHtml = messageHtml.replace(
-        /\[Ascension\]/g,
-        '[<span style="color: #1cb4d6; font-weight: bold;">Ascension</span>]'
-      );
-      messageHtml = messageHtml.replace(/\bWIN\b/g, '<span style="color: #4CAF50; font-weight: bold;">WIN</span>').replace(/\bLOSS\b/g, '<span style="color: #F44336; font-weight: bold;">LOSS</span>').replace(/\bDRAW\b/g, '<span style="color: #9E9E9E; font-weight: bold;">DRAW</span>');
-      const placeholders = [];
-      function addPlaceholder(html) {
-        const key = `__HON_FMT_${placeholders.length}__`;
-        placeholders.push({ key, html });
-        return key;
-      }
-      messageHtml = messageHtml.replace(/\(\+(\d+(?:\.\d+)?)\)/g, (_, num) => addPlaceholder(`(<span style="color: #4CAF50; font-weight: bold;">+${num}</span>)`)).replace(/\(-(\d+(?:\.\d+)?)\)/g, (_, num) => addPlaceholder(`(<span style="color: #F44336; font-weight: bold;">-${num}</span>)`));
-      messageHtml = messageHtml.replace(
-        /\b(S-Tier|A-Tier|B-Tier|C-Tier|D-Tier|F-Tier)\s+Asc\.Score:\s*(\d+(?:\.\d+)?)\s*__HON_TIER_FMT__#?([0-9a-fA-F]{6})__/g,
-        (_, tier, num, hexColor) => {
-          return addPlaceholder(
-            `<span style="color: #${hexColor}; font-weight: bold;">${tier}</span> Asc.Score: <span style="color: #${hexColor}; font-weight: bold;">${num}</span>`
-          );
-        }
-      );
-      messageHtml = messageHtml.replace(
-        /\b(S-Tier|A-Tier|B-Tier|C-Tier|D-Tier|F-Tier)\s+Asc\.Score:\s*(\d+(?:\.\d+)?)/g,
-        (_, tier, num) => {
-          const color = tierColors[tier] || "#00ff00";
-          return addPlaceholder(
-            `<span style="color: ${color}; font-weight: bold;">${tier}</span> Asc.Score: <span style="color: ${color}; font-weight: bold;">${num}</span>`
-          );
-        }
-      );
-      messageHtml = messageHtml.replace(
-        /(\(\s*w\s*:\s*)([\d.]+)/g,
-        (_, prefix, num) => addPlaceholder(`${prefix}<span style="color: #1cb4d6; font-weight: bold;">${num}</span>`)
-      );
-      messageHtml = messageHtml.replace(
-        /\(\s*ID\s*:\s*(\d+)\s*\)/g,
-        '(<span style="color: #1cb4d6;">ID: $1</span>)'
-      );
-      messageHtml = messageHtml.replace(
-        /\[([\d\.]+)\]/g,
-        '[<span style="color: #1cb4d6;">$1</span>]'
-      );
-      messageHtml = messageHtml.replace(
-        /\bvs\b/g,
-        '<span style="color: #888;">vs</span>'
-      );
-      messageHtml = messageHtml.replace(
-        /Weight\s*:/g,
-        '<span style="color: #888;">Weight:</span>'
-      );
-      messageHtml = messageHtml.replace(
-        /Total Match Count\s*:/g,
-        '<span style="color: #888;">Total Match Count:</span>'
-      );
-      messageHtml = messageHtml.replace(
-        /\b(\d+\.\d+)\b/g,
-        '<span style="color: #FF69B4; font-weight: bold;">$1</span>'
-      );
-      messageHtml = messageHtml.replace(
-        /(CROSS-TIER:)/g,
-        '<span style="color: #E91E63; font-weight: bold;">$1</span>'
-      );
-      messageHtml = messageHtml.replace(
-        /(Custom Cross-Tier:)/g,
-        '<span style="color: #E91E63; font-weight: bold;">$1</span>'
-      );
-      placeholders.forEach(({ key, html }) => {
-        messageHtml = messageHtml.replace(key, html);
-      });
-      if (entry.tierInfo) {
-        let tierColor = tierColors[entry.tierInfo] || "#00ff00";
-        const tierRegex = new RegExp(`(Tier Selection:)\\\\s+(${entry.tierInfo})`);
-        messageHtml = messageHtml.replace(
-          tierRegex,
-          `$1 <span style="color: ${tierColor}; font-weight: bold;">$2</span>`
-        );
-      }
-      if (entry.tierFilterTiers && entry.tierFilterTiers.length > 0) {
-        const tierListHtml = entry.tierFilterTiers.map((tier) => {
-          const color = tierColors[tier] || "#00ff00";
-          return `<span style="color: ${color}; font-weight: bold;">${tier}</span>`;
-        }).join('<span style="color: #888;">, </span>');
-        messageHtml = messageHtml.replace(
-          /(Tier Filter active:)\s+([\w\-,\s]+)/,
-          `$1 ${tierListHtml}`
-        );
-      }
-      return `
-      <div class="hon-log-entry ${levelClass} ${animationClass}" data-entry-id="${entry.id}">
-        <span class="hon-log-timestamp">${timeString}</span>
-        <span class="hon-log-message">${messageHtml}</span>
-      </div>
-    `;
-    }).join("");
-    content.innerHTML = allEntriesHTML;
-    if (isScrolledToBottom) {
-      content.scrollTop = content.scrollHeight;
-    }
-    setTimeout(() => {
-      const newEntries = content.querySelectorAll(".new-entry");
-      newEntries.forEach((entry) => {
-        entry.classList.remove("new-entry");
-      });
-    }, 400);
-  }
-  function addEventLog(message, level = "log") {
-    const entry = {
-      id: Date.now() + Math.random(),
-      timestamp: /* @__PURE__ */ new Date(),
-      level,
-      message: `[Ascension] ${message}`,
-      formattedMessage: message,
-      battleType: state.battleType
-    };
-    eventLogEntries.push(entry);
-    if (eventLogEntries.length > MAX_LOG_ENTRIES) {
-      eventLogEntries.splice(0, eventLogEntries.length - MAX_LOG_ENTRIES);
-    }
-    updateEventLogDisplay();
-  }
-  function destroyEventLog() {
-    console.log = originalConsoleLog;
-    console.warn = originalConsoleWarn;
-    console.error = originalConsoleError;
-    const logContainer = document.getElementById("hon-event-log");
-    if (logContainer) {
-      logContainer.remove();
-    }
-    eventLogEntries = [];
-    if (layoutObserver) {
-      layoutObserver.disconnect();
-      layoutObserver = null;
-    }
-    try {
-      localStorage.removeItem(EVENT_LOG_STORAGE_KEY);
-    } catch (e) {
-      console.warn("[Ascension] Failed to clear event log state:", e);
-    }
-  }
-  var eventLogEntries, MAX_LOG_ENTRIES, originalConsoleLog, originalConsoleWarn, originalConsoleError, layoutObserver, EVENT_LOG_STORAGE_KEY;
-  var init_ui_event_log = __esm({
-    "ui-event-log.js"() {
-      init_state();
-      init_rating_utils();
-      eventLogEntries = [];
-      MAX_LOG_ENTRIES = 100;
-      originalConsoleLog = console.log;
-      originalConsoleWarn = console.warn;
-      originalConsoleError = console.error;
-      layoutObserver = null;
-      EVENT_LOG_STORAGE_KEY = "hon-event-log-state";
-    }
-  });
-
   // ui-sidebar.js
   var ui_sidebar_exports = {};
   __export(ui_sidebar_exports, {
+    applySelectedSavedFilter: () => applySelectedSavedFilter,
     attachSidebarEventListeners: () => attachSidebarEventListeners,
     autoShowOptionsIfNoGenders: () => autoShowOptionsIfNoGenders,
     createSidebar: () => createSidebar,
+    fetchSavedPerformerFilters: () => fetchSavedPerformerFilters,
+    getBadgeDisplayOption: () => getBadgeDisplayOption,
     getCardDisplayOption: () => getCardDisplayOption2,
+    getSceneMinDuration: () => getSceneMinDuration,
+    getSelectedSavedFilterId: () => getSelectedSavedFilterId,
+    getUserFilterOverrideEnabled: () => getUserFilterOverrideEnabled,
+    onBadgeSettingsChange: () => onBadgeSettingsChange,
+    onSceneMinDurationChange: () => onSceneMinDurationChange,
     openOptionsPanel: () => openOptionsPanel,
+    setBadgeDisplayOption: () => setBadgeDisplayOption,
     setCardDisplayOption: () => setCardDisplayOption,
+    setSceneMinDuration: () => setSceneMinDuration,
+    setSelectedSavedFilterId: () => setSelectedSavedFilterId,
+    setUserFilterOverrideEnabled: () => setUserFilterOverrideEnabled,
     toggleGender: () => toggleGender,
     toggleTier: () => toggleTier
   });
@@ -7591,6 +4620,159 @@ Match Stats:`;
     } catch (err) {
       console.warn("[Ascension] Could not load card display options:", err);
     }
+  }
+  function getDefaultBadgeDisplayOptions() {
+    const defaults = {};
+    BADGE_DISPLAY_OPTIONS.forEach((opt) => defaults[opt.key] = false);
+    return defaults;
+  }
+  function getBadgeDisplayOption(key, defaultValue = false) {
+    return state.badgeDisplayOptions?.[key] ?? defaultValue;
+  }
+  function setBadgeDisplayOption(key, value) {
+    if (!state.badgeDisplayOptions) {
+      state.badgeDisplayOptions = getDefaultBadgeDisplayOptions();
+    }
+    state.badgeDisplayOptions[key] = value;
+    try {
+      localStorage.setItem(BADGE_DISPLAY_LS_KEY, JSON.stringify(state.badgeDisplayOptions));
+    } catch (err) {
+      console.warn("[Ascension] Could not save badge display options:", err);
+    }
+  }
+  function loadBadgeDisplayOptions() {
+    if (!state.badgeDisplayOptions) {
+      state.badgeDisplayOptions = getDefaultBadgeDisplayOptions();
+    }
+    try {
+      const saved = localStorage.getItem(BADGE_DISPLAY_LS_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        Object.assign(state.badgeDisplayOptions, parsed);
+      }
+    } catch (err) {
+      console.warn("[Ascension] Could not load badge display options:", err);
+    }
+  }
+  function getSceneMinDuration() {
+    return state.sceneMinDuration ?? DEFAULT_SCENE_MIN_DURATION;
+  }
+  function setSceneMinDuration(seconds) {
+    const value = Math.max(0, Math.floor(Number(seconds) || 0));
+    state.sceneMinDuration = value;
+    try {
+      localStorage.setItem(SCENE_MIN_DURATION_LS_KEY, JSON.stringify(value));
+    } catch (err) {
+      console.warn("[Ascension] Could not save scene min duration:", err);
+    }
+  }
+  function loadSceneMinDuration() {
+    try {
+      const saved = localStorage.getItem(SCENE_MIN_DURATION_LS_KEY);
+      if (saved) {
+        state.sceneMinDuration = Math.max(0, Math.floor(Number(JSON.parse(saved)) || 0));
+      }
+    } catch (err) {
+      console.warn("[Ascension] Could not load scene min duration:", err);
+    }
+  }
+  function getUserFilterOverrideEnabled() {
+    return state.userFilterOverride ?? DEFAULT_USER_FILTER_OVERRIDE;
+  }
+  function setUserFilterOverrideEnabled(value) {
+    state.userFilterOverride = !!value;
+    try {
+      localStorage.setItem(USER_FILTER_OVERRIDE_LS_KEY, JSON.stringify(state.userFilterOverride));
+    } catch (err) {
+      console.warn("[Ascension] Could not save user filter override:", err);
+    }
+  }
+  function loadUserFilterOverride() {
+    try {
+      const saved = localStorage.getItem(USER_FILTER_OVERRIDE_LS_KEY);
+      if (saved !== null) {
+        state.userFilterOverride = JSON.parse(saved);
+      }
+    } catch (err) {
+      console.warn("[Ascension] Could not load user filter override:", err);
+    }
+  }
+  function getSelectedSavedFilterId() {
+    return state.selectedSavedFilterId ?? null;
+  }
+  function setSelectedSavedFilterId(id) {
+    state.selectedSavedFilterId = id || null;
+    try {
+      if (id) {
+        localStorage.setItem(SAVED_FILTER_LS_KEY, JSON.stringify(id));
+      } else {
+        localStorage.removeItem(SAVED_FILTER_LS_KEY);
+      }
+    } catch (err) {
+      console.warn("[Ascension] Could not save selected saved filter:", err);
+    }
+  }
+  function loadSelectedSavedFilterId() {
+    try {
+      const saved = localStorage.getItem(SAVED_FILTER_LS_KEY);
+      state.selectedSavedFilterId = saved ? JSON.parse(saved) : null;
+    } catch (err) {
+      console.warn("[Ascension] Could not load selected saved filter:", err);
+    }
+  }
+  async function fetchSavedPerformerFilters() {
+    try {
+      const { graphqlQuery: graphqlQuery2 } = await Promise.resolve().then(() => (init_api_client(), api_client_exports));
+      const result = await graphqlQuery2(`
+      query FindSavedFilters {
+        findSavedFilters {
+          id
+          name
+          mode
+          object_filter
+        }
+      }
+    `);
+      const filters = (result?.findSavedFilters || []).filter(
+        (f) => f.mode === "PERFORMERS"
+      );
+      state.savedPerformerFilters = filters;
+      return filters;
+    } catch (err) {
+      console.warn("[Ascension] Failed to fetch saved filters:", err);
+      return [];
+    }
+  }
+  function applySelectedSavedFilter() {
+    const id = getSelectedSavedFilterId();
+    const filters = state.savedPerformerFilters || [];
+    const selected = filters.find((f) => String(f.id) === String(id));
+    state.cachedUrlFilter = selected?.object_filter || null;
+    return selected || null;
+  }
+  function onBadgeSettingsChange(callback) {
+    badgeSettingsChangeListeners.add(callback);
+  }
+  function notifyBadgeSettingsChange() {
+    badgeSettingsChangeListeners.forEach((fn) => {
+      try {
+        fn();
+      } catch (e) {
+        console.warn("[Ascension] Badge settings change listener error:", e);
+      }
+    });
+  }
+  function onSceneMinDurationChange(callback) {
+    sceneMinDurationChangeListeners.add(callback);
+  }
+  function notifySceneMinDurationChange() {
+    sceneMinDurationChangeListeners.forEach((fn) => {
+      try {
+        fn();
+      } catch (e) {
+        console.warn("[Ascension] Scene min duration change listener error:", e);
+      }
+    });
   }
   function createSidebar() {
     const savedMode = localStorage.getItem("hotornot_selected_mode");
@@ -7896,6 +5078,9 @@ Match Stats:`;
   function renderOptionsPanel() {
     const noGenderWarning = state.selectedGenders.length === 0 ? '<p class="hon-options-hint hon-options-warning">Please select at least one gender to continue.</p>' : '<p class="hon-options-hint">Select which genders to include in matchups.</p>';
     const tierWarningHTML = getTierGapWarningHTML(state.selectedTiers);
+    const overrideEnabled = getUserFilterOverrideEnabled();
+    const savedFilters = state.savedPerformerFilters || [];
+    const selectedFilterId = getSelectedSavedFilterId();
     return `
     <div class="hon-options-panel ${isMobile() ? "mobile" : ""}">
       <h2 class="hon-options-title">\u2699\uFE0F Options</h2>
@@ -7951,6 +5136,55 @@ Match Stats:`;
         </div>
       </div>
 
+      <div class="hon-options-section">
+        <h3 class="hon-options-section-title">Badge Display</h3>
+        <p class="hon-options-hint">Choose which rank badge elements to hide on performer grids and pages.</p>
+        <div class="hon-options-gender-grid">
+          ${BADGE_DISPLAY_OPTIONS.map((opt) => {
+      const isHidden = getBadgeDisplayOption(opt.key);
+      return `
+              <label class="hon-options-checkbox ${isHidden ? "active" : ""}" data-badge-display="${opt.key}">
+                <input type="checkbox" value="${opt.key}" ${isHidden ? "checked" : ""}>
+                <span class="hon-options-checkmark">\u2713</span>
+                <span class="hon-options-label-text">${opt.label}</span>
+              </label>
+            `;
+    }).join("")}
+        </div>
+      </div>
+
+      <div class="hon-options-section">
+        <h3 class="hon-options-section-title">Matchmaking</h3>
+        <p class="hon-options-hint">When enabled, the selected saved Stash filter is strictly respected. Only matching performers will be paired.</p>
+        <div class="hon-options-gender-grid">
+          <label class="hon-options-checkbox ${overrideEnabled ? "active" : ""}" data-user-filter-override>
+            <input type="checkbox" ${overrideEnabled ? "checked" : ""}>
+            <span class="hon-options-checkmark">\u2713</span>
+            <span class="hon-options-label-text">Enable User Filter Override</span>
+          </label>
+        </div>
+        <div class="hon-options-saved-filter-row" style="margin-top: 12px;">
+          <label for="hon-saved-filter">Saved performer filter:</label>
+          <select id="hon-saved-filter" data-saved-filter ${overrideEnabled ? "" : "disabled"}>
+            ${savedFilters.length === 0 ? `<option value="">No saved filters found</option>` : `
+                <option value="">-- Select a saved filter --</option>
+                ${savedFilters.map((f) => `
+                  <option value="${f.id}" ${String(f.id) === String(selectedFilterId) ? "selected" : ""}>${f.name}</option>
+                `).join("")}
+              `}
+          </select>
+        </div>
+      </div>
+
+      <div class="hon-options-section">
+        <h3 class="hon-options-section-title">Scene Filter</h3>
+        <p class="hon-options-hint">Set the minimum scene duration (in seconds) that can be selected in Scene Mode. 0 means no minimum.</p>
+        <div class="hon-options-duration-row">
+          <label for="hon-scene-min-duration">Min duration (seconds):</label>
+          <input id="hon-scene-min-duration" type="number" min="0" step="1" value="${getSceneMinDuration()}" data-scene-min-duration>
+        </div>
+      </div>
+
       <div class="hon-options-actions">
         <button class="hon-options-close-btn" data-action="close-options">Close Options</button>
       </div>
@@ -7990,6 +5224,74 @@ Match Stats:`;
           label.classList.toggle("active", isHidden);
       });
     });
+    const badgeCheckboxes = vsContainer.querySelectorAll('.hon-options-checkbox[data-badge-display] input[type="checkbox"]');
+    badgeCheckboxes.forEach((checkbox) => {
+      checkbox.addEventListener("change", (e) => {
+        const key = e.target.value;
+        const isHidden = e.target.checked;
+        setBadgeDisplayOption(key, isHidden);
+        const label = e.target.closest(".hon-options-checkbox");
+        if (label)
+          label.classList.toggle("active", isHidden);
+        notifyBadgeSettingsChange();
+      });
+    });
+    const durationInput = vsContainer.querySelector("[data-scene-min-duration]");
+    if (durationInput) {
+      durationInput.addEventListener("change", (e) => {
+        setSceneMinDuration(e.target.value);
+        notifySceneMinDurationChange();
+      });
+    }
+    const userFilterOverrideCheckbox = vsContainer.querySelector('[data-user-filter-override] input[type="checkbox"]');
+    if (userFilterOverrideCheckbox) {
+      userFilterOverrideCheckbox.addEventListener("change", async (e) => {
+        const isEnabled = e.target.checked;
+        setUserFilterOverrideEnabled(isEnabled);
+        const label = e.target.closest(".hon-options-checkbox");
+        if (label)
+          label.classList.toggle("active", isEnabled);
+        const savedFilterSelect2 = vsContainer.querySelector("[data-saved-filter]");
+        if (savedFilterSelect2)
+          savedFilterSelect2.disabled = !isEnabled;
+        if (isEnabled) {
+          applySelectedSavedFilter();
+        } else {
+          state.cachedUrlFilter = null;
+        }
+        if (state.battleType === "performers") {
+          const { loadNewPair: loadNewPair2 } = await Promise.resolve().then(() => (init_battle_engine(), battle_engine_exports));
+          loadNewPair2();
+        }
+      });
+    }
+    const savedFilterSelect = vsContainer.querySelector("[data-saved-filter]");
+    if (savedFilterSelect) {
+      savedFilterSelect.addEventListener("change", async (e) => {
+        const id = e.target.value;
+        setSelectedSavedFilterId(id);
+        applySelectedSavedFilter();
+        if (state.battleType === "performers") {
+          const { loadNewPair: loadNewPair2 } = await Promise.resolve().then(() => (init_battle_engine(), battle_engine_exports));
+          loadNewPair2();
+        }
+      });
+    }
+    fetchSavedPerformerFilters().then(() => {
+      const savedFilterSelect2 = vsContainer.querySelector("[data-saved-filter]");
+      if (!savedFilterSelect2)
+        return;
+      const filters = state.savedPerformerFilters || [];
+      const selectedId = getSelectedSavedFilterId();
+      savedFilterSelect2.innerHTML = filters.length === 0 ? `<option value="">No saved filters found</option>` : `
+        <option value="">-- Select a saved filter --</option>
+        ${filters.map((f) => `
+          <option value="${f.id}" ${String(f.id) === String(selectedId) ? "selected" : ""}>${f.name}</option>
+        `).join("")}
+      `;
+      savedFilterSelect2.disabled = !getUserFilterOverrideEnabled();
+      applySelectedSavedFilter();
+    });
     const closeBtn = vsContainer.querySelector('[data-action="close-options"]');
     if (closeBtn) {
       closeBtn.addEventListener("click", () => {
@@ -8011,38 +5313,28 @@ Match Stats:`;
     const actionsEl = document.querySelector(".hon-actions");
     const selectionContainer = document.getElementById("hon-performer-selection");
     const comparisonArea = document.getElementById("hon-comparison-area");
-    updateSkipButtonVisibility();
+    if (comparisonArea) {
+      comparisonArea.innerHTML = "";
+    }
+    if (actionsEl) {
+      actionsEl.style.display = "";
+    }
     if (mode === "gauntlet" || mode === "champion") {
-      if (optionsRestoreState.wasSelectionVisible) {
-        if (selectionContainer)
-          selectionContainer.style.display = "block";
-        if (comparisonArea)
-          comparisonArea.style.display = "none";
-        if (actionsEl)
-          actionsEl.style.display = "none";
-        Promise.resolve().then(() => (init_gauntlet_selection(), gauntlet_selection_exports)).then((m) => m.loadPerformerSelection());
-      } else {
-        if (selectionContainer)
-          selectionContainer.style.display = "none";
-        if (comparisonArea)
-          comparisonArea.style.display = "";
-        if (actionsEl)
-          actionsEl.style.display = "";
-        const { loadNewPair: loadNewPair2 } = await Promise.resolve().then(() => (init_battle_engine(), battle_engine_exports));
-        loadNewPair2();
-      }
-    } else if (mode === "swiss" || mode === "scenes") {
+      if (selectionContainer)
+        selectionContainer.style.display = "block";
+      if (comparisonArea)
+        comparisonArea.style.display = "none";
+      Promise.resolve().then(() => (init_gauntlet_selection(), gauntlet_selection_exports)).then((m) => m.loadPerformerSelection());
+    } else {
       if (selectionContainer)
         selectionContainer.style.display = "none";
       if (comparisonArea)
         comparisonArea.style.display = "";
-      if (actionsEl)
-        actionsEl.style.display = "";
       const { loadNewPair: loadNewPair2 } = await Promise.resolve().then(() => (init_battle_engine(), battle_engine_exports));
       loadNewPair2();
     }
   }
-  var ALL_GENDERS2, TIER_ORDER_FOR_GAP, CARD_DISPLAY_LS_KEY, CARD_DISPLAY_OPTIONS, optionsRestoreState;
+  var ALL_GENDERS2, TIER_ORDER_FOR_GAP, CARD_DISPLAY_LS_KEY, CARD_DISPLAY_OPTIONS, BADGE_DISPLAY_LS_KEY, BADGE_DISPLAY_OPTIONS, SCENE_MIN_DURATION_LS_KEY, DEFAULT_SCENE_MIN_DURATION, USER_FILTER_OVERRIDE_LS_KEY, DEFAULT_USER_FILTER_OVERRIDE, SAVED_FILTER_LS_KEY, optionsRestoreState, badgeSettingsChangeListeners, sceneMinDurationChangeListeners;
   var init_ui_sidebar = __esm({
     "ui-sidebar.js"() {
       init_state();
@@ -8072,13 +5364,3140 @@ Match Stats:`;
         { key: "HideChooseThisPerformerButton", label: "Hide Choose Button" },
         { key: "HideMediaCounters", label: "Hide Media Counters" }
       ];
+      BADGE_DISPLAY_LS_KEY = "hon_badge_display_options";
+      BADGE_DISPLAY_OPTIONS = [
+        { key: "HideAscRankBadge", label: "Hide Ascension Rank Badge" },
+        { key: "HideBadgeRecord", label: "Hide W/L/D Record on Grids" }
+      ];
+      SCENE_MIN_DURATION_LS_KEY = "hon_scene_min_duration";
+      DEFAULT_SCENE_MIN_DURATION = 0;
+      USER_FILTER_OVERRIDE_LS_KEY = "hon_user_filter_override";
+      DEFAULT_USER_FILTER_OVERRIDE = false;
+      SAVED_FILTER_LS_KEY = "hon_selected_saved_filter_id";
       loadCardDisplayOptions();
+      loadBadgeDisplayOptions();
+      loadSceneMinDuration();
+      loadUserFilterOverride();
+      loadSelectedSavedFilterId();
       optionsRestoreState = {
         wasSelectionVisible: false,
         wasComparisonVisible: false,
         sidebarWasCollapsed: false,
         optionsOpen: false
       };
+      badgeSettingsChangeListeners = /* @__PURE__ */ new Set();
+      sceneMinDurationChangeListeners = /* @__PURE__ */ new Set();
+      onSceneMinDurationChange(async () => {
+        if (state.battleType === "scenes") {
+          const { loadNewPair: loadNewPair2 } = await Promise.resolve().then(() => (init_battle_engine(), battle_engine_exports));
+          loadNewPair2();
+        }
+      });
+      (async function initSavedFilterOnStartup() {
+        await fetchSavedPerformerFilters();
+        if (getUserFilterOverrideEnabled()) {
+          applySelectedSavedFilter();
+        }
+      })();
+    }
+  });
+
+  // parsers.js
+  function getPerformerFilter(cachedUrlFilter, selectedGenders) {
+    const useUserFilter = getUserFilterOverrideEnabled();
+    const filter = useUserFilter ? { ...cachedUrlFilter || {} } : {};
+    delete filter.gender;
+    if (selectedGenders.length > 0) {
+      filter.gender = { value_list: selectedGenders, modifier: "INCLUDES" };
+    }
+    const hasOtherFilters = Object.keys(filter).some((k) => k !== "gender");
+    if (!hasOtherFilters && !filter.NOT) {
+      filter.NOT = { is_missing: "image" };
+    }
+    return filter;
+  }
+  var init_parsers = __esm({
+    "parsers.js"() {
+      init_constants();
+      init_ui_sidebar();
+    }
+  });
+
+  // api-client.js
+  var api_client_exports = {};
+  __export(api_client_exports, {
+    IMAGE_FRAGMENT: () => IMAGE_FRAGMENT,
+    PERFORMER_FRAGMENT: () => PERFORMER_FRAGMENT,
+    SCENE_FRAGMENT: () => SCENE_FRAGMENT,
+    fetchAllPerformerStats: () => fetchAllPerformerStats,
+    fetchAllPerformersSorted: () => fetchAllPerformersSorted,
+    fetchAllSceneMetadata: () => fetchAllSceneMetadata,
+    fetchGlobalPerformerRatings: () => fetchGlobalPerformerRatings,
+    fetchImageCount: () => fetchImageCount,
+    fetchPerformerById: () => fetchPerformerById,
+    fetchPerformerCount: () => fetchPerformerCount,
+    fetchRandomImages: () => fetchRandomImages,
+    fetchRandomPerformers: () => fetchRandomPerformers,
+    fetchSceneById: () => fetchSceneById,
+    fetchScenesByIds: () => fetchScenesByIds,
+    getAllPerformersSorted: () => getAllPerformersSorted,
+    getHotOrNotConfig: () => getHotOrNotConfig,
+    graphqlQuery: () => graphqlQuery,
+    handleComparison: () => handleComparison,
+    isBattleRankBadgeEnabled: () => isBattleRankBadgeEnabled,
+    undoLastMatch: () => undoLastMatch,
+    updateImageRating: () => updateImageRating,
+    updateItemRating: () => updateItemRating,
+    updatePerformerRating: () => updatePerformerRating,
+    updateSceneRating: () => updateSceneRating
+  });
+  async function graphqlQuery(query, variables = {}) {
+    if (typeof PluginApi !== "undefined" && PluginApi.utils?.StashService?.getClient && PluginApi.libraries?.Apollo) {
+      try {
+        const { gql } = PluginApi.libraries.Apollo;
+        const client = PluginApi.utils.StashService.getClient();
+        const doc = gql(query);
+        const isMutation = doc.definitions.some((def) => def.kind === "OperationDefinition" && def.operation === "mutation");
+        const result2 = isMutation ? await client.mutate({ mutation: doc, variables }) : await client.query({ query: doc, variables, fetchPolicy: "no-cache" });
+        return result2.data;
+      } catch (e) {
+        console.warn("[Ascension] Apollo fallback to fetch:", e.message);
+      }
+    }
+    const response = await fetch("/graphql", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query, variables })
+    });
+    const result = await response.json();
+    if (result.errors && result.errors.length > 0) {
+      if (result.errors.length === 1) {
+        throw new Error(`GraphQL Error: ${result.errors[0].message}`);
+      }
+      const errorMessage = result.errors.map((e) => e.message).join("; ");
+      throw new Error(`GraphQL Errors: ${errorMessage}`);
+    }
+    return result.data;
+  }
+  async function fetchAllItems2(queryTemplate, variablesBase = {}, pageSize = 1e3) {
+    const allItems = [];
+    let currentPage = 1;
+    const baseFilter = variablesBase.filter || {};
+    while (true) {
+      const variables = {
+        ...variablesBase,
+        filter: Object.assign({}, baseFilter, {
+          per_page: pageSize,
+          page: currentPage
+        })
+      };
+      const result = await graphqlQuery(queryTemplate, variables);
+      const items = result.findPerformers?.performers || result.findImages?.images || result.findScenes?.scenes || [];
+      if (items.length === 0)
+        break;
+      allItems.push.apply(allItems, items);
+      if (items.length < pageSize)
+        break;
+      currentPage++;
+    }
+    return allItems;
+  }
+  async function fetchAllSceneMetadata() {
+    const queryTemplate = `
+    query FindSceneMetadata($filter: FindFilterType) {
+      findScenes(filter: $filter) {
+        scenes { id rating100 custom_fields }
+      }
+    }
+  `;
+    return await fetchAllItems2(queryTemplate, {
+      filter: { sort: "rating100", direction: "DESC" }
+    }, 1e3);
+  }
+  async function fetchScenesByIds(ids) {
+    if (!ids || ids.length === 0)
+      return [];
+    const query = `
+    query FindScenesByIds($filter: FindFilterType) {
+      findScenes(filter: $filter) {
+        scenes { ${SCENE_FRAGMENT} }
+      }
+    }
+  `;
+    const result = await graphqlQuery(query, {
+      filter: { per_page: ids.length, ids }
+    });
+    return result?.findScenes?.scenes || [];
+  }
+  function sortPerformersByRating(performers) {
+    const performerStats = /* @__PURE__ */ new Map();
+    return performers.sort((a, b) => {
+      const ratingDiff = (b.rating100 ?? 1) - (a.rating100 ?? 1);
+      if (ratingDiff !== 0)
+        return ratingDiff;
+      if (!performerStats.has(a.id)) {
+        performerStats.set(a.id, parsePerformerEloData(a));
+      }
+      if (!performerStats.has(b.id)) {
+        performerStats.set(b.id, parsePerformerEloData(b));
+      }
+      const statsA = performerStats.get(a.id);
+      const statsB = performerStats.get(b.id);
+      const matchCountDiff = (statsB.total_matches || 0) - (statsA.total_matches || 0);
+      if (matchCountDiff !== 0)
+        return matchCountDiff;
+      if (a.name && b.name) {
+        return a.name.localeCompare(b.name);
+      }
+      const nameA = a.name || "";
+      const nameB = b.name || "";
+      return nameA.localeCompare(nameB);
+    });
+  }
+  async function fetchAllPerformersSorted(sortBy = "rating", direction = "DESC") {
+    const queryTemplate = `
+    query FindAllPerformers($filter: FindFilterType) {
+      findPerformers(filter: $filter) {
+        performers { ${FRAGMENTS.PERFORMER} }
+      }
+    }
+  `;
+    const performers = await fetchAllItems2(queryTemplate, {
+      filter: { sort: sortBy, direction }
+    });
+    return sortPerformersByRating(performers);
+  }
+  async function fetchAllPerformerStats() {
+    return await fetchAllPerformersSorted();
+  }
+  async function fetchGlobalPerformerRatings() {
+    const queryTemplate = `
+    query FindAllPerformers($filter: FindFilterType) {
+      findPerformers(filter: $filter) {
+        performers { id rating100 custom_fields }
+      }
+    }
+  `;
+    const performers = await fetchAllItems2(queryTemplate, {
+      filter: { sort: "rating", direction: "DESC" }
+    });
+    return performers.map((p) => {
+      let total_matches = 0;
+      let wins = 0;
+      let win_margin = 0;
+      const statsJson = p.custom_fields?.["hotornot_stats"];
+      if (statsJson) {
+        try {
+          const stats = typeof statsJson === "string" ? JSON.parse(statsJson) : statsJson;
+          total_matches = stats?.total_matches ?? 0;
+          wins = stats?.wins ?? 0;
+          win_margin = stats?.win_margin ?? 0;
+        } catch (e) {
+        }
+      }
+      return {
+        id: p.id,
+        rating100: p.rating100 ?? 1,
+        total_matches,
+        wins,
+        win_margin
+      };
+    });
+  }
+  async function getAllPerformersSorted() {
+    return await fetchAllPerformersSorted();
+  }
+  async function fetchRandomPerformers(count = 2) {
+    if (state.selectedGenders.length === 0) {
+      throw new Error("No genders selected.");
+    }
+    const battleGender = state.selectedGenders[Math.floor(Math.random() * state.selectedGenders.length)];
+    const performerFilter = getPerformerFilter(state.cachedUrlFilter, [battleGender]);
+    const totalPerformers = await fetchPerformerCount(performerFilter);
+    if (totalPerformers < 2) {
+      throw new Error("Not enough performers matching the selected gender.");
+    }
+    const performerQuery = `
+    query FindRandomPerformers($performer_filter: PerformerFilterType, $filter: FindFilterType) {
+      findPerformers(performer_filter: $performer_filter, filter: $filter) {
+        performers {
+          ${FRAGMENTS.PERFORMER}
+        }
+      }
+    }
+  `;
+    const result = await graphqlQuery(performerQuery, {
+      performer_filter: performerFilter,
+      filter: {
+        per_page: Math.min(100, totalPerformers),
+        sort: "random"
+      }
+    });
+    const allPerformers = result?.findPerformers?.performers || [];
+    if (allPerformers.length < 2) {
+      throw new Error("Not enough performers for comparison.");
+    }
+    const shuffled = [...allPerformers].sort(() => Math.random() - 0.5);
+    return shuffled.slice(0, 2);
+  }
+  async function fetchPerformerById(id) {
+    const result = await graphqlQuery(`query($id: ID!) { findPerformer(id: $id) { ${PERFORMER_FRAGMENT} } }`, { id });
+    return result.findPerformer;
+  }
+  async function fetchPerformerCount(filter = {}) {
+    const result = await graphqlQuery(`query($f: PerformerFilterType) { findPerformers(performer_filter: $f, filter: { per_page: 0 }) { count } }`, { f: filter });
+    return result.findPerformers.count;
+  }
+  async function fetchRandomImages(count = 2) {
+    const totalImages = await fetchImageCount();
+    if (totalImages < 2) {
+      throw new Error("Not enough images for comparison. You need at least 2 images.");
+    }
+    const imagesQuery = `
+    query FindRandomImages($filter: FindFilterType) {
+      findImages(filter: $filter) {
+        images {
+          ${IMAGE_FRAGMENT}
+        }
+      }
+    }
+  `;
+    const result = await graphqlQuery(imagesQuery, {
+      filter: {
+        per_page: Math.min(100, totalImages),
+        sort: "random"
+      }
+    });
+    const allImages = result.findImages.images || [];
+    if (allImages.length < 2) {
+      throw new Error("Not enough images returned from query.");
+    }
+    const shuffled = allImages.sort(() => Math.random() - 0.5);
+    return shuffled.slice(0, count);
+  }
+  function formatResultStatus(won, change) {
+    if (won === null || won === void 0)
+      return "UPDATE";
+    const pointChange = change !== null && !isNaN(change) ? (change / 10).toFixed(1) : "?";
+    const signed = change > 0 ? `+${pointChange}` : pointChange;
+    return won ? `WIN(${signed})` : `LOSS(${signed})`;
+  }
+  function getRecordKeyForBattleType(battleType) {
+    if (battleType === "performers")
+      return "performer_record";
+    if (battleType === "scenes")
+      return "scene_record";
+    return null;
+  }
+  function normalizeSceneRecordEntry(entry) {
+    if (!entry || typeof entry !== "object")
+      return null;
+    const normalized = {
+      date: entry.date || (/* @__PURE__ */ new Date()).toISOString(),
+      won: entry.won,
+      ratingAfter: entry.ratingAfter
+    };
+    if (entry.opponentId) {
+      normalized.opponentId = entry.opponentId.toString().replace(/\D/g, "") || "0";
+    } else if (entry.opponent && typeof entry.opponent === "string") {
+      normalized.opponentId = entry.opponent.split(":")[0] || "0";
+    } else {
+      normalized.opponentId = "0";
+    }
+    return normalized;
+  }
+  function getOldStatsSnapshot(itemObj, battleType) {
+    const recordKey = getRecordKeyForBattleType(battleType);
+    const stats = parsePerformerEloData(itemObj) || {};
+    if (!recordKey)
+      return stats;
+    let recordArray = [];
+    const rawRecord = itemObj?.custom_fields?.[recordKey];
+    if (rawRecord) {
+      try {
+        recordArray = typeof rawRecord === "string" ? JSON.parse(rawRecord) : rawRecord;
+        if (!Array.isArray(recordArray))
+          recordArray = [];
+      } catch (e) {
+        console.warn(`[Ascension] Failed to parse ${recordKey} for snapshot, starting fresh.`);
+        recordArray = [];
+      }
+    }
+    if (battleType === "scenes") {
+      recordArray = recordArray.map(normalizeSceneRecordEntry).filter(Boolean);
+    }
+    return {
+      ...stats,
+      [recordKey]: recordArray
+    };
+  }
+  async function handleComparison(winnerId, loserId, winnerCurrentRating, loserCurrentRating, loserRank = null, winnerObj = null, loserObj = null, isDraw = false) {
+    const startTime = performance.now();
+    console.log(`[Ascension Timing] handleComparison started for Winner ID: ${winnerId}, Loser ID: ${loserId}`);
+    let winnerRating = winnerCurrentRating || 1;
+    let loserRating = loserCurrentRating || 1;
+    let freshWinnerObj = null;
+    let freshLoserObj = null;
+    if (state.currentMode === "gauntlet" || state.currentMode === "champion") {
+      console.log(`[Ascension] ${state.currentMode} mode detected - fetching fresh performer data from DB`);
+      try {
+        [freshWinnerObj, freshLoserObj] = await Promise.all([
+          fetchPerformerById(winnerId),
+          fetchPerformerById(loserId)
+        ]);
+        console.log(`[Ascension] Fresh data fetched. Winner record has ${freshWinnerObj.custom_fields?.performer_record?.length || 0} matches, Loser has ${freshLoserObj.custom_fields?.performer_record?.length || 0} matches`);
+        if (freshWinnerObj && freshWinnerObj.rating100 > 0) {
+          winnerRating = freshWinnerObj.rating100;
+        }
+        if (freshLoserObj && freshLoserObj.rating100 > 0) {
+          loserRating = freshLoserObj.rating100;
+        }
+      } catch (fetchError) {
+        console.error(`[Ascension] Failed to fetch fresh data, falling back to provided objects:`, fetchError);
+        freshWinnerObj = winnerObj;
+        freshLoserObj = loserObj;
+      }
+    } else {
+      try {
+        const isWinnerValid = winnerObj && typeof winnerObj === "object" && winnerObj.id != void 0 && winnerObj.id == winnerId && winnerObj.custom_fields !== void 0;
+        const isLoserValid = loserObj && typeof loserObj === "object" && loserObj.id != void 0 && loserObj.id == loserId && loserObj.custom_fields !== void 0;
+        if (isWinnerValid && isLoserValid) {
+          freshWinnerObj = winnerObj;
+          freshLoserObj = loserObj;
+        } else {
+          throw new Error(`Provided objects failed validation`);
+        }
+      } catch (useProvidedError) {
+        console.log(`[Ascension] Falling back to fetching fresh scene data:`, useProvidedError.message);
+        [freshWinnerObj, freshLoserObj] = await Promise.all([
+          fetchSceneById(winnerId),
+          fetchSceneById(loserId)
+        ]);
+      }
+    }
+    let winnerMatchCount = 0;
+    let loserMatchCount = 0;
+    let winnerStats = {};
+    let loserStats = {};
+    winnerStats = parsePerformerEloData(freshWinnerObj) || {};
+    loserStats = parsePerformerEloData(freshLoserObj) || {};
+    winnerMatchCount = winnerStats.total_matches || 0;
+    loserMatchCount = loserStats.total_matches || 0;
+    const isPerformerBattle = state.battleType === "performers";
+    const globalPool = state.globalPerformerPool || [];
+    let winnerTier = null;
+    let loserTier = null;
+    let winnerEffectiveRating = null;
+    let loserEffectiveRating = null;
+    if (isPerformerBattle && globalPool.length > 0) {
+      if (freshWinnerObj) {
+        winnerTier = getRatingTier(freshWinnerObj, globalPool);
+        winnerEffectiveRating = calculateEffectiveEloRating(freshWinnerObj, globalPool);
+      }
+      if (freshLoserObj) {
+        loserTier = getRatingTier(freshLoserObj, globalPool);
+        loserEffectiveRating = calculateEffectiveEloRating(freshLoserObj, globalPool);
+      }
+    }
+    let winnerGain = 0;
+    let loserLoss = 0;
+    if (isDraw) {
+      const ratingDiff2 = (loserEffectiveRating ?? loserRating) - (winnerEffectiveRating ?? winnerRating);
+      const expectedWinner = 1 / (1 + Math.pow(10, ratingDiff2 / 400));
+      const winnerK = getProgressiveKFactor(winnerRating, null, winnerMatchCount, "swiss");
+      const loserK = getProgressiveKFactor(loserRating, null, loserMatchCount, "swiss");
+      winnerGain = Math.round(winnerK * (0.5 - expectedWinner));
+      loserLoss = Math.round(loserK * (1 - expectedWinner - 0.5));
+    } else {
+      const isChampionWinner = !!state.gauntletChampion && winnerId === state.gauntletChampion.id;
+      const isFallingWinner = state.gauntletFalling && !!state.gauntletFallingItem && winnerId === state.gauntletFallingItem.id;
+      const isChampionLoser = !!state.gauntletChampion && loserId === state.gauntletChampion.id;
+      const isFallingLoser = state.gauntletFalling && !!state.gauntletFallingItem && loserId === state.gauntletFallingItem.id;
+      ({ winnerGain, loserLoss } = calculateMatchOutcome({
+        winnerRating,
+        loserRating,
+        winnerEffectiveRating,
+        loserEffectiveRating,
+        winnerTier,
+        loserTier,
+        mode: state.currentMode,
+        winnerMatchCount,
+        loserMatchCount,
+        isChampionWinner,
+        isFallingWinner,
+        isChampionLoser,
+        isFallingLoser,
+        loserRank,
+        winnerStats,
+        loserStats,
+        isSpecialChallenge: state.currentPair?.isSpecialChallenge || false,
+        specialChallengeRules: state.currentPair?.specialChallengeRules || null
+      }));
+    }
+    const newWinnerRating = Math.min(100, Math.max(1, winnerRating + winnerGain));
+    const newLoserRating = Math.min(100, Math.max(1, loserRating - loserLoss));
+    const shouldTrackWinner = state.battleType === "performers" || state.battleType === "scenes";
+    const shouldTrackLoser = state.battleType === "performers" || state.battleType === "scenes";
+    const winnerStatus = isDraw ? null : true;
+    const loserStatus = isDraw ? null : false;
+    const winnerOldStats = shouldTrackWinner ? getOldStatsSnapshot(freshWinnerObj, state.battleType) : null;
+    const loserOldStats = shouldTrackLoser ? getOldStatsSnapshot(freshLoserObj, state.battleType) : null;
+    if (!state.matchHistory)
+      state.matchHistory = [];
+    state.matchHistory.push({
+      winnerId,
+      loserId,
+      winnerOldRating: winnerRating,
+      loserOldRating: loserRating,
+      winnerOldStats,
+      loserOldStats,
+      pairSnapshot: {
+        left: state.currentPair.left ? { ...state.currentPair.left } : null,
+        right: state.currentPair.right ? { ...state.currentPair.right } : null,
+        rankLeft: state.currentRanks.left,
+        rankRight: state.currentRanks.right
+      },
+      gauntletSnapshot: {
+        gauntletChampion: state.gauntletChampion ? { ...state.gauntletChampion } : null,
+        gauntletWins: state.gauntletWins,
+        gauntletDefeated: [...state.gauntletDefeated || []],
+        gauntletFalling: state.gauntletFalling,
+        gauntletFallingItem: state.gauntletFallingItem ? { ...state.gauntletFallingItem } : null
+      }
+    });
+    if (state.matchHistory.length > 10)
+      state.matchHistory.shift();
+    if (!winnerId || !loserId) {
+      console.error("[Ascension] Cannot update rating: One or both IDs are missing", { winnerId, loserId });
+      return { newWinnerRating, newLoserRating, winnerChange: winnerGain, loserChange: -loserLoss };
+    }
+    const updateStartTime = performance.now();
+    try {
+      const [winnerUpdateResult, loserUpdateResult] = await Promise.all([
+        updateItemRating(
+          winnerId,
+          newWinnerRating,
+          freshWinnerObj,
+          winnerStatus,
+          loserId,
+          winnerGain
+        ).catch((err) => {
+          console.error(`[Ascension] Error updating winner (${winnerId}):`, err);
+          throw new Error(`Failed to update winner: ${err.message}`);
+        }),
+        updateItemRating(
+          loserId,
+          newLoserRating,
+          freshLoserObj,
+          loserStatus,
+          winnerId,
+          -loserLoss
+        ).catch((err) => {
+          console.error(`[Ascension] Error updating loser (${loserId}):`, err);
+          throw new Error(`Failed to update loser: ${err.message}`);
+        })
+      ]);
+      const updateEndTime = performance.now();
+      console.log(`[Ascension Timing] Parallel updates completed in ${(updateEndTime - updateStartTime).toFixed(2)} ms.`);
+    } catch (updateError) {
+      const updateEndTime = performance.now();
+      console.error(`[Ascension Timing] One or both updates failed after ${(updateEndTime - updateStartTime).toFixed(2)} ms:`, updateError);
+      throw updateError;
+    }
+    const endTime = performance.now();
+    console.log(`[Ascension Timing] handleComparison completed in ${(endTime - startTime).toFixed(2)} ms.`);
+    return {
+      newWinnerRating,
+      newLoserRating,
+      winnerChange: winnerGain,
+      loserChange: -loserLoss
+    };
+  }
+  async function updateItemRating(itemId, newRating, itemObj = null, won = null, opponentId = null, change = null) {
+    if (state.battleType === "performers") {
+      return await updatePerformerRating(itemId, newRating, itemObj, won, opponentId, change);
+    } else if (state.battleType === "images") {
+      return await updateImageRating(itemId, newRating);
+    } else if (state.battleType === "scenes") {
+      return await updateSceneRating(itemId, newRating, itemObj, won, opponentId, change);
+    } else {
+      console.warn(`[Ascension] Unknown battle type: ${state.battleType}`);
+      return null;
+    }
+  }
+  async function fetchImageCount() {
+    const countQuery = `
+      query FindImages {
+        findImages(filter: { per_page: 0 }) {
+          count
+        }
+      }
+    `;
+    const countResult = await graphqlQuery(countQuery);
+    return countResult.findImages.count;
+  }
+  async function updateSceneRating(id, rating, sceneObj = null, won = null, opponentId = null, change = null) {
+    if (!id) {
+      console.error("[Ascension] Cannot update scene: ID is missing");
+      return;
+    }
+    let sceneTitle = "Unknown Scene";
+    if (sceneObj?.title && sceneObj.title.trim() !== "") {
+      sceneTitle = sceneObj.title;
+    } else if (state.currentPair) {
+      if (state.currentPair.left?.id == id) {
+        sceneTitle = state.currentPair.left.title || extractTitleFromFile(state.currentPair.left);
+      } else if (state.currentPair.right?.id == id) {
+        sceneTitle = state.currentPair.right.title || extractTitleFromFile(state.currentPair.right);
+      }
+    } else if (sceneObj) {
+      sceneTitle = extractTitleFromFile(sceneObj);
+    }
+    let cleanRating = Math.round(Number(rating));
+    if (isNaN(cleanRating)) {
+      console.warn(`[Ascension] Invalid rating for scene ${id}, falling back to existing data.`);
+      cleanRating = sceneObj?.rating100 || 1;
+    }
+    if (change === null && sceneObj && !isNaN(sceneObj.rating100)) {
+      change = cleanRating - Math.round(Number(sceneObj.rating100));
+    }
+    const statusText = formatResultStatus(won, change);
+    const statusColor = won === true ? "#4CAF50" : won === false ? "#F44336" : "#9E9E9E";
+    const displayRating = (cleanRating / 10).toFixed(1);
+    console.log(
+      `%c[Ascension] %cUpdating: %c${sceneTitle || "???"} %c(ID: ${id})%c, %cNew Rating: %c${displayRating}%c, %cResult: %c${statusText}`,
+      "color: #1cb4d6; font-weight: bold;",
+      "color: #1cb4d6;",
+      "color: #1cb4d6; font-weight: bold;",
+      "color: #1cb4d6;",
+      "color: #888;",
+      "color: #FF69B4;",
+      "color: #FF69B4; font-weight: bold;",
+      "color: #888;",
+      "color: #1cb4d6;",
+      `color: ${statusColor}; font-weight: bold;`
+    );
+    const variables = {
+      id: id.toString(),
+      rating: cleanRating,
+      fields: {}
+    };
+    if (sceneObj) {
+      try {
+        const currentStats = parsePerformerEloData(sceneObj);
+        const updatedStats = updatePerformerStats(currentStats, won, change);
+        if (updatedStats) {
+          const statsToStore = { ...updatedStats };
+          delete statsToStore.performer_record;
+          variables.fields.hotornot_stats = JSON.stringify(statsToStore);
+        }
+      } catch (e) {
+        console.error(`[Ascension] Stats update failed for scene ${id}:`, e);
+      }
+      let matchHistory = [];
+      try {
+        const rawRecord = sceneObj.custom_fields?.scene_record;
+        if (rawRecord) {
+          matchHistory = typeof rawRecord === "string" ? JSON.parse(rawRecord) : rawRecord;
+          if (!Array.isArray(matchHistory))
+            matchHistory = [];
+        }
+      } catch (e) {
+        console.warn(`[Ascension] Failed to parse scene_record for ${id}, resetting history.`);
+        matchHistory = [];
+      }
+      matchHistory = matchHistory.map(normalizeSceneRecordEntry).filter(Boolean);
+      let opponentIdValue = "0";
+      if (opponentId) {
+        if (typeof opponentId === "string" && opponentId.includes(":")) {
+          opponentIdValue = opponentId.split(":")[0];
+        } else {
+          opponentIdValue = (typeof opponentId === "object" ? opponentId.id : opponentId).toString().replace(/\D/g, "");
+        }
+      }
+      matchHistory.push({
+        date: (/* @__PURE__ */ new Date()).toISOString(),
+        opponentId: opponentIdValue,
+        won,
+        ratingAfter: cleanRating
+      });
+      if (matchHistory.length > 30)
+        matchHistory = matchHistory.slice(-30);
+      variables.fields.scene_record = JSON.stringify(matchHistory);
+    }
+    variables.fields = variables.fields || {};
+    try {
+      return await graphqlQuery(`
+      mutation($id: ID!, $rating: Int!, $fields: Map) {
+        sceneUpdate(input: {
+          id: $id,
+          rating100: $rating,
+          custom_fields: { partial: $fields }
+        }) {
+          id
+        }
+      }`, variables);
+    } catch (err) {
+      console.error(`[Ascension] GraphQL Update Failed for scene ${id}:`, err);
+      throw err;
+    }
+  }
+  function extractTitleFromFile(sceneObj) {
+    if (!sceneObj || !sceneObj.files || sceneObj.files.length === 0) {
+      return "Unknown Scene";
+    }
+    const file = sceneObj.files[0];
+    if (!file.path) {
+      return "Unknown Scene";
+    }
+    let title = file.path.split(/[\/\\]/).pop();
+    if (title.includes(".")) {
+      title = title.substring(0, title.lastIndexOf("."));
+    }
+    return title || "Unknown Scene";
+  }
+  async function fetchSceneById(id) {
+    const SCENE_COMPLETE_FRAGMENT = `
+    id
+    title
+    rating100
+    custom_fields
+    files {
+      path
+    }
+  `;
+    const query = `query FindSceneComplete($id: ID!) { findScene(id: $id) { ${SCENE_COMPLETE_FRAGMENT} } }`;
+    try {
+      const result = await graphqlQuery(query, { id });
+      return result.findScene;
+    } catch (error) {
+      console.error(`[Ascension] Failed to fetch complete scene data for ID ${id}:`, error);
+      throw error;
+    }
+  }
+  async function updateImageRating(id, rating) {
+    await graphqlQuery(`mutation($i: ImageUpdateInput!) { imageUpdate(input: $i) { id } }`, {
+      i: { id, rating100: Math.max(1, Math.min(100, rating)) }
+    });
+  }
+  async function updatePerformerRating(id, rating, performerObj = null, won = null, opponentId = null, change = null) {
+    if (!id) {
+      console.error("[Ascension] Cannot update performer: ID is missing");
+      return;
+    }
+    let performerName = "Unknown";
+    if (performerObj?.name) {
+      performerName = performerObj.name;
+    } else if (state.currentPair) {
+      if (state.currentPair.left?.id == id)
+        performerName = state.currentPair.left.name;
+      else if (state.currentPair.right?.id == id)
+        performerName = state.currentPair.right.name;
+    }
+    let cleanRating = Math.round(Number(rating));
+    if (isNaN(cleanRating)) {
+      console.warn(`[Ascension] Invalid rating for ${id}, falling back to existing data.`);
+      cleanRating = performerObj?.rating100 || 1;
+    }
+    if (change === null && performerObj && !isNaN(performerObj.rating100)) {
+      change = cleanRating - Math.round(Number(performerObj.rating100));
+    }
+    let updatedPerformerObj = performerObj ? { ...performerObj, rating100: cleanRating } : null;
+    if (performerObj && updatedPerformerObj) {
+      try {
+        const currentStats = parsePerformerEloData(performerObj);
+        const updatedStats = updatePerformerStats(currentStats, won, change);
+        if (updatedStats) {
+          updatedPerformerObj.custom_fields = { ...performerObj.custom_fields };
+          updatedPerformerObj.custom_fields.hotornot_stats = JSON.stringify(updatedStats);
+        }
+      } catch (e) {
+        console.error(`[Ascension] Stats update failed for ${id}:`, e);
+      }
+    }
+    const newTier = getRatingTier(updatedPerformerObj, state.globalPerformerPool);
+    const newTierColor = getTierColor(newTier);
+    const newBattleScore = calculateBattleScore(updatedPerformerObj);
+    const newBattleScoreStr = Number.isFinite(newBattleScore) ? newBattleScore.toFixed(2) : (cleanRating / 10).toFixed(1);
+    const statusText = formatResultStatus(won, change);
+    const statusColor = won === true ? "#4CAF50" : won === false ? "#F44336" : "#9E9E9E";
+    console.log(
+      `%c[Ascension] %cUpdating: %c${performerName || "???"} %c(ID: ${id})%c, %cNew %c${newTier}%c Asc.Score: %c${newBattleScoreStr}%c, %cResult: %c${statusText}`,
+      "color: #1cb4d6; font-weight: bold;",
+      // [Ascension]
+      "color: #1cb4d6;",
+      // Updating:
+      "color: #1cb4d6; font-weight: bold;",
+      // performerName
+      "color: #1cb4d6;",
+      // (ID:
+      "color: #888;",
+      // )
+      `color: ${newTierColor}; font-weight: bold;`,
+      // New
+      `color: ${newTierColor}; font-weight: bold;`,
+      // tier
+      "color: #888;",
+      // Asc.Score:
+      `color: ${newTierColor}; font-weight: bold;`,
+      // score
+      "color: #888;",
+      // ,
+      "color: #1cb4d6;",
+      // Result:
+      `color: ${statusColor}; font-weight: bold;`
+      // WIN/LOSS
+    );
+    const variables = {
+      id: id.toString(),
+      rating: cleanRating,
+      fields: {}
+    };
+    if (performerObj) {
+      try {
+        const currentStats = parsePerformerEloData(performerObj);
+        const updatedStats = updatePerformerStats(currentStats, won, change);
+        if (updatedStats) {
+          const statsToStore = { ...updatedStats };
+          delete statsToStore.performer_record;
+          variables.fields.hotornot_stats = JSON.stringify(statsToStore);
+        }
+      } catch (e) {
+        console.error(`[Ascension] Stats update failed for ${id}:`, e);
+      }
+      let matchHistory = [];
+      try {
+        const rawRecord = performerObj.custom_fields?.performer_record;
+        if (rawRecord) {
+          matchHistory = typeof rawRecord === "string" ? JSON.parse(rawRecord) : rawRecord;
+        }
+      } catch (e) {
+        console.warn(`[Ascension] Failed to parse performer_record for ${id}, resetting history.`);
+        matchHistory = [];
+      }
+      let opponentData = "0:Unknown";
+      if (opponentId) {
+        if (typeof opponentId === "string" && opponentId.includes(":")) {
+          opponentData = opponentId;
+        } else {
+          const oppId = (typeof opponentId === "object" ? opponentId.id : opponentId).toString().replace(/\D/g, "");
+          let oppName = "Unknown";
+          if (opponentId.name) {
+            oppName = opponentId.name;
+          } else if (state.currentPair) {
+            if (state.currentPair.left?.id == oppId)
+              oppName = state.currentPair.left.name;
+            else if (state.currentPair.right?.id == oppId)
+              oppName = state.currentPair.right.name;
+          }
+          opponentData = `${oppId}:${oppName || "Unknown"}`;
+        }
+      }
+      matchHistory.push({
+        date: (/* @__PURE__ */ new Date()).toISOString(),
+        opponent: opponentData,
+        won,
+        ratingAfter: cleanRating
+      });
+      if (matchHistory.length > 30)
+        matchHistory = matchHistory.slice(-30);
+      variables.fields.performer_record = JSON.stringify(matchHistory);
+    }
+    variables.fields = variables.fields || {};
+    try {
+      return await graphqlQuery(`
+      mutation($id: ID!, $rating: Int!, $fields: Map) {
+        performerUpdate(input: {
+          id: $id,
+          rating100: $rating,
+          custom_fields: { partial: $fields }
+        }) {
+          id
+        }
+      }`, {
+        id: id.toString(),
+        rating: cleanRating,
+        fields: variables.fields
+      });
+    } catch (err) {
+      console.error(`[Ascension] GraphQL Update Failed for ${id}:`, err);
+      throw err;
+    }
+  }
+  async function undoLastMatch() {
+    if (!state.matchHistory || state.matchHistory.length === 0) {
+      console.log("[Ascension] No match history to undo");
+      return null;
+    }
+    const last = state.matchHistory.pop();
+    console.log("[Ascension] Undoing match:", last);
+    try {
+      await Promise.all([
+        updateItemRatingDirect(last.winnerId, last.winnerOldRating, last.winnerOldStats),
+        updateItemRatingDirect(last.loserId, last.loserOldRating, last.loserOldStats)
+      ]);
+      console.log("[Ascension] Successfully restored ratings and records");
+    } catch (error) {
+      state.matchHistory.push(last);
+      console.error("[Ascension] Failed to restore ratings:", error);
+      throw new Error(`Failed to undo match: ${error.message}`);
+    }
+    if (last.gauntletSnapshot) {
+      const snap = last.gauntletSnapshot;
+      state.gauntletChampion = snap.gauntletChampion;
+      state.gauntletWins = snap.gauntletWins;
+      state.gauntletDefeated = [...snap.gauntletDefeated];
+      state.gauntletFalling = snap.gauntletFalling;
+      state.gauntletFallingItem = snap.gauntletFallingItem ? { ...snap.gauntletFallingItem } : null;
+      console.log("[Ascension] Restored gauntlet state");
+    }
+    let restoredPairSnapshot = null;
+    if (last.pairSnapshot) {
+      const { left, right } = last.pairSnapshot;
+      state.currentPair = { left, right };
+      state.currentRanks = { left: last.pairSnapshot.rankLeft, right: last.pairSnapshot.rankRight };
+      restoredPairSnapshot = last.pairSnapshot;
+      console.log("[Ascension] Restored pair snapshot");
+    }
+    return restoredPairSnapshot || null;
+  }
+  async function updateItemRatingDirect(itemId, rating, statsObj) {
+    const recordKey = getRecordKeyForBattleType(state.battleType);
+    if (state.battleType === "performers" || state.battleType === "scenes") {
+      const fields = {};
+      if (statsObj) {
+        const statsToRestore = { ...statsObj };
+        if (recordKey)
+          delete statsToRestore[recordKey];
+        fields.hotornot_stats = JSON.stringify(statsToRestore);
+        if (recordKey && recordKey in statsObj) {
+          const recordData = statsObj[recordKey];
+          console.log(`[Ascension] Restoring ${recordKey} for ${itemId}:`, recordData);
+          if (recordData !== void 0 && recordData !== null) {
+            fields[recordKey] = Array.isArray(recordData) ? JSON.stringify(recordData) : recordData;
+          } else {
+            fields[recordKey] = "[]";
+          }
+        }
+      }
+      const mutationName = state.battleType === "performers" ? "performerUpdate" : "sceneUpdate";
+      console.log(`[Ascension] Restoring ${state.battleType} ${itemId} with fields:`, fields);
+      await graphqlQuery(`
+      mutation($id: ID!, $rating: Int!, $fields: Map) {
+        ${mutationName}(input: {
+          id: $id,
+          rating100: $rating,
+          custom_fields: { partial: $fields }
+        }) {
+          id
+        }
+      }`, {
+        id: itemId,
+        rating: Math.round(rating),
+        fields
+      });
+    } else if (state.battleType === "images") {
+      await updateImageRating(itemId, rating);
+    } else {
+      console.warn(`[Ascension] Unknown battle type for direct update: ${state.battleType}`);
+    }
+  }
+  async function getHotOrNotConfig() {
+    if (pluginConfigCache)
+      return pluginConfigCache;
+    const result = await graphqlQuery(`query { configuration { plugins } }`);
+    pluginConfigCache = (result.configuration.plugins || {})["HotOrNot"] || {};
+    return pluginConfigCache;
+  }
+  async function isBattleRankBadgeEnabled() {
+    const config = await getHotOrNotConfig();
+    return config.showBattleRankBadge !== false;
+  }
+  var FRAGMENTS, PERFORMER_FRAGMENT, IMAGE_FRAGMENT, SCENE_FRAGMENT, pluginConfigCache;
+  var init_api_client = __esm({
+    "api-client.js"() {
+      init_rating_utils();
+      init_parsers();
+      init_math_utils();
+      init_state();
+      FRAGMENTS = {
+        PERFORMER: `id name image_path rating100 details custom_fields birthdate ethnicity country gender height_cm measurements fake_tits scene_count image_count gallery_count tags { name }`,
+        IMAGE: `id rating100 paths { thumbnail image }`,
+        SCENE: `id title date rating100 organized details director files { duration path } paths { screenshot preview } performers { id name image_path rating100 } studio { id name } tags { id name } play_count last_played_at play_duration o_counter custom_fields`
+      };
+      PERFORMER_FRAGMENT = FRAGMENTS.PERFORMER;
+      IMAGE_FRAGMENT = FRAGMENTS.IMAGE;
+      SCENE_FRAGMENT = FRAGMENTS.SCENE;
+      pluginConfigCache = null;
+    }
+  });
+
+  // match-handler.js
+  var match_handler_exports = {};
+  __export(match_handler_exports, {
+    handleChooseItem: () => handleChooseItem,
+    handleSkip: () => handleSkip,
+    handleUndo: () => handleUndo
+  });
+  function useBattleScoreDisplay(performer) {
+    if (!performer || state.battleType !== "performers")
+      return false;
+    return true;
+  }
+  function getDisplayRating(performer) {
+    if (!performer || state.battleType !== "performers") {
+      return parseInt(performer?.rating100) || 1;
+    }
+    const battleScore = calculateBattleScore(performer);
+    return Math.round(battleScore * 10);
+  }
+  async function handleChooseItem(event) {
+    if (state.disableChoice)
+      return;
+    state.disableChoice = true;
+    const body = event.currentTarget;
+    const winnerId = body.dataset.winner;
+    const isLeftWinner = winnerId === state.currentPair.left.id;
+    const winnerItem = isLeftWinner ? state.currentPair.left : state.currentPair.right;
+    const loserItem = isLeftWinner ? state.currentPair.right : state.currentPair.left;
+    const loserId = loserItem.id;
+    const winnerCard = body.closest(".hon-scene-card");
+    const loserCard = document.querySelector(`[data-performer-id="${loserId}"], [data-scene-id="${loserId}"], [data-image-id="${loserId}"]`);
+    const winnerRating = parseInt(winnerCard.dataset.rating) || 1;
+    const loserRating = parseInt(loserCard?.dataset.rating) || 1;
+    const winnerDisplayRating = getDisplayRating(winnerItem);
+    const loserDisplayRating = getDisplayRating(loserItem);
+    const loserRank = isLeftWinner ? state.currentRanks.right : state.currentRanks.left;
+    if (state.battleType === "images") {
+      const outcome2 = await handleComparison(winnerId, loserId, winnerRating, loserRating, null, winnerItem, loserItem);
+      applyVisualFeedback(winnerCard, loserCard, winnerItem, loserItem, winnerDisplayRating, loserDisplayRating, outcome2);
+      setTimeout(() => loadNewPair(), 800);
+      return;
+    }
+    const recordModeOutcome = async () => {
+      const outcome2 = await handleComparison(
+        winnerId,
+        loserId,
+        winnerRating,
+        loserRating,
+        null,
+        winnerItem,
+        loserItem,
+        false
+      );
+      applyVisualFeedback(winnerCard, loserCard, winnerItem, loserItem, winnerDisplayRating, loserDisplayRating, outcome2);
+      return outcome2;
+    };
+    if (state.currentMode === "gauntlet") {
+      if (state.gauntletFalling && state.gauntletFallingItem) {
+        const outcome2 = await recordModeOutcome();
+        winnerItem.rating100 = outcome2.newWinnerRating;
+        loserItem.rating100 = outcome2.newLoserRating;
+        if (winnerId === state.gauntletFallingItem.id) {
+          const placedRank = isLeftWinner ? state.currentRanks.left : state.currentRanks.right;
+          setTimeout(() => {
+            showPlacementScreen(winnerItem, placedRank, outcome2.newWinnerRating, state.battleType, state.totalItemsCount);
+          }, 800);
+          return;
+        }
+        state.gauntletFallingItem = loserItem;
+        setTimeout(() => loadNewPair(), 800);
+        return;
+      }
+      if (winnerId === state.gauntletChampion?.id) {
+        const outcome2 = await recordModeOutcome();
+        winnerItem.rating100 = outcome2.newWinnerRating;
+        loserItem.rating100 = outcome2.newLoserRating;
+        state.gauntletChampion = winnerItem;
+        state.gauntletWins++;
+        state.gauntletDefeated.push(loserId);
+        if (state.gauntletWins >= state.totalItemsCount - 1) {
+          setTimeout(() => {
+            const victoryScreen = createVictoryScreen(state.gauntletChampion, state.battleType, state.gauntletWins, state.totalItemsCount);
+            const area = document.getElementById("hon-comparison-area");
+            if (area) {
+              area.innerHTML = victoryScreen;
+              document.getElementById("hon-new-gauntlet")?.addEventListener("click", () => {
+                resetBattleState();
+                loadNewPair();
+              });
+            }
+          }, 800);
+          return;
+        }
+        setTimeout(() => loadNewPair(), 800);
+        return;
+      }
+      if (loserId === state.gauntletChampion?.id) {
+        const outcome2 = await recordModeOutcome();
+        winnerItem.rating100 = outcome2.newWinnerRating;
+        loserItem.rating100 = outcome2.newLoserRating;
+        state.gauntletChampion = winnerItem;
+        state.gauntletWins = 0;
+        state.gauntletDefeated = [];
+        state.gauntletFalling = true;
+        state.gauntletFallingItem = loserItem;
+        setTimeout(() => loadNewPair(), 800);
+        return;
+      }
+    }
+    if (state.currentMode === "champion") {
+      const outcome2 = await recordModeOutcome();
+      winnerItem.rating100 = outcome2.newWinnerRating;
+      loserItem.rating100 = outcome2.newLoserRating;
+      if (winnerId === state.gauntletChampion?.id) {
+        state.gauntletChampion = winnerItem;
+        state.gauntletWins++;
+        state.gauntletDefeated.push(loserId);
+      } else if (loserId === state.gauntletChampion?.id) {
+        state.gauntletChampion = winnerItem;
+        state.gauntletWins++;
+        state.gauntletDefeated.push(loserId);
+      } else if (!state.gauntletChampion) {
+        state.gauntletChampion = winnerItem;
+        state.gauntletWins = 1;
+        state.gauntletDefeated = [loserId];
+      }
+      setTimeout(() => loadNewPair(), 800);
+      return;
+    }
+    const outcome = await handleComparison(
+      winnerId,
+      loserId,
+      winnerRating,
+      loserRating,
+      loserRank,
+      winnerItem,
+      loserItem,
+      false
+    );
+    applyVisualFeedback(winnerCard, loserCard, winnerItem, loserItem, winnerDisplayRating, loserDisplayRating, outcome);
+    setTimeout(() => loadNewPair(), 800);
+  }
+  async function handleSkip(event) {
+    if (state.disableChoice)
+      return;
+    const skipBtn = event?.currentTarget;
+    let skippedIds = [];
+    if (skipBtn?.dataset?.skip) {
+      skippedIds.push(skipBtn.dataset.skip);
+    }
+    if (skippedIds.length === 0) {
+      if (state.currentPair?.left?.id)
+        skippedIds.push(state.currentPair.left.id);
+      if (state.currentPair?.right?.id)
+        skippedIds.push(state.currentPair.right.id);
+    }
+    if (skippedIds.length === 0) {
+      console.log("[Ascension] No IDs to skip");
+      return;
+    }
+    console.log(`[Ascension] Skipping item(s): ${skippedIds.join(", ")}`);
+    state.skippedIds = state.skippedIds || [];
+    skippedIds.forEach((id) => state.skippedIds.push(id));
+    if (state.skippedIds.length > 100) {
+      state.skippedIds = state.skippedIds.slice(-100);
+    }
+    loadNewPair();
+  }
+  function applyVisualFeedback(winnerCard, loserCard, winnerItem, loserItem, winnerDisplayRating, loserDisplayRating, outcome) {
+    winnerCard.classList.add("hon-winner");
+    if (loserCard)
+      loserCard.classList.add("hon-loser");
+    const winnerBody = winnerCard.querySelector(".hon-scene-body");
+    const loserBody = loserCard ? loserCard.querySelector(".hon-scene-body") : null;
+    if (winnerBody) {
+      const winnerBtn = winnerBody.querySelector(".hon-choose-btn");
+      if (winnerBtn) {
+        winnerBtn.classList.add("chosen-btn");
+        if (!winnerBtn.classList.contains("hon-choose-btn-icon")) {
+          winnerBtn.innerHTML = "\u2705";
+        }
+      }
+    }
+    if (loserBody) {
+      const loserBtn = loserBody.querySelector(".hon-choose-btn");
+      if (loserBtn) {
+        loserBtn.classList.add("not-chosen-btn");
+        if (!loserBtn.classList.contains("hon-choose-btn-icon")) {
+          loserBtn.innerHTML = "\u274C";
+        }
+      }
+    }
+    const winnerIsBattleScore = useBattleScoreDisplay(winnerItem);
+    const loserIsBattleScore = useBattleScoreDisplay(loserItem);
+    const winnerNewDisplayRating = winnerIsBattleScore ? winnerDisplayRating + outcome.winnerChange : outcome.newWinnerRating;
+    const winnerDisplayChange = outcome.winnerChange;
+    const loserNewDisplayRating = loserIsBattleScore ? loserDisplayRating + outcome.loserChange : outcome.newLoserRating;
+    const loserDisplayChange = outcome.loserChange;
+    showRatingAnimation(winnerCard, winnerDisplayRating, winnerNewDisplayRating, winnerDisplayChange, true);
+    if (loserCard) {
+      showRatingAnimation(loserCard, loserDisplayRating, loserNewDisplayRating, loserDisplayChange, false);
+    }
+    setTimeout(() => {
+      winnerCard.classList.add("hon-transition-out");
+      if (loserCard)
+        loserCard.classList.add("hon-transition-out");
+    }, 400);
+  }
+  async function handleUndo() {
+    if (!state.matchHistory || state.matchHistory.length === 0) {
+      console.log("[Ascension] Nothing to undo.");
+      return;
+    }
+    const undoBtn = document.getElementById("hon-undo-btn");
+    if (undoBtn) {
+      undoBtn.disabled = true;
+      undoBtn.textContent = "\u{1F504}";
+    }
+    try {
+      console.log("[Ascension] Starting undo operation...");
+      const pairSnapshot = await undoLastMatch();
+      if (pairSnapshot?.left && pairSnapshot?.right) {
+        console.log("[Ascension] Re-rendering previous pair from snapshot");
+        const { renderCard: renderCard2 } = await Promise.resolve().then(() => (init_ui_manager(), ui_manager_exports));
+        const { attachBattleListeners: attachBattleListeners2 } = await Promise.resolve().then(() => (init_battle_engine(), battle_engine_exports));
+        const area = document.getElementById("hon-comparison-area");
+        if (area) {
+          state.disableChoice = false;
+          area.innerHTML = `
+          <div class="hon-vs-container">
+            ${renderCard2(pairSnapshot.left, "left", pairSnapshot.rankLeft)}
+            <div class="hon-vs-divider"><span>VS</span></div>
+            ${renderCard2(pairSnapshot.right, "right", pairSnapshot.rankRight)}
+          </div>
+        `;
+          attachBattleListeners2(area);
+        }
+        console.log("[Ascension] Undo successful \u2014 previous pair restored.");
+      } else {
+        console.log("[Ascension] No snapshot available, loading fresh pair");
+        loadNewPair();
+      }
+    } catch (err) {
+      console.error("[Ascension] Undo failed:", err);
+      const area = document.getElementById("hon-comparison-area");
+      if (area) {
+        area.innerHTML = `<div class="hon-error">Undo failed: ${err.message}</div>`;
+      }
+      setTimeout(() => {
+        loadNewPair();
+      }, 2e3);
+    } finally {
+      state.disableChoice = false;
+      const btn = document.getElementById("hon-undo-btn");
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = "\u21A9";
+        btn.style.display = state.matchHistory && state.matchHistory.length > 0 ? "inline-block" : "none";
+      }
+    }
+  }
+  var init_match_handler = __esm({
+    "match-handler.js"() {
+      init_state();
+      init_api_client();
+      init_ui_manager();
+      init_battle_engine();
+      init_rating_utils();
+    }
+  });
+
+  // battle-engine.js
+  var battle_engine_exports = {};
+  __export(battle_engine_exports, {
+    attachBattleListeners: () => attachBattleListeners,
+    fetchAllScenesSorted: () => fetchAllScenesSorted,
+    fetchChampionPairPerformers: () => fetchChampionPairPerformers,
+    fetchChampionPairScenes: () => fetchChampionPairScenes,
+    fetchGauntletPairPerformers: () => fetchGauntletPairPerformers,
+    fetchGauntletPairScenes: () => fetchGauntletPairScenes,
+    fetchPair: () => fetchPair,
+    fetchRandomScenes: () => fetchRandomScenes,
+    fetchSceneCount: () => fetchSceneCount,
+    fetchSwissPairImages: () => fetchSwissPairImages,
+    fetchSwissPairPerformers: () => fetchSwissPairPerformers,
+    fetchSwissPairScenes: () => fetchSwissPairScenes,
+    handleMatchmakingLogic: () => handleMatchmakingLogic,
+    loadNewPair: () => loadNewPair
+  });
+  function isNonVotingClick(e) {
+    return !!e.target.closest("a.hon-scene-link, a.hon-performer-link, .hon-tags-more, .hon-focus-btn");
+  }
+  function getSceneDuration(scene) {
+    if (!scene)
+      return 0;
+    if (typeof scene.duration === "number" && !isNaN(scene.duration))
+      return scene.duration;
+    if (scene.files && scene.files.length > 0) {
+      const f = scene.files[0];
+      if (typeof f.duration === "number" && !isNaN(f.duration))
+        return f.duration;
+    }
+    return 0;
+  }
+  function scenePassesMinDuration(scene) {
+    const minDuration = getSceneMinDuration();
+    if (!minDuration || minDuration <= 0)
+      return true;
+    return getSceneDuration(scene) >= minDuration;
+  }
+  function attachBattleListeners(area) {
+    if (area._battleCleanup) {
+      area._battleCleanup();
+    }
+    const cleanupFunctions2 = [];
+    let carouselInstance = null;
+    let autoPlayTimeout = null;
+    let focusTimeout = null;
+    let clickTimeout = null;
+    let activeCard = null;
+    let activeVideo = null;
+    let mobileBlurHandler = null;
+    const clearAllTimers = () => {
+      clearTimeout(autoPlayTimeout);
+      clearTimeout(focusTimeout);
+      clearTimeout(clickTimeout);
+      autoPlayTimeout = null;
+      focusTimeout = null;
+      clickTimeout = null;
+    };
+    if (isMobile()) {
+      const clearAutoPlay = () => {
+        if (autoPlayTimeout) {
+          clearTimeout(autoPlayTimeout);
+          autoPlayTimeout = null;
+        }
+      };
+      const showPreviewVideo = (video) => {
+        video.style.display = "block";
+        video.style.position = "absolute";
+        video.style.top = "0";
+        video.style.left = "0";
+        video.style.width = "100%";
+        video.style.height = "100%";
+        video.style.objectFit = "contain";
+        video.style.zIndex = "10";
+      };
+      const hidePreviewVideo = (video) => {
+        video.style.display = "none";
+        video.style.position = "";
+        video.style.top = "";
+        video.style.left = "";
+        video.style.width = "";
+        video.style.height = "";
+        video.style.objectFit = "";
+        video.style.zIndex = "";
+      };
+      const startAutoPlay = (card) => {
+        clearAutoPlay();
+        const video = card.querySelector(".hon-hover-preview");
+        if (!video)
+          return;
+        activeVideo = video;
+        showPreviewVideo(video);
+        video.muted = true;
+        const playPromise = video.play();
+        if (playPromise) {
+          playPromise.catch((error) => {
+            console.warn("[Ascension] Video autoplay failed:", error);
+          });
+        }
+      };
+      const handleFocus = (card) => {
+        if (activeCard === card)
+          return;
+        clearAutoPlay();
+        if (activeVideo) {
+          activeVideo.pause();
+          activeVideo.currentTime = 0;
+          hidePreviewVideo(activeVideo);
+          activeVideo = null;
+        }
+        if (activeCard) {
+          activeCard.classList.remove("focused");
+        }
+        activeCard = card;
+        card.classList.add("focused");
+        startAutoPlay(card);
+      };
+      const handleBlur = () => {
+        clearAutoPlay();
+        if (activeVideo) {
+          activeVideo.pause();
+          activeVideo.currentTime = 0;
+          hidePreviewVideo(activeVideo);
+          activeVideo = null;
+        }
+        if (activeCard) {
+          activeCard.classList.remove("focused");
+          activeCard = null;
+        }
+      };
+      mobileBlurHandler = handleBlur;
+      const container = area.querySelector(".hon-vs-container");
+      if (container) {
+        const cards = Array.from(container.querySelectorAll(".hon-scene-card"));
+        if (cards.length >= 2) {
+          const carousel = enableCardCarousel(container, cards, {
+            onFocus: (card) => handleFocus(card),
+            onBlur: () => handleBlur()
+          });
+          carouselInstance = carousel;
+          cards.forEach((card) => {
+            const clickHandler = (e) => {
+              if (isNonVotingClick(e))
+                return;
+              if (clickTimeout)
+                clearTimeout(clickTimeout);
+              clickTimeout = setTimeout(() => {
+                clickTimeout = null;
+              }, 500);
+              e.stopPropagation();
+              handleChooseItem(e);
+            };
+            const sceneBody = card.querySelector(".hon-scene-body");
+            if (sceneBody) {
+              sceneBody.addEventListener("click", clickHandler);
+              cleanupFunctions2.push(() => sceneBody.removeEventListener("click", clickHandler));
+            }
+            const focusBtn = card.querySelector(".hon-focus-btn");
+            if (focusBtn) {
+              const focusHandler2 = (e) => {
+                e.stopPropagation();
+                focusBtn.classList.add("pressed");
+                setTimeout(() => focusBtn.classList.remove("pressed"), 200);
+                handleFocus(card);
+              };
+              focusBtn.addEventListener("click", focusHandler2);
+              cleanupFunctions2.push(() => focusBtn.removeEventListener("click", focusHandler2));
+            }
+            const focusHandler = () => handleFocus(card);
+            const blurHandler = handleBlur;
+            card.addEventListener("focus", focusHandler);
+            card.addEventListener("blur", blurHandler);
+            cleanupFunctions2.push(() => {
+              card.removeEventListener("focus", focusHandler);
+              card.removeEventListener("blur", blurHandler);
+            });
+          });
+          focusTimeout = setTimeout(() => {
+            handleFocus(cards[0]);
+          }, 100);
+        }
+      }
+    } else {
+      const sceneBodies = area.querySelectorAll(".hon-scene-body");
+      sceneBodies.forEach((body) => {
+        const clickHandler = (e) => {
+          if (isNonVotingClick(e))
+            return;
+          handleChooseItem(e);
+        };
+        body.addEventListener("click", clickHandler);
+        cleanupFunctions2.push(() => body.removeEventListener("click", clickHandler));
+      });
+      const cards = area.querySelectorAll(".hon-scene-card");
+      cards.forEach((card) => {
+        const video = card.querySelector(".hon-hover-preview");
+        if (!video)
+          return;
+        const mouseEnterHandler = () => {
+          if (video.style.display === "none")
+            video.style.display = "block";
+          video.muted = true;
+          video.style.position = "absolute";
+          video.style.top = "0";
+          video.style.left = "0";
+          video.style.width = "100%";
+          video.style.height = "100%";
+          video.style.objectFit = "contain";
+          video.play().catch(() => {
+          });
+        };
+        const mouseLeaveHandler = () => {
+          video.style.display = "none";
+          video.pause();
+          video.currentTime = 0;
+        };
+        card.addEventListener("mouseenter", mouseEnterHandler);
+        card.addEventListener("mouseleave", mouseLeaveHandler);
+        cleanupFunctions2.push(() => {
+          card.removeEventListener("mouseenter", mouseEnterHandler);
+          card.removeEventListener("mouseleave", mouseLeaveHandler);
+        });
+      });
+    }
+    const sceneCards = area.querySelectorAll(".hon-scene-card[data-scene-id]");
+    sceneCards.forEach((card) => {
+      const sceneImageContainer = card.querySelector(".hon-scene-image-container");
+      if (sceneImageContainer && sceneImageContainer.dataset.sceneUrl) {
+        const sceneUrl = sceneImageContainer.dataset.sceneUrl;
+        const imageContainerClickHandler = (e) => {
+          e.stopPropagation();
+          const link = document.createElement("a");
+          link.href = sceneUrl;
+          link.target = "_blank";
+          link.rel = "noopener noreferrer";
+          link.style.display = "none";
+          document.body.appendChild(link);
+          link.click();
+          setTimeout(() => {
+            if (link.parentNode)
+              link.parentNode.removeChild(link);
+          }, 0);
+        };
+        sceneImageContainer.style.cursor = "pointer";
+        sceneImageContainer.addEventListener("click", imageContainerClickHandler);
+        cleanupFunctions2.push(() => sceneImageContainer.removeEventListener("click", imageContainerClickHandler));
+      }
+    });
+    const tagElements = area.querySelectorAll(".hon-tags-more");
+    tagElements.forEach((tagElement) => {
+      const clickHandler = function(e) {
+        e.stopPropagation();
+        const container = this.parentElement;
+        const displayedTags = container.querySelector(".hon-tags-displayed");
+        const ellipsis = container.querySelector(".hon-tags-ellipsis");
+        const moreLink = this;
+        const expandedTags = container.querySelector(".hon-tags-expanded");
+        if (displayedTags)
+          displayedTags.style.display = "none";
+        if (ellipsis)
+          ellipsis.style.display = "none";
+        moreLink.style.display = "none";
+        if (expandedTags)
+          expandedTags.style.display = "inline";
+      };
+      tagElement.addEventListener("click", clickHandler);
+      cleanupFunctions2.push(() => tagElement.removeEventListener("click", clickHandler));
+    });
+    area._battleCleanup = () => {
+      if (mobileBlurHandler)
+        mobileBlurHandler();
+      clearAllTimers();
+      if (carouselInstance && typeof carouselInstance.destroy === "function") {
+        carouselInstance.destroy();
+        carouselInstance = null;
+      }
+      activeCard = null;
+      activeVideo = null;
+      cleanupFunctions2.forEach((cleanup3) => cleanup3());
+      delete area._battleCleanup;
+    };
+  }
+  async function fetchPair() {
+    const { battleType, currentMode } = state;
+    if (currentMode === "swiss") {
+      if (battleType === "performers")
+        return await fetchSwissPairPerformers(state.selectedGenders);
+      if (battleType === "images")
+        return await fetchSwissPairImages();
+      if (battleType === "scenes")
+        return await fetchSwissPairScenes();
+    }
+    if (currentMode === "gauntlet") {
+      if (battleType === "performers")
+        return await fetchGauntletPairPerformers();
+      if (battleType === "scenes")
+        return await fetchGauntletPairScenes();
+      if (battleType === "images")
+        return await fetchSwissPairImages();
+    }
+    if (currentMode === "champion") {
+      if (battleType === "performers")
+        return await fetchChampionPairPerformers();
+      if (battleType === "scenes")
+        return await fetchChampionPairScenes();
+      if (battleType === "images")
+        return await fetchSwissPairImages();
+    }
+    if (battleType === "scenes") {
+      return { items: await fetchRandomScenes(2), ranks: [null, null], isVictory: false };
+    }
+    return { items: await fetchRandomPerformers(2), ranks: [null, null], isVictory: false };
+  }
+  async function loadNewPair() {
+    state.disableChoice = false;
+    const area = document.getElementById("hon-comparison-area");
+    if (!area)
+      return;
+    const undoBtn = document.getElementById("hon-undo-btn");
+    if (undoBtn) {
+      undoBtn.style.display = state.matchHistory && state.matchHistory.length > 0 ? "inline-block" : "none";
+      undoBtn.disabled = false;
+      undoBtn.textContent = "\u21A9";
+    }
+    if ((state.currentMode === "gauntlet" || state.currentMode === "champion") && state.battleType === "performers" && !state.gauntletChampion && !state.gauntletFalling) {
+      if (area._battleCleanup)
+        area._battleCleanup();
+      showPerformerSelection();
+      return;
+    }
+    try {
+      const result = await fetchPair();
+      if (result.isVictory) {
+        if (area._battleCleanup)
+          area._battleCleanup();
+        area.innerHTML = createVictoryScreen(result.items[0], state.battleType, state.gauntletWins, state.totalItemsCount);
+        attachVictoryHandlers(area);
+        return;
+      }
+      if (result.isPlacement) {
+        if (area._battleCleanup)
+          area._battleCleanup();
+        showPlacementScreen(result.items[0], result.placementRank, result.placementRating, state.battleType, state.totalItemsCount);
+        return;
+      }
+      const [left, right] = result.items;
+      state.currentPair = { left, right };
+      state.currentRanks = { left: result.ranks[0], right: result.ranks[1] };
+      const oldContainer = area.querySelector(".hon-vs-container");
+      const newContainer = document.createElement("div");
+      newContainer.className = "hon-vs-container hon-pair-entering";
+      newContainer.innerHTML = `
+      ${renderCard(left, "left", result.ranks[0])}
+      <div class="hon-vs-divider"><span>VS</span></div>
+      ${renderCard(right, "right", result.ranks[1])}
+    `;
+      if (oldContainer) {
+        oldContainer.replaceWith(newContainer);
+      } else {
+        area.innerHTML = "";
+        area.appendChild(newContainer);
+      }
+      attachBattleListeners(area);
+    } catch (err) {
+      area.innerHTML = `<div class="hon-error">Error: ${err.message}</div>`;
+    }
+  }
+  function attachVictoryHandlers(area) {
+    const btn = area.querySelector("#hon-new-gauntlet");
+    if (btn) {
+      if (btn._victoryCleanup)
+        btn._victoryCleanup();
+      const clickHandler = () => {
+        resetBattleState();
+        if (state.currentMode === "gauntlet" && state.battleType === "performers") {
+          Promise.resolve().then(() => (init_gauntlet_selection(), gauntlet_selection_exports)).then((m) => m.showPerformerSelection());
+        } else {
+          loadNewPair();
+        }
+      };
+      btn.addEventListener("click", clickHandler);
+      btn._victoryCleanup = () => {
+        btn.removeEventListener("click", clickHandler);
+        delete btn._victoryCleanup;
+      };
+    }
+  }
+  function shouldForceCrossTierMatch() {
+    return Math.random() < 0.1;
+  }
+  function getTierPercentileWindow(tier) {
+    switch (tier) {
+      case "S-Tier":
+        return 8;
+      case "A-Tier":
+        return 12;
+      case "B-Tier":
+        return 16;
+      case "C-Tier":
+        return 20;
+      case "D-Tier":
+        return 28;
+      case "F-Tier":
+        return 40;
+      default:
+        return 25;
+    }
+  }
+  function getAdjacentTiers(tier) {
+    const index = TIER_ORDER.indexOf(tier);
+    if (index === -1)
+      return [];
+    const adjacent = [];
+    if (index > 0)
+      adjacent.push(TIER_ORDER[index - 1]);
+    if (index < TIER_ORDER.length - 1)
+      adjacent.push(TIER_ORDER[index + 1]);
+    return adjacent;
+  }
+  function isCustomTierMode() {
+    return state.selectedTiers && Array.isArray(state.selectedTiers) && !state.selectedTiers.includes("any");
+  }
+  function performerMatchesSelectedTiers(performer, tierPool) {
+    const selected = state.selectedTiers;
+    if (!selected || selected.includes("any"))
+      return true;
+    const allowed = new Set(selected);
+    if (allowed.has("newcomers")) {
+      const stats = parsePerformerEloData(performer);
+      if (stats.total_matches < 6)
+        return true;
+    }
+    const tier = getRatingTier(performer, tierPool);
+    return allowed.has(tier);
+  }
+  function canBattleInSelectedTiers(tier1, tier2) {
+    if (!isCustomTierMode())
+      return canBattleByTier(tier1, tier2);
+    const allowed = new Set(state.selectedTiers);
+    if (allowed.has("newcomers"))
+      return true;
+    return allowed.has(tier1) && allowed.has(tier2);
+  }
+  function getSelectedTierWindowMultiplier() {
+    if (!isCustomTierMode())
+      return 1;
+    const letters = state.selectedTiers.filter((t) => t !== "newcomers" && t !== "any");
+    if (letters.length < 2)
+      return 1;
+    const indices = letters.map((t) => TIER_ORDER.indexOf(t)).filter((i) => i !== -1);
+    if (indices.length < 2)
+      return 1;
+    const gap = Math.max(...indices) - Math.min(...indices);
+    if (gap <= 1)
+      return 1;
+    if (gap === 2)
+      return 2.5;
+    if (gap === 3)
+      return 4;
+    return 6;
+  }
+  function getCustomTierRatingWindow() {
+    if (!isCustomTierMode())
+      return 15;
+    const letters = state.selectedTiers.filter((t) => t !== "newcomers" && t !== "any");
+    if (letters.length < 2)
+      return 15;
+    const indices = letters.map((t) => TIER_ORDER.indexOf(t)).filter((i) => i !== -1);
+    if (indices.length < 2)
+      return 15;
+    const gap = Math.max(...indices) - Math.min(...indices);
+    if (gap <= 1)
+      return 30;
+    if (gap === 2)
+      return 55;
+    if (gap === 3)
+      return 90;
+    return 140;
+  }
+  function getCrossTierWeightMultiplier(seedTier, opponentTier) {
+    if (!isCustomTierMode())
+      return 1;
+    const gap = Math.abs(TIER_ORDER.indexOf(seedTier) - TIER_ORDER.indexOf(opponentTier));
+    if (gap <= 1)
+      return 1.8;
+    if (gap === 2)
+      return 2.5;
+    if (gap === 3)
+      return 3.5;
+    return 5;
+  }
+  async function fetchSwissPairImages() {
+    const totalImages = await fetchImageCount();
+    const useSampling = totalImages > 1e3;
+    const sampleSize = useSampling ? Math.min(500, totalImages) : totalImages;
+    const query = `query FindImagesByRating($filter: FindFilterType) {
+    findImages(filter: $filter) { images { ${IMAGE_FRAGMENT} } }
+  }`;
+    const result = await graphqlQuery(query, {
+      filter: {
+        per_page: sampleSize,
+        sort: useSampling ? "random" : "rating",
+        direction: useSampling ? void 0 : "DESC"
+      }
+    });
+    const images = result.findImages.images || [];
+    if (images.length < 2)
+      return { items: await fetchRandomImages(2), ranks: [null, null] };
+    const image1 = images[Math.floor(Math.random() * images.length)];
+    const rating1 = image1.rating100 || 1;
+    const matchWindow = images.length > 1 ? 10 : 20;
+    const similar = images.filter((s) => s.id !== image1.id && Math.abs((s.rating100 || 1) - rating1) <= matchWindow);
+    const image2 = similar.length > 0 ? similar[Math.floor(Math.random() * similar.length)] : images.filter((s) => s.id !== image1.id)[0];
+    let ranks = [null, null];
+    if (!useSampling && images.length > 0) {
+      const sortedImages = [...images].sort((a, b) => (b.rating100 || 0) - (a.rating100 || 0));
+      const rank1 = sortedImages.findIndex((img) => img.id === image1.id) + 1;
+      const rank2 = sortedImages.findIndex((img) => img.id === image2.id) + 1;
+      ranks = [rank1 || null, rank2 || null];
+    }
+    return { items: [image1, image2], ranks };
+  }
+  async function fetchRandomScenes(count = 2) {
+    const sceneQuery = `
+    query FindRandomScenes($filter: FindFilterType) {
+      findScenes(filter: $filter) {
+        scenes { ${SCENE_FRAGMENT} }
+      }
+    }
+  `;
+    const result = await graphqlQuery(sceneQuery, {
+      filter: {
+        per_page: 100,
+        sort: "random"
+      }
+    });
+    const allScenes = result?.findScenes?.scenes || [];
+    const eligibleScenes = allScenes.filter(scenePassesMinDuration);
+    if (eligibleScenes.length < 2) {
+      throw new Error("Not enough scenes above the minimum duration for comparison.");
+    }
+    const shuffled = [...eligibleScenes].sort(() => Math.random() - 0.5);
+    return shuffled.slice(0, count);
+  }
+  async function fetchAllScenesSorted() {
+    const queryTemplate = `
+    query FindAllScenes($filter: FindFilterType) {
+      findScenes(filter: $filter) {
+        scenes { ${SCENE_FRAGMENT} }
+      }
+    }
+  `;
+    const scenes = await fetchAllItems(queryTemplate, {
+      filter: { sort: "rating100", direction: "DESC" }
+    });
+    const eligible = scenes.filter(scenePassesMinDuration);
+    return eligible.sort((a, b) => {
+      const ratingDiff = (b.rating100 ?? 1) - (a.rating100 ?? 1);
+      if (ratingDiff !== 0)
+        return ratingDiff;
+      const playCountDiff = (b.play_count || 0) - (a.play_count || 0);
+      if (playCountDiff !== 0)
+        return playCountDiff;
+      const titleA = a.title?.toLowerCase() || "";
+      const titleB = b.title?.toLowerCase() || "";
+      return titleA.localeCompare(titleB);
+    });
+  }
+  async function fetchSwissPairScenes() {
+    const totalScenes = await fetchSceneCount();
+    const config = getSceneSelectionConfig(totalScenes);
+    let sceneMetadata = state.sceneMetadataCache;
+    state.sceneMetadataRefreshCounter = (state.sceneMetadataRefreshCounter || 0) + 1;
+    if (!sceneMetadata || state.sceneMetadataRefreshCounter > config.metadataRefreshInterval) {
+      sceneMetadata = await fetchAllSceneMetadata();
+      state.sceneMetadataCache = sceneMetadata;
+      state.sceneMetadataRefreshCounter = 0;
+    }
+    const eligibleMetadata = sceneMetadata.filter(scenePassesMinDuration);
+    if (eligibleMetadata.length < 2) {
+      return { items: await fetchRandomScenes(2), ranks: [null, null] };
+    }
+    const avgMatches = calculateAverageMatches(eligibleMetadata.map((scene) => parsePerformerEloData(scene)));
+    const weightedScenes = eligibleMetadata.map((scene) => {
+      const stats = parsePerformerEloData(scene);
+      const rawMatches = stats.total_matches || 0;
+      const cappedMatches = Math.min(rawMatches, config.lowMatchThreshold);
+      const recencyWeight = getSceneRecencyWeight(scene);
+      const baseWeight = Math.pow(recencyWeight, 3) + Math.random() * 0.01;
+      const lowMatchBoost = getLowMatchBoost({ ...scene, total_matches: cappedMatches }, avgMatches);
+      const distributionBoost = getMatchCountDistributionBoost(scene, eligibleMetadata);
+      const sessionPenalty = getSceneSessionPenalty(scene.id);
+      const finalWeight = baseWeight * lowMatchBoost * distributionBoost * sessionPenalty;
+      return {
+        scene,
+        weight: finalWeight,
+        rating: scene.rating100 || 1,
+        matches: rawMatches,
+        recencyWeight
+      };
+    });
+    weightedScenes.sort((a, b) => b.weight - a.weight);
+    const seedWeights = weightedScenes.map((item) => item.weight);
+    const seedItem = weightedRandomSelect(weightedScenes, seedWeights) || weightedScenes[0];
+    const seedSceneMeta = seedItem.scene;
+    const seedRating = seedSceneMeta.rating100 || 1;
+    const seedMatches = parsePerformerEloData(seedSceneMeta).total_matches || 0;
+    let ratingWindow = config.ratingWindowInitial;
+    if (seedMatches > 20) {
+      ratingWindow = config.ratingWindowMin;
+    } else if (seedMatches > 10) {
+      ratingWindow = config.ratingWindowInitial;
+    } else if (seedMatches > 0) {
+      ratingWindow = Math.min(config.ratingWindowMax, config.ratingWindowInitial + 15);
+    } else {
+      ratingWindow = config.ratingWindowMax;
+    }
+    const isSceneHardExcluded = (scene) => {
+      const stats = parsePerformerEloData(scene);
+      if (!stats.last_match)
+        return false;
+      const lastMatch = new Date(stats.last_match).getTime();
+      if (isNaN(lastMatch))
+        return false;
+      const hoursSince = (Date.now() - lastMatch) / (1e3 * 60 * 60);
+      return hoursSince < config.hardRepeatWindowHours;
+    };
+    function filterCandidates(pool, window2, allowHardRepeat = false) {
+      return pool.filter((item) => {
+        if (item.scene.id === seedSceneMeta.id)
+          return false;
+        if (isSceneOnCooldown(item.scene.id) || isSceneRecentlySelected(item.scene.id))
+          return false;
+        if (!allowHardRepeat && isSceneHardExcluded(item.scene))
+          return false;
+        return Math.abs(seedRating - item.rating) <= window2;
+      });
+    }
+    let candidates = filterCandidates(weightedScenes, ratingWindow);
+    if (candidates.length < 10) {
+      candidates = filterCandidates(weightedScenes, ratingWindow * 3);
+    }
+    let inDrainMode = false;
+    if (candidates.length < 2) {
+      console.log("[Ascension] Scene pool exhausted within hard-repeat window; entering drain mode");
+      candidates = filterCandidates(weightedScenes, ratingWindow * 3, true).map((item) => ({
+        ...item,
+        weight: item.weight * config.drainModeRepeatPenalty
+      }));
+      inDrainMode = true;
+    }
+    if (candidates.length < 2) {
+      console.log("[Ascension] Scene pool exhausted; clearing session cooldown and re-sampling");
+      state.recentlySelectedScenes = [];
+      state.sessionSceneCounts = {};
+      state.sceneMetadataRefreshCounter = config.metadataRefreshInterval + 1;
+      sceneMetadata = await fetchAllSceneMetadata();
+      state.sceneMetadataCache = sceneMetadata;
+      state.sceneMetadataRefreshCounter = 0;
+      const refreshedWeighted = sceneMetadata.filter(scenePassesMinDuration).map((scene) => {
+        const stats = parsePerformerEloData(scene);
+        const rawMatches = stats.total_matches || 0;
+        const cappedMatches = Math.min(rawMatches, config.lowMatchThreshold);
+        const recencyWeight = getSceneRecencyWeight(scene);
+        const baseWeight = Math.pow(recencyWeight, 3) + Math.random() * 0.01;
+        const lowMatchBoost = getLowMatchBoost({ ...scene, total_matches: cappedMatches }, avgMatches);
+        const distributionBoost = getMatchCountDistributionBoost(scene, sceneMetadata);
+        const finalWeight = baseWeight * lowMatchBoost * distributionBoost;
+        return { scene, weight: finalWeight, rating: scene.rating100 || 1, matches: rawMatches };
+      });
+      refreshedWeighted.sort((a, b) => b.weight - a.weight);
+      candidates = refreshedWeighted.filter((item) => {
+        if (item.scene.id === seedSceneMeta.id)
+          return false;
+        return Math.abs(seedRating - item.rating) <= ratingWindow * 3;
+      });
+    }
+    if (candidates.length === 0) {
+      const fallback = weightedScenes.find((item) => item.scene.id !== seedSceneMeta.id);
+      candidates = fallback ? [fallback] : weightedScenes.slice(1, 2);
+      console.warn("[Ascension] Scene opponent selection fell back to last-resort");
+    }
+    candidates.sort((a, b) => b.weight - a.weight);
+    const topCandidates = candidates.slice(0, 20);
+    const candidateIds = [seedSceneMeta.id, ...topCandidates.map((c) => c.scene.id)];
+    const fullScenes = await fetchScenesByIds(candidateIds);
+    const seedFull = fullScenes.find((s) => s.id === seedSceneMeta.id) || seedSceneMeta;
+    const candidatesWithSimilarity = topCandidates.map((item) => {
+      const full = fullScenes.find((s) => s.id === item.scene.id);
+      if (!full)
+        return { ...item, similarity: 0 };
+      const similarity = calculateSceneSimilarity(seedFull, full);
+      const similarityPenalty = Math.max(config.maxSimilarityPenalty, 1 - similarity * config.similarityPenalty);
+      return {
+        ...item,
+        weight: item.weight * similarityPenalty,
+        similarity
+      };
+    });
+    const opponentWeights = candidatesWithSimilarity.map((c) => c.weight);
+    const opponentItem = weightedRandomSelect(candidatesWithSimilarity, opponentWeights);
+    const opponentSceneMeta = opponentItem ? opponentItem.scene : candidatesWithSimilarity[0].scene;
+    const seedScene = fullScenes.find((s) => s.id === seedSceneMeta.id) || seedSceneMeta;
+    const opponentScene = fullScenes.find((s) => s.id === opponentSceneMeta.id) || opponentSceneMeta;
+    trackSceneSelection(seedScene.id);
+    trackSceneSelection(opponentScene.id);
+    addToRecentlySelectedScenes(seedScene.id, config.recentCooldownSize);
+    addToRecentlySelectedScenes(opponentScene.id, config.recentCooldownSize);
+    return { items: [seedScene, opponentScene], ranks: [null, null] };
+  }
+  async function fetchSceneCount() {
+    const result = await graphqlQuery(`query { findScenes(filter: { per_page: 0 }) { count } }`);
+    return result.findScenes.count;
+  }
+  async function fetchGauntletPairScenes() {
+    const result = await graphqlQuery(`query FindScenesByRating($filter: FindFilterType) {
+    findScenes(filter: $filter) { scenes { ${SCENE_FRAGMENT} } }
+  }`, { filter: { per_page: -1, sort: "rating100", direction: "DESC" } });
+    const allScenes = result.findScenes.scenes || [];
+    const scenes = allScenes.filter(scenePassesMinDuration);
+    state.totalItemsCount = scenes.length;
+    if (scenes.length < 2)
+      return { items: await fetchRandomScenes(2), ranks: [null, null], isVictory: false };
+    return handleMatchmakingLogic(scenes, "scenes");
+  }
+  async function fetchChampionPairScenes() {
+    const result = await graphqlQuery(`query FindScenesByRating($filter: FindFilterType) {
+    findScenes(filter: $filter) { scenes { ${SCENE_FRAGMENT} } }
+  }`, { filter: { per_page: -1, sort: "rating100", direction: "DESC" } });
+    const allScenes = result.findScenes.scenes || [];
+    const scenes = allScenes.filter(scenePassesMinDuration);
+    state.totalItemsCount = scenes.length;
+    if (scenes.length < 2)
+      return { items: await fetchRandomScenes(2), ranks: [null, null] };
+    if (!state.gauntletChampion) {
+      const shuffled = [...scenes].sort(() => Math.random() - 0.5);
+      return { items: [shuffled[0], shuffled[1]], ranks: [null, null] };
+    }
+    return handleMatchmakingLogic(scenes, "scenes");
+  }
+  function canBattleByTier(tier1, tier2) {
+    const restrictedTiers = ["S-Tier", "A-Tier"];
+    if (restrictedTiers.includes(tier1) || restrictedTiers.includes(tier2)) {
+      const allowed = ["S-Tier", "A-Tier", "B-Tier"];
+      return allowed.includes(tier1) && allowed.includes(tier2);
+    }
+    return true;
+  }
+  function isPerformerRecentlySelected(performerId) {
+    if (!state.recentlySelectedPerformers) {
+      state.recentlySelectedPerformers = [];
+    }
+    return state.recentlySelectedPerformers.includes(performerId);
+  }
+  function isPerformerOnCooldown(performerId) {
+    if (!state.recentlySelectedPerformers) {
+      state.recentlySelectedPerformers = [];
+    }
+    return state.recentlySelectedPerformers.includes(performerId);
+  }
+  function addToRecentlySelected(performerId) {
+    if (!state.recentlySelectedPerformers) {
+      state.recentlySelectedPerformers = [];
+    }
+    state.recentlySelectedPerformers.push(performerId);
+    if (state.recentlySelectedPerformers.length > RECENT_PERFORMER_COOLDOWN) {
+      state.recentlySelectedPerformers.shift();
+    }
+  }
+  function isSceneRecentlySelected(sceneId) {
+    if (!state.recentlySelectedScenes) {
+      state.recentlySelectedScenes = [];
+    }
+    return state.recentlySelectedScenes.includes(sceneId);
+  }
+  function isSceneOnCooldown(sceneId) {
+    if (!state.recentlySelectedScenes) {
+      state.recentlySelectedScenes = [];
+    }
+    return state.recentlySelectedScenes.includes(sceneId);
+  }
+  function addToRecentlySelectedScenes(sceneId, maxSize = 200) {
+    if (!state.recentlySelectedScenes) {
+      state.recentlySelectedScenes = [];
+    }
+    state.recentlySelectedScenes.push(sceneId);
+    if (state.recentlySelectedScenes.length > maxSize) {
+      state.recentlySelectedScenes.shift();
+    }
+  }
+  function getSceneSessionPenalty(sceneId) {
+    if (!state.sessionSceneCounts) {
+      state.sessionSceneCounts = {};
+    }
+    const count = state.sessionSceneCounts[sceneId] || 0;
+    if (count > 2)
+      return 0.1;
+    if (count > 1)
+      return 0.3;
+    if (count > 0)
+      return 0.6;
+    return 1;
+  }
+  function trackSceneSelection(sceneId) {
+    if (!state.sessionSceneCounts) {
+      state.sessionSceneCounts = {};
+    }
+    state.sessionSceneCounts[sceneId] = (state.sessionSceneCounts[sceneId] || 0) + 1;
+    const keys = Object.keys(state.sessionSceneCounts);
+    if (keys.length > MAX_SESSION_SCENE_COUNTS) {
+      const sortedByCount = keys.sort((a, b) => state.sessionSceneCounts[a] - state.sessionSceneCounts[b]);
+      const toRemove = Math.ceil(keys.length * 0.2);
+      for (let i = 0; i < toRemove; i++) {
+        delete state.sessionSceneCounts[sortedByCount[i]];
+      }
+    }
+  }
+  function getTierFilteredPerformers(allPerformers, focusTier, tierPool) {
+    if (focusTier === "any")
+      return allPerformers;
+    if (focusTier === "newcomers") {
+      return allPerformers.filter((p) => {
+        const stats = parsePerformerEloData(p);
+        return stats.total_matches < 6;
+      });
+    }
+    return allPerformers.filter((p) => {
+      const tier = getRatingTier(p, tierPool);
+      return tier === focusTier;
+    });
+  }
+  function updateTierFocus(performers, tierPool) {
+    state.tierRotation.matchCount = (state.tierRotation.matchCount || 0) + 1;
+    const matchesUntilChange = 7 + Math.floor(Math.random() * 13);
+    if (state.tierRotation.sessionMatches >= matchesUntilChange) {
+      const tierMap = /* @__PURE__ */ new Map();
+      performers.forEach((p) => {
+        const tier = getRatingTier(p, tierPool);
+        if (!tierMap.has(tier)) {
+          tierMap.set(tier, []);
+        }
+        tierMap.get(tier).push(p);
+      });
+      const cycle = state.tierRotation.cycle;
+      const startIndex = (state.tierRotation.currentIndex + 1) % cycle.length;
+      let selectedTier = "any";
+      let examined = 0;
+      while (examined < cycle.length) {
+        const idx = (startIndex + examined) % cycle.length;
+        const tier = cycle[idx];
+        console.log(`[Ascension] Rotation examining tier: ${tier} (cycle index ${idx})`);
+        if (tier === "any") {
+          selectedTier = "any";
+          state.tierRotation.currentIndex = idx;
+          console.log(`[Ascension] Selected tier: ${selectedTier}`);
+          break;
+        }
+        let tierPerformers;
+        if (tier === "newcomers") {
+          tierPerformers = performers.filter((p) => {
+            const stats = parsePerformerEloData(p);
+            return stats.total_matches < 6;
+          });
+        } else {
+          tierPerformers = tierMap.get(tier) || [];
+        }
+        console.log(`[Ascension] Tier ${tier}: ${tierPerformers.length} performers`);
+        if (tierPerformers.length >= 20) {
+          const totalWeight = tierPerformers.reduce((sum, p) => sum + getRecencyWeight(p), 0);
+          const avgRecencyWeight = tierPerformers.length > 0 ? totalWeight / tierPerformers.length : 0;
+          console.log(`[Ascension] Tier ${tier}: avg recency weight: ${avgRecencyWeight.toFixed(2)}`);
+          if (avgRecencyWeight >= 0.8) {
+            selectedTier = tier;
+            state.tierRotation.currentIndex = idx;
+            console.log(`[Ascension] Selected tier: ${selectedTier}`);
+            break;
+          } else {
+            console.log(`[Ascension] Tier ${tier} rejected - avg recency weight ${avgRecencyWeight.toFixed(2)} < 0.80`);
+          }
+        } else {
+          console.log(`[Ascension] Tier ${tier} rejected - not enough performers (${tierPerformers.length} < 20)`);
+        }
+        examined++;
+      }
+      state.tierRotation.focusTier = selectedTier;
+      state.tierRotation.sessionMatches = 0;
+      state.tierRotation.lastSeen[selectedTier] = Date.now();
+    }
+    state.tierRotation.sessionMatches++;
+    return state.tierRotation.focusTier || "any";
+  }
+  function applyTemporaryWeightBoost(performers) {
+    console.log("[Ascension] Applying temporary weight boost to increase performer pool");
+    return performers.map((p) => {
+      const currentWeight = p.weight || 0;
+      const boostedWeight = Math.max(1, currentWeight + 2);
+      return {
+        ...p,
+        boosted: true,
+        originalWeight: currentWeight,
+        weight: boostedWeight
+      };
+    });
+  }
+  function createWeightedPool(performers, tierPool, focusTier) {
+    let tierFilteredPerformers = performers;
+    if (focusTier === "custom") {
+      tierFilteredPerformers = performers.filter((p) => performerMatchesSelectedTiers(p, tierPool));
+    } else if (focusTier !== "any") {
+      tierFilteredPerformers = getTierFilteredPerformers(performers, focusTier, tierPool);
+    }
+    const avgMatches = calculateAverageMatches(tierFilteredPerformers);
+    const weightMap = /* @__PURE__ */ new Map();
+    const eligiblePerformers = [];
+    const backupPerformers = [];
+    for (const p of tierFilteredPerformers) {
+      const cacheKey = `${p.id}-${p.last_match || "null"}`;
+      let weightData;
+      if (weightMap.has(cacheKey)) {
+        weightData = weightMap.get(cacheKey);
+      } else {
+        const stats2 = parsePerformerEloData(p);
+        const rawMatches = stats2.total_matches || 0;
+        const cappedMatches = Math.min(rawMatches, 10);
+        const baseWeight = Math.pow(getRecencyWeight(p), 3) + Math.random() * 0.01;
+        const lowMatchBoost = getLowMatchBoost({ ...p, total_matches: cappedMatches }, avgMatches);
+        const matchDistributionBoost = getMatchCountDistributionBoost(p, tierFilteredPerformers);
+        const sessionMatchPenalty = getSessionMatchPenalty(p.id);
+        const finalWeight = baseWeight * lowMatchBoost * matchDistributionBoost * sessionMatchPenalty;
+        weightData = {
+          p,
+          weight: finalWeight,
+          rating: p.rating100 || 1,
+          matches: rawMatches,
+          cappedMatches
+        };
+        weightMap.set(cacheKey, weightData);
+      }
+      const stats = parsePerformerEloData(weightData.p);
+      if (focusTier === "newcomers") {
+        if (weightData.matches < 6) {
+          if (!isPerformerOnCooldown(weightData.p.id) && !isPerformerRecentlySelected(weightData.p.id)) {
+            eligiblePerformers.push(weightData);
+          }
+        }
+        backupPerformers.push(weightData);
+      } else {
+        const isUnrated = stats.total_matches === 0;
+        const isHighWeight = weightData.weight > 1;
+        const isUndermatched = weightData.matches > 0 && weightData.matches < avgMatches * 0.2;
+        if (focusTier === "any" || focusTier === "custom") {
+          backupPerformers.push(weightData);
+        }
+        if (isUnrated || isHighWeight || isUndermatched) {
+          if (!isPerformerOnCooldown(weightData.p.id) && !isPerformerRecentlySelected(weightData.p.id)) {
+            eligiblePerformers.push(weightData);
+          }
+        }
+      }
+    }
+    if ((focusTier === "any" || focusTier === "custom") && eligiblePerformers.length < 2 && backupPerformers.length >= 2) {
+      const availablePerformers = backupPerformers.filter((item) => !isPerformerOnCooldown(item.p.id) && !isPerformerRecentlySelected(item.p.id)).sort((a, b) => b.weight - a.weight);
+      if (availablePerformers.length >= 2) {
+        eligiblePerformers.push(...availablePerformers.slice(0, Math.min(10, availablePerformers.length)));
+      }
+    }
+    if (focusTier === "newcomers" && eligiblePerformers.length < 2 && backupPerformers.length >= 2) {
+      const availablePerformers = backupPerformers.filter((item) => item.matches < 6 && !isPerformerOnCooldown(item.p.id) && !isPerformerRecentlySelected(item.p.id)).sort((a, b) => b.weight - a.weight);
+      if (availablePerformers.length >= 2) {
+        eligiblePerformers.push(...availablePerformers.slice(0, Math.min(10, availablePerformers.length)));
+      }
+    }
+    eligiblePerformers.sort((a, b) => b.weight - a.weight);
+    return { eligiblePerformers, backupPerformers };
+  }
+  function pickStrictPair(eligiblePerformers) {
+    if (eligiblePerformers.length < 2)
+      return null;
+    const weights = eligiblePerformers.map((item) => item.weight);
+    const seedItem = weightedRandomSelect(eligiblePerformers, weights) || eligiblePerformers[0];
+    if (seedItem && seedItem.p) {
+      trackPerformerSelection(seedItem.p.id);
+      addToRecentlySelected(seedItem.p.id);
+    }
+    const opponents = eligiblePerformers.filter(
+      (item) => item.p.id !== seedItem.p.id && !isPerformerOnCooldown(item.p.id) && !isPerformerRecentlySelected(item.p.id)
+    );
+    if (opponents.length === 0)
+      return null;
+    const opponentWeights = opponents.map((item) => item.weight);
+    const opponentItem = weightedRandomSelect(opponents, opponentWeights) || opponents[0];
+    return { seedItem, opponentItem };
+  }
+  function fetchStrictFilteredPair(performers, tierPool) {
+    if (!Array.isArray(performers) || performers.length < 2)
+      return null;
+    const { eligiblePerformers } = createWeightedPool(performers, tierPool, "custom");
+    const pair = pickStrictPair(eligiblePerformers);
+    if (!pair)
+      return null;
+    const { seedItem, opponentItem } = pair;
+    const rank1 = getPerformerRankInList(seedItem.p, performers);
+    const rank2 = getPerformerRankInList(opponentItem.p, performers);
+    return {
+      items: [seedItem.p, opponentItem.p],
+      ranks: [rank1, rank2]
+    };
+  }
+  async function fetchSwissPairPerformers() {
+    if (!state.sampleCounter)
+      state.sampleCounter = 0;
+    state.sampleCounter++;
+    const shouldRefreshSample = state.sampleCounter > 50;
+    if (shouldRefreshSample) {
+      state.sampleCounter = 0;
+      console.log("[Ascension] Refreshing performer sample pool");
+    }
+    const performerFilter = getPerformerFilter(state.cachedUrlFilter, state.selectedGenders);
+    const countQuery = `query CountPerformers($performer_filter: PerformerFilterType) {
+    findPerformers(performer_filter: $performer_filter, filter: { per_page: 0 }) { count }
+  }`;
+    const countResult = await graphqlQuery(countQuery, { performer_filter: performerFilter });
+    const totalPerformers = countResult.findPerformers.count;
+    const query = `query FindPerformersByRating($performer_filter: PerformerFilterType, $filter: FindFilterType) {
+    findPerformers(performer_filter: $performer_filter, filter: $filter) {
+      performers { ${PERFORMER_FRAGMENT} }
+    }
+  }`;
+    const useRandomFetch = Math.random() < 0.05;
+    const effectiveSort = useRandomFetch ? "random" : "updated_at";
+    const effectiveDirection = useRandomFetch ? "DESC" : "ASC";
+    const result = await graphqlQuery(query, {
+      performer_filter: performerFilter,
+      filter: {
+        per_page: useRandomFetch ? 200 : 800,
+        sort: effectiveSort,
+        direction: effectiveDirection
+      }
+    });
+    const performers = result.findPerformers.performers || [];
+    state.totalItemsCount = totalPerformers;
+    if (shouldRefreshSample || !state.globalPerformerPool || state.globalPerformerPool.length === 0) {
+      try {
+        state.globalPerformerPool = await fetchGlobalPerformerRatings();
+        console.log(`[Ascension] Loaded global performer pool: ${state.globalPerformerPool.length} performers`);
+      } catch (e) {
+        console.warn("[Ascension] Failed to load global performer pool, falling back to local pool for tiers", e);
+        state.globalPerformerPool = performers;
+      }
+    }
+    const tierPool = state.globalPerformerPool && state.globalPerformerPool.length > 0 ? state.globalPerformerPool : performers;
+    if (getUserFilterOverrideEnabled()) {
+      const strictResult = fetchStrictFilteredPair(performers, tierPool);
+      if (strictResult) {
+        return strictResult;
+      }
+      throw new Error(`Not enough performers match the selected saved filter (${performers.length} found). Try a different filter or disable "Enable User Filter Override".`);
+    }
+    const logMatch = (type, p1, p2, w1, w2, color) => {
+      const tierPool2 = state.globalPerformerPool && state.globalPerformerPool.length > 0 ? state.globalPerformerPool : performers;
+      const tier1 = getRatingTier(p1, tierPool2);
+      const tier2 = getRatingTier(p2, tierPool2);
+      const score1 = calculateBattleScore(p1);
+      const score2 = calculateBattleScore(p2);
+      const tierColor1 = getTierColor(tier1);
+      const tierColor2 = getTierColor(tier2);
+      console.log(
+        `%c[Ascension] ${type}: %c${p1.name || "???"} %c(ID: ${p1.id})%c (w:${w1.toFixed(2)}, %c${tier1} Asc.Score: ${score1.toFixed(2)}%c) %cvs %c${p2.name || "???"} %c(ID: ${p2.id})%c (w:${w2.toFixed(2)}, %c${tier2} Asc.Score: ${score2.toFixed(2)}%c)`,
+        "color: #1cb4d6; font-weight: bold;",
+        `color: ${color}; font-weight: bold;`,
+        "color: #1cb4d6;",
+        "color: #888;",
+        "color: #888;",
+        `color: ${tierColor1}; font-weight: bold;`,
+        "color: #888;",
+        "color: #888;",
+        `color: ${color}; font-weight: bold;`,
+        "color: #1cb4d6;",
+        "color: #888;",
+        "color: #888;",
+        `color: ${tierColor2}; font-weight: bold;`,
+        "color: #888;"
+      );
+    };
+    async function performWeightedSelection(sampledPerformers, targetFocusTier) {
+      const avgMatches = calculateAverageMatches(sampledPerformers);
+      let tierFilteredPerformers = sampledPerformers;
+      if (targetFocusTier === "custom") {
+        tierFilteredPerformers = sampledPerformers.filter((p) => performerMatchesSelectedTiers(p, tierPool));
+      } else if (targetFocusTier !== "any") {
+        tierFilteredPerformers = getTierFilteredPerformers(sampledPerformers, targetFocusTier, tierPool);
+      }
+      const weightMap = /* @__PURE__ */ new Map();
+      const eligiblePerformers = [];
+      const backupPerformers = [];
+      for (const p of tierFilteredPerformers) {
+        const cacheKey = `${p.id}-${p.last_match || "null"}`;
+        let weightData;
+        if (weightMap.has(cacheKey)) {
+          weightData = weightMap.get(cacheKey);
+        } else {
+          const stats2 = parsePerformerEloData(p);
+          const rawMatches = stats2.total_matches || 0;
+          const cappedMatches = Math.min(rawMatches, 10);
+          const baseWeight = Math.pow(getRecencyWeight(p), 3) + Math.random() * 0.01;
+          const lowMatchBoost = getLowMatchBoost({ ...p, total_matches: cappedMatches }, avgMatches);
+          const matchDistributionBoost = getMatchCountDistributionBoost(p, sampledPerformers);
+          const sessionMatchPenalty = getSessionMatchPenalty(p.id);
+          const finalWeight = baseWeight * lowMatchBoost * matchDistributionBoost * sessionMatchPenalty;
+          weightData = {
+            p,
+            weight: finalWeight,
+            rating: p.rating100 || 1,
+            matches: rawMatches,
+            cappedMatches
+          };
+          weightMap.set(cacheKey, weightData);
+        }
+        const stats = parsePerformerEloData(weightData.p);
+        if (targetFocusTier === "newcomers") {
+          if (weightData.matches < 6) {
+            if (!isPerformerOnCooldown(weightData.p.id) && !isPerformerRecentlySelected(weightData.p.id)) {
+              eligiblePerformers.push(weightData);
+            }
+          }
+          backupPerformers.push(weightData);
+        } else {
+          const isUnrated = stats.total_matches === 0;
+          const isHighWeight = weightData.weight > 1;
+          const isUndermatched = weightData.matches > 0 && weightData.matches < avgMatches * 0.2;
+          if (targetFocusTier === "any" || targetFocusTier === "custom") {
+            backupPerformers.push(weightData);
+          }
+          if (isUnrated || isHighWeight || isUndermatched) {
+            if (!isPerformerOnCooldown(weightData.p.id) && !isPerformerRecentlySelected(weightData.p.id)) {
+              eligiblePerformers.push(weightData);
+            }
+          }
+        }
+      }
+      if ((targetFocusTier === "any" || targetFocusTier === "custom") && eligiblePerformers.length < 2 && backupPerformers.length >= 2) {
+        const availablePerformers = backupPerformers.filter((item) => !isPerformerOnCooldown(item.p.id) && !isPerformerRecentlySelected(item.p.id)).sort((a, b) => b.weight - a.weight);
+        if (availablePerformers.length >= 2) {
+          eligiblePerformers.push(...availablePerformers.slice(0, Math.min(10, availablePerformers.length)));
+        }
+      }
+      if (targetFocusTier === "newcomers" && eligiblePerformers.length < 2 && backupPerformers.length >= 2) {
+        const availablePerformers = backupPerformers.filter((item) => item.matches < 6 && !isPerformerOnCooldown(item.p.id) && !isPerformerRecentlySelected(item.p.id)).sort((a, b) => b.weight - a.weight);
+        if (availablePerformers.length >= 2) {
+          eligiblePerformers.push(...availablePerformers.slice(0, Math.min(10, availablePerformers.length)));
+        }
+      }
+      eligiblePerformers.sort((a, b) => b.weight - a.weight);
+      if (eligiblePerformers.length < 2) {
+        console.log(`[Ascension] Not enough eligible performers (${eligiblePerformers.length}) in tier context '${targetFocusTier}' after weighting/filtering.`);
+        return null;
+      }
+      let seed;
+      const weights = eligiblePerformers.map((item) => item.weight);
+      const selected = weightedRandomSelect(eligiblePerformers, weights);
+      seed = selected || eligiblePerformers[0];
+      if (seed && seed.p) {
+        trackPerformerSelection(seed.p.id);
+        addToRecentlySelected(seed.p.id);
+      }
+      const tier1 = getRatingTier(seed.p, tierPool);
+      const percentileMap = buildPercentileMap(tierPool);
+      const seedPercentile = percentileMap.get(seed.p.id) ?? 50;
+      if (targetFocusTier === "custom") {
+        const selectedLetterTiers = state.selectedTiers.filter((t) => t !== "newcomers" && t !== "any");
+        const otherSelectedTiers = selectedLetterTiers.filter((t) => t !== tier1);
+        if (otherSelectedTiers.length > 0) {
+          const ratingWindow = getCustomTierRatingWindow();
+          let crossTierOpponents = eligiblePerformers.filter((item) => {
+            if (item.p.id === seed.p.id)
+              return false;
+            const itemTier = getRatingTier(item.p, tierPool);
+            if (!otherSelectedTiers.includes(itemTier))
+              return false;
+            if (!canBattleInSelectedTiers(tier1, itemTier))
+              return false;
+            if (isPerformerOnCooldown(item.p.id) || isPerformerRecentlySelected(item.p.id))
+              return false;
+            const ratingDiff = Math.abs(seed.rating - item.rating);
+            return ratingDiff <= ratingWindow;
+          });
+          if (crossTierOpponents.length < 3) {
+            const relaxedWindow = ratingWindow * 1.5;
+            crossTierOpponents = eligiblePerformers.filter((item) => {
+              if (item.p.id === seed.p.id)
+                return false;
+              const itemTier = getRatingTier(item.p, tierPool);
+              if (!otherSelectedTiers.includes(itemTier))
+                return false;
+              if (!canBattleInSelectedTiers(tier1, itemTier))
+                return false;
+              if (isPerformerOnCooldown(item.p.id) || isPerformerRecentlySelected(item.p.id))
+                return false;
+              const ratingDiff = Math.abs(seed.rating - item.rating);
+              return ratingDiff <= relaxedWindow;
+            });
+          }
+          if (crossTierOpponents.length > 0) {
+            const ctWeights = crossTierOpponents.map((candidate) => {
+              const itemTier = getRatingTier(candidate.p, tierPool);
+              return candidate.weight * getCrossTierWeightMultiplier(tier1, itemTier);
+            });
+            const crossTierOpponentItem = weightedRandomSelect(crossTierOpponents, ctWeights);
+            if (crossTierOpponentItem) {
+              logMatch(
+                "Custom Cross-Tier",
+                seed.p,
+                crossTierOpponentItem.p,
+                seed.weight,
+                crossTierOpponentItem.weight * getCrossTierWeightMultiplier(tier1, getRatingTier(crossTierOpponentItem.p, tierPool)),
+                "#E91E63"
+              );
+              const rank1 = getPerformerRankInList(seed.p, sampledPerformers);
+              const rank2 = getPerformerRankInList(crossTierOpponentItem.p, sampledPerformers);
+              return { items: [seed.p, crossTierOpponentItem.p], ranks: [rank1, rank2] };
+            }
+          }
+        }
+      }
+      if (targetFocusTier !== "custom" && shouldForceCrossTierMatch()) {
+        const crossTierCandidates = eligiblePerformers.filter(
+          (item) => item.p.id !== seed.p.id && (item.p.rating100 || 1) >= seed.rating + 20 && canBattleByTier(tier1, getRatingTier(item.p, tierPool)) && !isPerformerOnCooldown(item.p.id) && !isPerformerRecentlySelected(item.p.id)
+        );
+        if (crossTierCandidates.length >= 10) {
+          const crossTierWeights = crossTierCandidates.map((candidate) => candidate.weight);
+          const crossTierOpponentItem = weightedRandomSelect(crossTierCandidates, crossTierWeights);
+          if (crossTierOpponentItem) {
+            logMatch(
+              "CROSS-TIER",
+              seed.p,
+              crossTierOpponentItem.p,
+              seed.weight,
+              crossTierOpponentItem.weight,
+              "#E91E63"
+            );
+            const rank1 = getPerformerRankInList(seed.p, sampledPerformers);
+            const rank2 = getPerformerRankInList(crossTierOpponentItem.p, sampledPerformers);
+            return { items: [seed.p, crossTierOpponentItem.p], ranks: [rank1, rank2] };
+          }
+        }
+      }
+      const standardWindow = getTierPercentileWindow(tier1) * getSelectedTierWindowMultiplier();
+      const validOpponents = eligiblePerformers.filter((item) => {
+        if (item.p.id === seed.p.id)
+          return false;
+        const itemPercentile = percentileMap.get(item.p.id) ?? 50;
+        if (Math.abs(seedPercentile - itemPercentile) > standardWindow)
+          return false;
+        if (!canBattleInSelectedTiers(tier1, getRatingTier(item.p, tierPool)))
+          return false;
+        if (isPerformerOnCooldown(item.p.id) || isPerformerRecentlySelected(item.p.id))
+          return false;
+        return true;
+      });
+      if (validOpponents.length > 0) {
+        const weights_op = validOpponents.map((opponent) => opponent.weight);
+        const opponentItem = weightedRandomSelect(validOpponents, weights_op);
+        if (opponentItem) {
+          logMatch("Match", seed.p, opponentItem.p, seed.weight, opponentItem.weight, "#2196F3");
+          const rank1 = getPerformerRankInList(seed.p, sampledPerformers);
+          const rank2 = getPerformerRankInList(opponentItem.p, sampledPerformers);
+          return { items: [seed.p, opponentItem.p], ranks: [rank1, rank2] };
+        }
+      }
+      if (targetFocusTier === "any") {
+        const adjacentTiers = getAdjacentTiers(tier1);
+        const adjacentWindow = getTierPercentileWindow(tier1) * 1.25;
+        const adjacentOpponents = eligiblePerformers.filter((item) => {
+          if (item.p.id === seed.p.id)
+            return false;
+          const itemTier = getRatingTier(item.p, tierPool);
+          if (!adjacentTiers.includes(itemTier))
+            return false;
+          const itemPercentile = percentileMap.get(item.p.id) ?? 50;
+          if (Math.abs(seedPercentile - itemPercentile) > adjacentWindow)
+            return false;
+          if (!canBattleByTier(tier1, itemTier))
+            return false;
+          if (isPerformerOnCooldown(item.p.id) || isPerformerRecentlySelected(item.p.id))
+            return false;
+          return true;
+        });
+        if (adjacentOpponents.length > 0) {
+          const adjacentWeights = adjacentOpponents.map((opponent) => opponent.weight);
+          const opponentItem = weightedRandomSelect(adjacentOpponents, adjacentWeights);
+          if (opponentItem) {
+            logMatch("Adjacent-Tier", seed.p, opponentItem.p, seed.weight, opponentItem.weight, "#9C27B0");
+            const rank1 = getPerformerRankInList(seed.p, sampledPerformers);
+            const rank2 = getPerformerRankInList(opponentItem.p, sampledPerformers);
+            return { items: [seed.p, opponentItem.p], ranks: [rank1, rank2] };
+          }
+        }
+      }
+      const looseWindow = getTierPercentileWindow(tier1) * 1.5 * getSelectedTierWindowMultiplier();
+      const looseRangeOpponents = eligiblePerformers.filter(
+        (item) => item.p.id !== seed.p.id && Math.abs(seedPercentile - (percentileMap.get(item.p.id) ?? 50)) <= looseWindow && !isPerformerOnCooldown(item.p.id) && !isPerformerRecentlySelected(item.p.id) && canBattleInSelectedTiers(tier1, getRatingTier(item.p, tierPool))
+      );
+      if (looseRangeOpponents.length > 0) {
+        const looseWeights = looseRangeOpponents.map((opponent) => opponent.weight);
+        const opponentItem = weightedRandomSelect(looseRangeOpponents, looseWeights);
+        if (opponentItem) {
+          logMatch("Loose Match", seed.p, opponentItem.p, seed.weight, opponentItem.weight, "#FF9800");
+          const rank1 = getPerformerRankInList(seed.p, sampledPerformers);
+          const rank2 = getPerformerRankInList(opponentItem.p, sampledPerformers);
+          return { items: [seed.p, opponentItem.p], ranks: [rank1, rank2] };
+        }
+      }
+      const fallbackOpponents = eligiblePerformers.filter(
+        (item) => item.p.id !== seed.p.id && !isPerformerOnCooldown(item.p.id) && !isPerformerRecentlySelected(item.p.id) && canBattleInSelectedTiers(tier1, getRatingTier(item.p, tierPool))
+      );
+      if (fallbackOpponents.length > 0) {
+        const fallbackWeights = fallbackOpponents.map((opponent) => opponent.weight);
+        const fallbackItem = weightedRandomSelect(fallbackOpponents, fallbackWeights);
+        if (fallbackItem && fallbackItem.p.id !== seed.p.id) {
+          logMatch("FALLBACK-DIFF", seed.p, fallbackItem.p, seed.weight, fallbackItem.weight, "#F44336");
+          const rank1 = getPerformerRankInList(seed.p, sampledPerformers);
+          const rank2 = getPerformerRankInList(fallbackItem.p, sampledPerformers);
+          return { items: [seed.p, fallbackItem.p], ranks: [rank1, rank2] };
+        }
+      }
+      console.warn(`[Ascension] Found eligible performers for tier context '${targetFocusTier}' but failed to pair them.`);
+      return null;
+    }
+    const customTierMode = isCustomTierMode();
+    let initialFocusTier;
+    let tierColor;
+    if (customTierMode) {
+      initialFocusTier = "custom";
+      tierColor = "#00ff00";
+      console.log(
+        `%c[Ascension] Tier Filter active: ${state.selectedTiers.join(", ")}`,
+        "color: #00ff00; font-weight: bold;"
+      );
+    } else {
+      initialFocusTier = updateTierFocus(performers, tierPool);
+      tierColor = initialFocusTier === "newcomers" || initialFocusTier === "any" ? "#00ff00" : getTierColor(initialFocusTier);
+      console.log(
+        `%c[Ascension] Tier Selection: ${initialFocusTier}`,
+        `color: ${tierColor}; font-weight: bold;`
+      );
+    }
+    let pairingResult = await performWeightedSelection(performers, initialFocusTier);
+    if (!pairingResult && initialFocusTier !== "any") {
+      console.warn(`[Ascension] Failed to create match with ${customTierMode ? "tier filter" : "tier focus"} '${customTierMode ? state.selectedTiers.join(", ") : initialFocusTier}'. Attempting fallback to 'any' tier.`);
+      pairingResult = await performWeightedSelection(performers, "any");
+      if (pairingResult) {
+        console.log(`[Ascension] Successfully created match using 'any' tier fallback.`);
+      }
+    }
+    if (!pairingResult) {
+      console.warn(`[Ascension] Failed to create match even with 'any' tier fallback. Applying temporary weight boost.`);
+      const boostedPerformers = applyTemporaryWeightBoost(performers);
+      const boostedPairingResult = await performWeightedSelection(boostedPerformers, "any");
+      if (boostedPairingResult) {
+        console.log("[Ascension] Successfully created match using temporary weight boost.");
+        return boostedPairingResult;
+      }
+      console.warn("[Ascension] Temporary weight boost failed. Using basic random fallback.");
+      return { items: await fetchRandomPerformers(2), ranks: [null, null] };
+    }
+    return pairingResult;
+  }
+  function getMatchCountDistributionBoost(performer, allPerformers) {
+    const stats = parsePerformerEloData(performer);
+    const targetMatches = stats.total_matches || 0;
+    let fewerCount = 0;
+    const totalPerformers = allPerformers.length;
+    for (const p of allPerformers) {
+      const s = parsePerformerEloData(p);
+      const matches = s.total_matches || 0;
+      if (matches < targetMatches) {
+        fewerCount++;
+      }
+    }
+    const percentile = fewerCount / totalPerformers * 100;
+    if (percentile < 10)
+      return 1.5;
+    else if (percentile < 25)
+      return 1.3;
+    else if (percentile < 50)
+      return 1.1;
+    else if (percentile > 90)
+      return 0.7;
+    return 1;
+  }
+  function getSessionMatchPenalty(performerId) {
+    if (!state.sessionMatchCounts) {
+      state.sessionMatchCounts = {};
+    }
+    const sessionCount = state.sessionMatchCounts[performerId] || 0;
+    if (sessionCount > 2)
+      return 0.1;
+    if (sessionCount > 1)
+      return 0.3;
+    if (sessionCount > 0)
+      return 0.6;
+    return 1;
+  }
+  function trackPerformerSelection(performerId) {
+    if (!state.sessionMatchCounts) {
+      state.sessionMatchCounts = {};
+    }
+    state.sessionMatchCounts[performerId] = (state.sessionMatchCounts[performerId] || 0) + 1;
+    const keys = Object.keys(state.sessionMatchCounts);
+    if (keys.length > MAX_SESSION_MATCH_COUNTS) {
+      const sortedByCount = keys.sort((a, b) => state.sessionMatchCounts[a] - state.sessionMatchCounts[b]);
+      const toRemove = Math.ceil(keys.length * 0.2);
+      for (let i = 0; i < toRemove; i++) {
+        delete state.sessionMatchCounts[sortedByCount[i]];
+      }
+    }
+  }
+  function getPerformerRankInList(performer, allPerformers) {
+    if (!performer || performer.rating100 === null || performer.rating100 === 1)
+      return null;
+    const targetRating = performer.rating100 || 0;
+    let rank = 1;
+    for (const p of allPerformers) {
+      if (p.id !== performer.id && p.rating100 !== null && p.rating100 > 1 && (p.rating100 || 0) > targetRating) {
+        rank++;
+      }
+    }
+    return rank;
+  }
+  function buildPercentileMap(allPerformers) {
+    if (!Array.isArray(allPerformers) || allPerformers.length === 0)
+      return /* @__PURE__ */ new Map();
+    const scored = allPerformers.map((p) => ({ p, score: calculateBattleScore(p) }));
+    scored.sort((a, b) => b.score - a.score);
+    const total = scored.length;
+    const map = /* @__PURE__ */ new Map();
+    scored.forEach((item, index) => {
+      map.set(item.p.id, index / total * 100);
+    });
+    return map;
+  }
+  async function fetchGauntletPairPerformers() {
+    const gender = state.gauntletChampion?.gender || state.selectedGenders[0];
+    const performerFilter = getPerformerFilter(state.cachedUrlFilter, [gender]);
+    const result = await graphqlQuery(`query FindPerformersByRating($performer_filter: PerformerFilterType, $filter: FindFilterType) {
+    findPerformers(performer_filter: $performer_filter, filter: $filter) { count, performers { ${PERFORMER_FRAGMENT} } }
+  }`, { performer_filter: performerFilter, filter: { per_page: -1, sort: "rating", direction: "DESC" } });
+    const performers = result.findPerformers.performers || [];
+    state.totalItemsCount = performers.length;
+    if (!state.globalPerformerPool || state.globalPerformerPool.length === 0) {
+      try {
+        state.globalPerformerPool = await fetchGlobalPerformerRatings();
+        console.log(`[Ascension] Loaded global performer pool: ${state.globalPerformerPool.length} performers`);
+      } catch (e) {
+        console.warn("[Ascension] Failed to load global performer pool, falling back to local pool for tiers", e);
+        state.globalPerformerPool = performers;
+      }
+    }
+    if (performers.length < 2)
+      return { items: await fetchRandomPerformers(2), ranks: [null, null], isVictory: false };
+    return handleMatchmakingLogic(performers, "performers");
+  }
+  async function fetchChampionPairPerformers() {
+    const performerFilter = getPerformerFilter(state.cachedUrlFilter, state.selectedGenders);
+    const result = await graphqlQuery(`query FindPerformersByRating($performer_filter: PerformerFilterType, $filter: FindFilterType) {
+    findPerformers(performer_filter: $performer_filter, filter: $filter) { performers { ${PERFORMER_FRAGMENT} } }
+  }`, { performer_filter: performerFilter, filter: { per_page: -1, sort: "rating", direction: "DESC" } });
+    const performers = result.findPerformers.performers || [];
+    state.totalItemsCount = performers.length;
+    if (!state.globalPerformerPool || state.globalPerformerPool.length === 0) {
+      try {
+        state.globalPerformerPool = await fetchGlobalPerformerRatings();
+        console.log(`[Ascension] Loaded global performer pool: ${state.globalPerformerPool.length} performers`);
+      } catch (e) {
+        console.warn("[Ascension] Failed to load global performer pool, falling back to local pool for tiers", e);
+        state.globalPerformerPool = performers;
+      }
+    }
+    if (performers.length < 2)
+      return { items: await fetchRandomPerformers(2), ranks: [null, null] };
+    if (!state.gauntletChampion) {
+      const shuffled = [...performers].sort(() => Math.random() - 0.5);
+      return { items: [shuffled[0], shuffled[1]], ranks: [null, null] };
+    }
+    return handleMatchmakingLogic(performers, "performers");
+  }
+  function handleMatchmakingLogic(list, type) {
+    if (!state.totalItemsCount || state.totalItemsCount !== list.length) {
+      state.totalItemsCount = list.length;
+    }
+    if (state.gauntletChampion) {
+      const freshChampion = list.find((i) => i.id === state.gauntletChampion.id);
+      if (freshChampion)
+        state.gauntletChampion = freshChampion;
+    }
+    if (state.gauntletFallingItem) {
+      const freshFalling = list.find((i) => i.id === state.gauntletFallingItem.id);
+      if (freshFalling)
+        state.gauntletFallingItem = freshFalling;
+    }
+    if (!state.gauntletChampion) {
+      console.warn("[Ascension] No champion selected, picking a random starter.");
+      const randomStarter = list[Math.floor(Math.random() * list.length)];
+      const starterRating = randomStarter.rating100 || 1;
+      const isStarterUnrated = starterRating <= 1;
+      let candidate = list.find((i) => {
+        const candidateRating = i.rating100 || 1;
+        const isCandidateUnrated = candidateRating <= 1;
+        if (isStarterUnrated && isCandidateUnrated)
+          return false;
+        return i.id !== randomStarter.id;
+      });
+      if (state.seenPairs && state.seenPairs.size > 0) {
+        const candidates = list.filter((i) => {
+          const candidateRating = i.rating100 || 1;
+          const isCandidateUnrated = candidateRating <= 1;
+          if (isStarterUnrated && isCandidateUnrated)
+            return false;
+          return i.id !== randomStarter.id && !hasBeenRecentlyPaired(randomStarter.id, i.id);
+        });
+        if (candidates.length > 0) {
+          candidate = candidates[Math.floor(Math.random() * candidates.length)];
+        }
+      }
+      if (!candidate) {
+        candidate = list.find((i) => i.id !== randomStarter.id);
+      }
+      return {
+        items: [randomStarter, candidate],
+        ranks: [null, null],
+        isVictory: false
+      };
+    }
+    if (state.currentMode === "gauntlet" && state.gauntletFalling && state.gauntletFallingItem) {
+      const fallingItem = state.gauntletFallingItem;
+      const fallingRating = fallingItem.rating100 || 1;
+      const isFallingUnrated = fallingRating <= 1;
+      let potentialOpponents2 = list.filter((item) => {
+        const itemRating = item.rating100 || 1;
+        const isItemUnrated = itemRating <= 1;
+        if (isFallingUnrated && isItemUnrated)
+          return false;
+        return item.id !== fallingItem.id && itemRating < fallingRating && !state.gauntletDefeated.includes(item.id) && !state.skippedIds.includes(item.id) && !hasBeenRecentlyPaired(fallingItem.id, item.id);
+      });
+      potentialOpponents2.sort((a, b) => (b.rating100 || 1) - (a.rating100 || 1));
+      if (potentialOpponents2.length === 0) {
+        const lowestRank = list.length;
+        return {
+          items: [fallingItem],
+          placementRank: lowestRank,
+          placementRating: fallingItem.rating100 || 1,
+          isPlacement: true
+        };
+      }
+      const nextOpponent2 = potentialOpponents2[0];
+      trackSeenPair(fallingItem.id, nextOpponent2.id);
+      const fallingRank = list.findIndex((i) => i.id === fallingItem.id) + 1;
+      const opponentRank = list.findIndex((i) => i.id === nextOpponent2.id) + 1;
+      return {
+        items: [fallingItem, nextOpponent2],
+        ranks: [fallingRank, opponentRank],
+        isVictory: false
+      };
+    }
+    const champIdx = list.findIndex((i) => i.id === state.gauntletChampion.id);
+    let potentialOpponents = list.filter(
+      (item, idx) => idx < champIdx && !state.gauntletDefeated.includes(item.id) && !state.skippedIds.includes(item.id) && !hasBeenRecentlyPaired(state.gauntletChampion.id, item.id)
+    );
+    if (potentialOpponents.length === 0) {
+      if (state.skippedIds.length > 0) {
+        state.skippedIds = [];
+        potentialOpponents = list.filter(
+          (item, idx) => idx < champIdx && !state.gauntletDefeated.includes(item.id) && !hasBeenRecentlyPaired(state.gauntletChampion.id, item.id)
+        );
+      }
+      if (state.currentMode === "champion" && potentialOpponents.length === 0) {
+        state.gauntletDefeated = [];
+        const belowOpponents = list.filter(
+          (item, idx) => idx > champIdx && item.id !== state.gauntletChampion.id && !state.skippedIds.includes(item.id) && !hasBeenRecentlyPaired(state.gauntletChampion.id, item.id)
+        );
+        if (belowOpponents.length > 0) {
+          const proximityWindow2 = Math.min(5, belowOpponents.length);
+          let filteredOpponents2 = belowOpponents.slice(0, proximityWindow2).filter(
+            (opponent) => !hasBeenRecentlyPaired(state.gauntletChampion.id, opponent.id)
+          );
+          if (filteredOpponents2.length === 0) {
+            filteredOpponents2 = belowOpponents.slice(0, proximityWindow2);
+          }
+          const randomIdx2 = Math.floor(Math.random() * filteredOpponents2.length);
+          const nextOpponent2 = filteredOpponents2[randomIdx2];
+          trackSeenPair(state.gauntletChampion.id, nextOpponent2.id);
+          capSkippedIds();
+          return {
+            items: [state.gauntletChampion, nextOpponent2],
+            ranks: [champIdx + 1, list.indexOf(nextOpponent2) + 1],
+            isVictory: false
+          };
+        }
+        const fallback = list.find((i) => i.id !== state.gauntletChampion.id);
+        if (fallback) {
+          return {
+            items: [state.gauntletChampion, fallback],
+            ranks: [champIdx + 1, list.indexOf(fallback) + 1],
+            isVictory: false
+          };
+        }
+      }
+      return { items: [state.gauntletChampion], ranks: [1], isVictory: true };
+    }
+    const proximityWindow = Math.min(5, potentialOpponents.length);
+    let filteredOpponents = potentialOpponents.slice(-proximityWindow).filter(
+      (opponent) => !hasBeenRecentlyPaired(state.gauntletChampion.id, opponent.id)
+    );
+    if (filteredOpponents.length === 0) {
+      filteredOpponents = potentialOpponents.slice(-proximityWindow);
+    }
+    const randomIdx = Math.floor(Math.random() * filteredOpponents.length);
+    const nextOpponent = filteredOpponents[randomIdx];
+    trackSeenPair(state.gauntletChampion.id, nextOpponent.id);
+    capSkippedIds();
+    return {
+      items: [state.gauntletChampion, nextOpponent],
+      ranks: [champIdx + 1, list.indexOf(nextOpponent) + 1],
+      isVictory: false
+    };
+  }
+  function trackSeenPair(id1, id2) {
+    if (!state.seenPairs) {
+      state.seenPairs = /* @__PURE__ */ new Set();
+    }
+    const pairKey = [id1, id2].sort().join("-");
+    state.seenPairs.add(pairKey);
+    while (state.seenPairs.size > MAX_SEEN_PAIRS) {
+      const [first] = state.seenPairs;
+      state.seenPairs.delete(first);
+    }
+  }
+  function capSkippedIds() {
+    if (!state.skippedIds) {
+      state.skippedIds = [];
+    }
+    while (state.skippedIds.length > MAX_SKIPPED_IDS) {
+      state.skippedIds.shift();
+    }
+  }
+  function hasBeenRecentlyPaired(id1, id2) {
+    if (!state.seenPairs)
+      return false;
+    const pairKey = [id1, id2].sort().join("-");
+    return state.seenPairs.has(pairKey);
+  }
+  var MAX_SEEN_PAIRS, MAX_SKIPPED_IDS, MAX_SESSION_MATCH_COUNTS, MAX_SESSION_SCENE_COUNTS, TIER_ORDER, RECENT_PERFORMER_COOLDOWN;
+  var init_battle_engine = __esm({
+    "battle-engine.js"() {
+      init_api_client();
+      init_math_utils();
+      init_parsers();
+      init_state();
+      init_ui_manager();
+      init_gauntlet_selection();
+      init_match_handler();
+      init_ui_swipe();
+      init_rating_utils();
+      init_ui_sidebar();
+      MAX_SEEN_PAIRS = 500;
+      MAX_SKIPPED_IDS = 100;
+      MAX_SESSION_MATCH_COUNTS = 500;
+      MAX_SESSION_SCENE_COUNTS = 1e3;
+      TIER_ORDER = ["S-Tier", "A-Tier", "B-Tier", "C-Tier", "D-Tier", "F-Tier"];
+      RECENT_PERFORMER_COOLDOWN = 50;
+    }
+  });
+
+  // ui-dashboard.js
+  var ui_dashboard_exports = {};
+  __export(ui_dashboard_exports, {
+    attachEventListeners: () => attachEventListeners,
+    createMainUI: () => createMainUI,
+    handleGenderToggle: () => handleGenderToggle,
+    setMode: () => setMode,
+    updateSkipButtonVisibility: () => updateSkipButtonVisibility
+  });
+  function createSkeletonHTML(count, extraClass = "") {
+    const cards = Array.from({ length: count }, () => `
+    <div class="hon-skeleton-card">
+      <div class="hon-skeleton-img"></div>
+      <div class="hon-skeleton-text"></div>
+      <div class="hon-skeleton-text short"></div>
+    </div>
+  `).join("");
+    return `<div class="hon-skeleton-grid ${extraClass}">${cards}</div>`;
+  }
+  function createMainUI() {
+    const isPerformers = state.battleType === "performers";
+    const genderFilterHTML = isPerformers ? `
+    <div class="hon-gender-filter">
+      <div class="hon-gender-btns">
+        ${ALL_GENDERS.map((g) => `
+          <button
+            class="hon-gender-btn ${state.selectedGenders.includes(g.value) ? "active" : ""}"
+            data-gender="${g.value}"
+          >
+            ${g.label}
+          </button>`).join("")}
+      </div>
+    </div>` : "";
+    return `
+    <div id="hotornot-container" class="hon-container">
+      <div class="hon-header">
+        <h1 class="hon-title">Ascension</h1>
+
+        ${genderFilterHTML}
+        ${isPerformers ? `<button id="hon-stats-btn" class="btn btn-primary">\u{1F4CA} View All Stats</button>` : ""}
+      </div>
+      <div id="hon-performer-selection" style="display: none;">
+        <div id="hon-performer-list">${createSkeletonHTML(6)}</div>
+      </div>
+      <div class="hon-content">
+        <div id="hon-comparison-area">${createSkeletonHTML(2, "hon-comparison-skeleton")}</div>
+        <div class="hon-actions">
+          <div class="hon-action-buttons">
+            <button id="hon-skip-btn" class="hon-action-btn" title="Skip">\u23ED\uFE0F</button>
+            <button id="hon-undo-btn" class="hon-action-btn" title="">\u21A9</button>
+          </div>
+        </div>
+        <div class="hon-keyboard-hints">
+          <span class="hon-hint"><strong>\u2B05\uFE0F</strong> Choose Left</span>
+          <span class="hon-hint"><strong>\u27A1\uFE0F</strong> Choose Right</span>
+          <span class="hon-hint"><strong>Space</strong> to Skip</span>
+          <span class="hon-hint"><strong>Ctrl+Z</strong> to Undo</span>
+          <span class="hon-hint"><strong>ESC</strong> to Exit</span>
+        </div>
+      </div>
+    </div>`;
+  }
+  function updateSkipButtonVisibility() {
+    const skipBtn = document.getElementById("hon-skip-btn");
+    if (!skipBtn)
+      return;
+    const isSkippableMode = state.currentMode === "swiss" || state.currentMode === "scenes" || state.currentMode === "gauntlet" || state.currentMode === "champion";
+    skipBtn.style.display = isSkippableMode ? "inline-block" : "none";
+  }
+  function attachEventListeners(parent = document) {
+    if (!attachedElements.has(parent)) {
+      attachedElements.set(parent, /* @__PURE__ */ new Set());
+    }
+    const attachedSet = attachedElements.get(parent);
+    const statsBtn = parent.querySelector("#hon-stats-btn");
+    if (statsBtn && !attachedSet.has("statsBtn")) {
+      const handler = () => {
+        Promise.resolve().then(() => (init_ui_stats(), ui_stats_exports)).then((m) => m.openStatsModal());
+      };
+      statsBtn.addEventListener("click", handler);
+      attachedSet.add("statsBtn");
+    }
+    const performerLinks = parent.querySelectorAll(".hon-performer-link, .hon-gauntlet-select-img");
+    performerLinks.forEach((link, index) => {
+      const key = `link-${index}`;
+      if (!attachedSet.has(key)) {
+        const handler = (e) => e.stopPropagation();
+        link.addEventListener("click", handler);
+        attachedSet.add(key);
+      }
+    });
+    const skipBtn = parent.querySelector("#hon-skip-btn");
+    if (skipBtn && !attachedSet.has("skipBtn")) {
+      updateSkipButtonVisibility();
+      const handler = async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const isSkippableMode = state.currentMode === "swiss" || state.currentMode === "scenes" || state.currentMode === "gauntlet" || state.currentMode === "champion";
+        if (isSkippableMode) {
+          const { handleSkip: handleSkip2 } = await Promise.resolve().then(() => (init_match_handler(), match_handler_exports));
+          handleSkip2();
+        }
+      };
+      skipBtn.addEventListener("click", handler);
+      attachedSet.add("skipBtn");
+    }
+    const undoBtn = parent.querySelector("#hon-undo-btn");
+    if (undoBtn && !attachedSet.has("undoBtn")) {
+      const handler = () => handleUndo();
+      undoBtn.onclick = handler;
+      undoBtn.style.display = state.matchHistory && state.matchHistory.length > 0 ? "inline-block" : "none";
+      attachedSet.add("undoBtn");
+    }
+    const genderButtons = parent.querySelectorAll(".hon-gender-btn");
+    genderButtons.forEach((btn, index) => {
+      const key = `gender-${index}`;
+      if (!attachedSet.has(key)) {
+        const handler = () => handleGenderToggle(btn.dataset.gender);
+        btn.addEventListener("click", handler);
+        attachedSet.add(key);
+      }
+    });
+    const modeButtons = parent.querySelectorAll(".hon-mode-btn");
+    modeButtons.forEach((btn, index) => {
+      const key = `mode-${index}`;
+      if (!attachedSet.has(key)) {
+        const handler = async () => {
+          const rawMode = btn.dataset.mode;
+          const newMode = rawMode === "placement" ? "gauntlet" : rawMode;
+          if (newMode === "gauntlet" || newMode === "champion") {
+            resetBattleState();
+          }
+          state.currentMode = newMode;
+          modeButtons.forEach((button) => {
+            const buttonRawMode = button.dataset.mode;
+            const buttonNormalizedMode = buttonRawMode === "placement" ? "gauntlet" : buttonRawMode;
+            button.classList.toggle("active", buttonNormalizedMode === newMode);
+          });
+          const modal = document.getElementById("hon-modal");
+          if (modal) {
+            modal.classList.remove("hon-mode-champion", "hon-mode-swiss", "hon-mode-gauntlet", "hon-mode-placement");
+            modal.classList.add(`hon-mode-${rawMode}`);
+          }
+          const selectionContainer = document.getElementById("hon-performer-selection");
+          const comparisonArea = document.getElementById("hon-comparison-area");
+          const actionsEl = document.querySelector(".hon-actions");
+          if (newMode === "swiss") {
+            if (selectionContainer)
+              selectionContainer.style.display = "none";
+            if (comparisonArea)
+              comparisonArea.style.display = "";
+            if (actionsEl)
+              actionsEl.style.display = "";
+            loadNewPair();
+          } else if (newMode === "gauntlet" || newMode === "champion") {
+            if (selectionContainer)
+              selectionContainer.style.display = "block";
+            if (comparisonArea)
+              comparisonArea.style.display = "none";
+            if (actionsEl)
+              actionsEl.style.display = "none";
+            Promise.resolve().then(() => (init_gauntlet_selection(), gauntlet_selection_exports)).then((m) => m.loadPerformerSelection());
+          }
+          updateSkipButtonVisibility();
+        };
+        btn.addEventListener("click", handler);
+        attachedSet.add(key);
+      }
+    });
+  }
+  function handleGenderToggle(gender) {
+    const isSelected = state.selectedGenders.includes(gender);
+    if (isSelected) {
+      state.selectedGenders = state.selectedGenders.filter((g) => g !== gender);
+    } else {
+      state.selectedGenders.push(gender);
+    }
+    try {
+      localStorage.setItem("hotornot_selected_genders", JSON.stringify(state.selectedGenders));
+    } catch (e) {
+      console.warn("[Ascension] Could not save gender selection to localStorage:", e);
+    }
+    console.log(`[Ascension] Gender Filter Updated: ${state.selectedGenders.join(", ")}`);
+    const genderBtns = document.querySelectorAll(`.hon-gender-btn[data-gender="${gender}"]`);
+    genderBtns.forEach((btn) => {
+      btn.classList.toggle("active", !isSelected);
+    });
+    loadNewPair();
+  }
+  function setMode(mode) {
+    const rawMode = mode;
+    const normalizedMode = rawMode === "placement" ? "gauntlet" : rawMode;
+    if (normalizedMode === "gauntlet" || normalizedMode === "champion") {
+      resetBattleState();
+    }
+    state.currentMode = normalizedMode;
+    const selEl = document.getElementById("hon-performer-selection");
+    const compEl = document.getElementById("hon-comparison-area");
+    if (selEl)
+      selEl.style.display = "none";
+    if (compEl)
+      compEl.style.display = "none";
+    const modal = document.getElementById("hon-modal");
+    if (modal) {
+      modal.classList.remove("hon-mode-champion", "hon-mode-swiss", "hon-mode-gauntlet", "hon-mode-placement");
+      modal.classList.add(`hon-mode-${rawMode}`);
+    }
+    if (normalizedMode === "gauntlet" || normalizedMode === "champion") {
+      Promise.resolve().then(() => (init_gauntlet_selection(), gauntlet_selection_exports)).then((m) => m.loadPerformerSelection());
+    }
+    updateSkipButtonVisibility();
+  }
+  var attachedElements;
+  var init_ui_dashboard = __esm({
+    "ui-dashboard.js"() {
+      init_state();
+      init_dom_utils();
+      init_constants();
+      init_battle_engine();
+      init_match_handler();
+      attachedElements = /* @__PURE__ */ new WeakMap();
     }
   });
 
