@@ -4617,6 +4617,50 @@
   filter: invert(1);
 }
 
+.hon-options-saved-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  color: #ccc;
+}
+
+.hon-options-saved-filter-row label {
+  font-size: 0.95rem;
+  color: #ccc;
+  white-space: nowrap;
+}
+
+.hon-options-saved-filter-row select {
+  background: #2a2a2a;
+  border: 1px solid #444;
+  border-radius: 6px;
+  color: #fff;
+  padding: 8px 12px;
+  font-size: 0.95rem;
+  min-width: 180px;
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.hon-options-saved-filter-row select:focus {
+  border-color: #1cb4d6;
+  box-shadow: 0 0 0 2px rgba(28, 180, 214, 0.2);
+}
+
+.hon-options-saved-filter-row select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: #222;
+  color: #888;
+}
+
+.hon-options-saved-filter-row select option {
+  background: #2a2a2a;
+  color: #fff;
+}
+
 
 /* === scene-cards.css === */
 
