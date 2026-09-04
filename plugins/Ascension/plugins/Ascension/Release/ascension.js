@@ -132,10 +132,13 @@
       recentCooldownSize: Math.min(300, Math.max(75, Math.floor(totalScenes * 0.01))),
       similarityPenalty: 0.65,
       maxSimilarityPenalty: 0.15,
+      similarityHardThreshold: 0.55,
+      similaritySoftThreshold: 0.3,
       persistentCooldownHours: 6,
       hardRepeatWindowHours: 24,
       drainModeRepeatPenalty: 0.05,
-      metadataRefreshInterval: 10
+      metadataRefreshInterval: 10,
+      sceneSessionHardCap: 3
     };
   }
   function calculateSceneSimilarity(sceneA, sceneB) {
@@ -238,14 +241,15 @@
     loserMatchCount,
     winnerStats = {},
     loserStats = {},
-    isSpecialChallenge = false
+    isSpecialChallenge = false,
+    kFactorFn = null
   }) {
     const effWinner = winnerEffectiveRating ?? winnerRating;
     const effLoser = loserEffectiveRating ?? loserRating;
     const ratingDiff = effLoser - effWinner;
     const expectedWinner = 1 / (1 + Math.pow(10, ratingDiff / 400));
-    const winnerK = getProgressiveKFactor(winnerRating, null, winnerMatchCount, mode);
-    const loserK = getProgressiveKFactor(loserRating, null, loserMatchCount, mode);
+    const winnerK = kFactorFn ? kFactorFn(winnerRating, loserRating, winnerMatchCount, mode) : getProgressiveKFactor(winnerRating, null, winnerMatchCount, mode);
+    const loserK = kFactorFn ? kFactorFn(loserRating, winnerRating, loserMatchCount, mode) : getProgressiveKFactor(loserRating, null, loserMatchCount, mode);
     const sameTier = winnerTier && loserTier && winnerTier === loserTier;
     const winnerUnderdogMult = getUnderdogMultiplier(effWinner, effLoser, sameTier);
     const effDiff = effLoser - effWinner;
@@ -603,7 +607,7 @@
       unratedPerformers.forEach((p) => {
         rankMap.set(p.id, {
           rank: ratedCount + 1,
-          total: ratedCount,
+          total: allPerformers.length,
           rating: p.rating100 ?? 1,
           stats: null,
           battleScore: 0
@@ -651,13 +655,20 @@
     state.sessionMatchCounts = {};
     state.recentlySelectedPerformers = [];
   }
+  function getCurrentPagePerformerId() {
+    try {
+      const match = window.location.pathname.match(/\/performers\/([^\/]+)(?:\/|$)/);
+      return match ? match[1] : null;
+    } catch (e) {
+      return null;
+    }
+  }
   var state;
   var init_state = __esm({
     "state.js"() {
       init_math_utils();
       init_rating_utils();
       state = {
-        // Current Matchup Info
         currentPair: { left: null, right: null },
         currentRanks: { left: null, right: null },
         // App Configuration & Context
@@ -667,17 +678,15 @@
         // "performers", "scenes", or "images"
         totalItemsCount: 0,
         disableChoice: false,
-        // Cache of the global unfiltered performer population for percentile tier calc
         globalPerformerPool: [],
-        // Gauntlet/Champion Mode Progress
         gauntletChampion: null,
         gauntletWins: 0,
         gauntletChampionRank: 0,
         gauntletDefeated: [],
         gauntletFalling: false,
         gauntletFallingItem: null,
-        // Filters & Settings
         cachedUrlFilter: null,
+        cachedSceneFilter: null,
         badgeInjectionInProgress: false,
         pluginConfigCache: null,
         selectedGenders: (() => {
@@ -696,13 +705,11 @@
             return ["any"];
           }
         })(),
-        // Enhanced tracking
         matchHistory: [],
         skippedIds: [],
-        // Track multiple skipped IDs
         seenPairs: /* @__PURE__ */ new Set(),
-        // Track seen performer pairs to prevent repetition
-        // Skip tracking
+        recentlySelectedScenes: [],
+        sessionSceneCounts: {},
         skippedId: null
       };
       state.tierRotation = state.tierRotation || {
@@ -1030,6 +1037,14 @@
   });
 
   // formatters.js
+  function getGenderDisplay(gender) {
+    if (!gender)
+      return "";
+    const genderEntry = ALL_GENDERS.find((g) => g.value === gender);
+    const label = genderEntry ? genderEntry.label : gender;
+    const icon = GENDER_ICONS[gender] || "\u{1F464}";
+    return `${icon} ${label}`;
+  }
   function formatDuration(seconds) {
     if (!seconds)
       return "N/A";
@@ -1041,7 +1056,7 @@
   function escapeHtml(unsafe) {
     if (!unsafe)
       return "";
-    return String(unsafe).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+    return String(unsafe).replace(/&/g, "&").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
   }
   function getCountryDisplay(countryCode) {
     if (!countryCode)
@@ -1051,10 +1066,421 @@
     const flagClass = `fi fi-${code.toLowerCase().replace(/[^a-z]/g, "")}`;
     return `<span class="${flagClass}"></span> ${name}`;
   }
+  function getRecordPreviewTooltip() {
+    if (!recordPreviewTooltip) {
+      recordPreviewTooltip = document.createElement("div");
+      recordPreviewTooltip.className = "record-preview-tooltip";
+      recordPreviewTooltip.style.position = "fixed";
+      recordPreviewTooltip.style.display = "none";
+      recordPreviewTooltip.style.zIndex = "9999";
+      recordPreviewTooltip.style.pointerEvents = "none";
+      recordPreviewTooltip.style.borderRadius = "6px";
+      recordPreviewTooltip.style.overflow = "hidden";
+      recordPreviewTooltip.style.boxShadow = "0 4px 12px rgba(0,0,0,0.5)";
+      recordPreviewTooltip.style.backgroundColor = "#000";
+      recordPreviewTooltip.style.maxWidth = "320px";
+      document.body.appendChild(recordPreviewTooltip);
+    }
+    return recordPreviewTooltip;
+  }
+  function positionTooltip(tooltip, clientX, clientY) {
+    const padding = 12;
+    const rect = tooltip.getBoundingClientRect();
+    let left = clientX + padding;
+    let top = clientY + padding;
+    if (left + rect.width > window.innerWidth) {
+      left = clientX - rect.width - padding;
+    }
+    if (top + rect.height > window.innerHeight) {
+      top = clientY - rect.height - padding;
+    }
+    tooltip.style.left = `${left}px`;
+    tooltip.style.top = `${top}px`;
+  }
+  function showRecordPreview(e, oppId, isSceneRecord) {
+    const tooltip = getRecordPreviewTooltip();
+    tooltip.innerHTML = "";
+    tooltip.style.display = "block";
+    const origin = window.location.origin;
+    if (isSceneRecord) {
+      const video = document.createElement("video");
+      video.src = `${origin}/scene/${oppId}/preview`;
+      video.autoplay = true;
+      video.muted = true;
+      video.loop = true;
+      video.controls = false;
+      video.style.display = "block";
+      video.style.maxWidth = "300px";
+      video.style.maxHeight = "200px";
+      tooltip.appendChild(video);
+    } else {
+      const t = Math.floor(Date.now() / 1e3);
+      const img = document.createElement("img");
+      img.src = `${origin}/performer/${oppId}/image?t=${t}`;
+      img.alt = "Performer preview";
+      img.style.display = "block";
+      img.style.maxWidth = "200px";
+      img.style.maxHeight = "260px";
+      img.style.objectFit = "cover";
+      img.onerror = () => {
+        tooltip.innerHTML = '<div style="padding:8px;color:#aaa;">No image</div>';
+      };
+      tooltip.appendChild(img);
+    }
+    requestAnimationFrame(() => positionTooltip(tooltip, e.clientX, e.clientY));
+  }
+  function moveRecordPreview(e) {
+    const tooltip = getRecordPreviewTooltip();
+    if (tooltip.style.display === "block") {
+      positionTooltip(tooltip, e.clientX, e.clientY);
+    }
+  }
+  function hideRecordPreview() {
+    const tooltip = getRecordPreviewTooltip();
+    tooltip.style.display = "none";
+    tooltip.innerHTML = "";
+  }
+  function formatScore(score) {
+    return (score / 10).toFixed(1);
+  }
+  function getTierFromBattleScore(battleScore) {
+    if (typeof battleScore !== "number" || isNaN(battleScore))
+      return "F-Tier";
+    for (const gate of TIER_GATES) {
+      if (battleScore >= gate.minBattleScore) {
+        return gate.tier;
+      }
+    }
+    return "F-Tier";
+  }
+  function getRecordRating(match) {
+    if (match.AscRatingAfter !== void 0)
+      return match.AscRatingAfter;
+    if (match.ascended === true && match.ratingAfter !== void 0)
+      return match.ratingAfter;
+    if (match.ratingAfter !== void 0)
+      return match.ratingAfter;
+    return 0;
+  }
+  function isAscendedRating(match) {
+    if (match.AscRatingAfter !== void 0)
+      return true;
+    if (match.ascended === true)
+      return true;
+    const val = match.ratingAfter;
+    return typeof val === "number" && !Number.isInteger(val);
+  }
+  function getEffectiveBattleScore(match) {
+    const raw = getRecordRating(match);
+    if (typeof raw !== "number" || isNaN(raw))
+      return 0;
+    return isAscendedRating(match) ? raw : raw / 10;
+  }
+  function hexToRgba(hex, alpha) {
+    if (!hex || hex[0] !== "#")
+      return `rgba(128,128,128,${alpha})`;
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+  function formatLabel(key) {
+    return key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  }
+  function formatStatValue(key, value) {
+    if (key.toLowerCase().includes("rating") || key === "current_score") {
+      return formatScore(value);
+    }
+    if (key === "last_match") {
+      return new Date(value).toLocaleString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true
+      });
+    }
+    return value;
+  }
+  function getStreakEmoji2(key, value) {
+    if (typeof value !== "number" || value <= 0)
+      return "";
+    if (key.toLowerCase() === "current_streak") {
+      const match = STREAK_EMOJIS2.find((s) => value >= s.min && value <= s.max);
+      return match ? " " + match.symbol : "";
+    }
+    if (key.toLowerCase() === "best_streak") {
+      return " " + STREAK_EMOJIS2.filter((s) => value >= s.min).map((s) => s.symbol).join("");
+    }
+    return "";
+  }
+  function getValueClass(key, value) {
+    if (typeof value !== "number")
+      return "";
+    if (key.toLowerCase() === "losses" && value > 0)
+      return "stat-negative";
+    if (value > 0)
+      return "stat-positive";
+    if (value < 0)
+      return "stat-negative";
+    return "";
+  }
+  function buildStatsGrid(data, isScene = false) {
+    const normalized = parsePerformerEloData({ custom_fields: { hotornot_stats: JSON.stringify(data) } });
+    const grid = document.createElement("div");
+    grid.className = isScene ? "stats-grid scene-stats-grid" : "stats-grid";
+    Object.entries(normalized).forEach(([key, value]) => {
+      const label = formatLabel(key);
+      const displayValue = formatStatValue(key, value);
+      const emoji = getStreakEmoji2(key, value);
+      const valueClass = getValueClass(key, value);
+      grid.insertAdjacentHTML(
+        "beforeend",
+        `<div class="stat-item">
+         <div class="stats-key">${label}</div>
+         <div class="stats-value ${valueClass}">
+           ${displayValue}${emoji}
+         </div>
+       </div>`
+      );
+    });
+    return grid;
+  }
+  function parseMatchOpponent(match, isSceneRecord) {
+    let oppId = null;
+    let oppName = "Unknown";
+    if (isSceneRecord) {
+      if (match.opponentId) {
+        oppId = match.opponentId.toString();
+        oppName = `Scene ${oppId}`;
+      } else if (match.opponent && typeof match.opponent === "string" && match.opponent.includes(":")) {
+        oppId = match.opponent.split(":")[0];
+        oppName = `Scene ${oppId}`;
+      }
+    } else {
+      if (match.opponent && typeof match.opponent === "string") {
+        if (match.opponent.includes(":")) {
+          const parts = match.opponent.split(":");
+          oppId = parts[0];
+          oppName = parts.slice(1).join(":") || "Unknown";
+        } else {
+          oppId = match.opponent;
+          oppName = `Performer ${oppId}`;
+        }
+      }
+    }
+    const profileUrl = isSceneRecord ? oppId ? `/scenes/${oppId}` : "#" : oppId ? `/performers/${oppId}/scenes` : "#";
+    const maxNameLength = 15;
+    const truncatedName = oppName.length > maxNameLength ? oppName.substring(0, maxNameLength) + "..." : oppName;
+    return { oppId, oppName, truncatedName, profileUrl };
+  }
+  function buildTimeline(history2, isSceneRecord = false) {
+    const timeline = document.createElement("div");
+    timeline.className = isSceneRecord ? "match-timeline scene-match-timeline" : "match-timeline";
+    [...history2].reverse().slice(0, 10).forEach((match) => {
+      const date = new Date(match.date).toLocaleDateString(void 0, {
+        month: "short",
+        day: "numeric"
+      });
+      const won = match.won;
+      const statusClass = won === true ? "win" : won === false ? "loss" : "draw";
+      const statusText = won === true ? "WIN" : won === false ? "LOSS" : "DRAW";
+      const symbol = won === true ? "\u25CF" : won === false ? "\u25CF" : "\u25CB";
+      const { truncatedName, profileUrl, oppName, oppId } = parseMatchOpponent(match, isSceneRecord);
+      const rawRating = getRecordRating(match);
+      const formattedRating = typeof rawRating === "number" ? isAscendedRating(match) ? rawRating.toFixed(2) : (rawRating / 10).toFixed(1) : "0.0";
+      const effectiveScore = getEffectiveBattleScore(match);
+      const tier = getTierFromBattleScore(effectiveScore);
+      const tierColor = getTierColor(tier);
+      const tierBg = hexToRgba(tierColor, 0.15);
+      timeline.insertAdjacentHTML("beforeend", `
+      <div class="timeline-entry ${statusClass}">
+        <span class="timeline-date">${date}</span>
+        <span class="timeline-marker">${symbol}</span>
+        <div class="timeline-content">
+          <span class="timeline-status">${statusText}</span>
+          <span class="timeline-vs">vs</span>
+          <a href="${profileUrl}" class="timeline-opponent-link" style="color: #00b2ff; text-decoration: none;" data-opponent-id="${oppId || ""}" data-is-scene-record="${isSceneRecord}">
+            ${truncatedName}
+          </a>
+        </div>
+        <div class="rating-tier-container">
+          <span class="timeline-rating" style="color: ${tierColor}; background: ${tierBg};">
+            ${formattedRating}
+          </span>
+        </div>
+      </div>
+    `);
+    });
+    timeline.querySelectorAll(".timeline-opponent-link").forEach((link) => {
+      const oppId = link.dataset.opponentId;
+      const isSceneRecordFlag = link.dataset.isSceneRecord === "true";
+      if (!oppId)
+        return;
+      link.addEventListener("mouseenter", (e) => showRecordPreview(e, oppId, isSceneRecordFlag));
+      link.addEventListener("mousemove", moveRecordPreview);
+      link.addEventListener("mouseleave", hideRecordPreview);
+    });
+    return timeline;
+  }
+  function expandCustomFields() {
+    const ASCENSION_SELECTORS = [
+      ".custom-field-hotornot_stats",
+      ".custom-field-performer_record",
+      ".custom-field-scene_record",
+      ".hotornot_stats"
+    ].join(", ");
+    document.querySelectorAll(".custom-fields").forEach((container) => {
+      const hasAscension = container.querySelector(ASCENSION_SELECTORS);
+      if (!hasAscension)
+        return;
+      const collapse = container.querySelector(".collapse");
+      const button = container.querySelector(".collapse-button");
+      const chevron = container.querySelector(".collapse-button svg");
+      if (collapse && !collapse.classList.contains("show")) {
+        collapse.classList.add("show");
+      }
+      if (button) {
+        button.setAttribute("aria-expanded", "true");
+      }
+      if (chevron) {
+        chevron.style.transform = "rotate(180deg)";
+      }
+    });
+  }
+  function observeStatsFields(textSelector, containerSelector, titleSelector, titleText) {
+    const observer3 = new MutationObserver(() => {
+      document.querySelectorAll(textSelector).forEach((el) => {
+        if (el.dataset.parsed)
+          return;
+        try {
+          const rawText = el.textContent.trim();
+          if (!rawText.startsWith("{"))
+            return;
+          const data = JSON.parse(rawText);
+          const container = el.closest(containerSelector);
+          if (!container)
+            return;
+          const titleSpan = container.querySelector(titleSelector);
+          if (titleSpan)
+            titleSpan.textContent = titleText;
+          const customFields = container.closest(".custom-fields");
+          const isScene = !!customFields?.querySelector(".custom-field-scene_record");
+          const grid = buildStatsGrid(data, isScene);
+          el.dataset.parsed = "true";
+          el.replaceWith(grid);
+        } catch (err) {
+          console.warn(`Ascension stats parse failed (${textSelector}):`, err);
+        }
+      });
+    });
+    observer3.observe(document.body, { childList: true, subtree: true });
+    return observer3;
+  }
+  function observeRecordFields() {
+    const observer3 = new MutationObserver(() => {
+      document.querySelectorAll(".custom-field-performer_record .TruncatedText, .custom-field-scene_record .TruncatedText").forEach((el) => {
+        if (el.dataset.parsed)
+          return;
+        try {
+          const rawText = el.textContent.trim();
+          if (!rawText.startsWith("["))
+            return;
+          const history2 = JSON.parse(rawText);
+          const container = el.closest(".custom-field-performer_record, .custom-field-scene_record");
+          if (!container)
+            return;
+          const isSceneRecord = container.classList.contains("custom-field-scene_record");
+          const titleSpan = container.querySelector(".detail-item-title.custom-field-performer-record, .detail-item-title.custom-field-scene-record");
+          if (titleSpan)
+            titleSpan.textContent = "Past Matchups";
+          const timeline = buildTimeline(history2, isSceneRecord);
+          el.dataset.parsed = "true";
+          el.innerHTML = "";
+          el.appendChild(timeline);
+        } catch (err) {
+          console.warn("Record timeline parse failed:", err);
+        }
+      });
+    });
+    observer3.observe(document.body, { childList: true, subtree: true });
+    return observer3;
+  }
+  function initAscensionStats() {
+    if (typeof document === "undefined" || !document.body) {
+      if (typeof document !== "undefined") {
+        document.addEventListener("DOMContentLoaded", initAscensionStats);
+      }
+      return;
+    }
+    expandCustomFields();
+    let collapseTimeout;
+    const collapseObserver = new MutationObserver(() => {
+      clearTimeout(collapseTimeout);
+      collapseTimeout = setTimeout(expandCustomFields, 50);
+    });
+    collapseObserver.observe(document.body, { childList: true, subtree: true });
+    observeStatsFields(
+      ".custom-field-hotornot_stats .TruncatedText",
+      ".custom-field-hotornot_stats",
+      ".detail-item-title.custom-field-hotornot-stats",
+      "Match History"
+    );
+    observeStatsFields(
+      ".hotornot_stats .TruncatedText",
+      ".hotornot_stats",
+      ".detail-item-title.hotornot-stats",
+      "Match History"
+    );
+    observeRecordFields();
+    const style = document.createElement("style");
+    style.textContent = `
+    .rating-tier-container {
+      display: flex;
+      align-items: center;
+      margin-left: auto;
+    }
+
+    .timeline-rating {
+      font-weight: bold;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 0.9rem;
+      min-width: 35px;
+      text-align: center;
+      white-space: nowrap;
+    }
+
+    .record-preview-tooltip {
+      line-height: 0;
+      transition: opacity 0.08s ease;
+    }
+
+    .record-preview-tooltip video,
+    .record-preview-tooltip img {
+      display: block;
+      border-radius: 4px;
+    }
+  `;
+    document.head.appendChild(style);
+  }
+  var recordPreviewTooltip, STREAK_EMOJIS2;
   var init_formatters = __esm({
     "formatters.js"() {
       init_constants();
-      init_constants();
+      init_rating_utils();
+      init_math_utils();
+      recordPreviewTooltip = null;
+      STREAK_EMOJIS2 = [
+        { min: 2, max: 3, symbol: "\u{1F525}" },
+        { min: 4, max: 5, symbol: "\u2764\uFE0F\u200D\u{1F525}" },
+        { min: 6, max: 8, symbol: "\u{1F48E}" },
+        { min: 9, max: 12, symbol: "\u2660\uFE0F" },
+        { min: 13, max: 17, symbol: "\u2728" },
+        { min: 18, max: Infinity, symbol: "\u{1F451}" }
+      ];
+      initAscensionStats();
     }
   });
 
@@ -1249,6 +1675,9 @@
   });
 
   // ui-cards.js
+  function getCardDisplayOption(key) {
+    return state.cardDisplayOptions?.[key] === true;
+  }
   function formatHeight(heightCm) {
     if (!heightCm)
       return null;
@@ -1291,9 +1720,16 @@
         <span class="hon-choose-icon hon-choose-icon-rejected">\u274C</span>
       </div>
     </div>` : "";
+    const isPictureOnly = getCardDisplayOption("PictureOnlyMode");
+    const pictureOnlyClass = isPictureOnly ? "hon-picture-only" : "";
+    const imageWinnerAttr = isPictureOnly ? ` data-winner="${scene.id}"` : "";
     const htmlParts = [];
     htmlParts.push(
-      '<div class="hon-scene-card" data-scene-id="',
+      '<div class="hon-scene-card hon-card-enter hon-card-enter-',
+      side,
+      " ",
+      pictureOnlyClass,
+      '" data-scene-id="',
       scene.id,
       '" data-side="',
       side,
@@ -1302,7 +1738,9 @@
       '">',
       '<div class="hon-scene-image-container" data-scene-url="/scenes/',
       scene.id,
-      '">'
+      '"',
+      imageWinnerAttr,
+      ">"
     );
     if (screenshotPath) {
       htmlParts.push('<img class="hon-scene-image" src="', screenshotPath, '" alt="', title, '" loading="lazy" />');
@@ -1317,7 +1755,7 @@
       formatDuration(file.duration),
       "</div>",
       streakDisplay,
-      '<div class="hon-click-hint">Click to open scene</div>',
+      isPictureOnly ? "" : '<div class="hon-click-hint">Click to open scene</div>',
       "</div>",
       '<div class="hon-scene-body" data-winner="',
       scene.id,
@@ -1380,9 +1818,9 @@
       battleScore = calculateBattleScore(performer);
     }
     let genderIcon = "";
-    if (performer.gender) {
+    if (!getCardDisplayOption("HideGender") && performer.gender) {
       const genderKey = performer.gender.toUpperCase();
-      genderIcon = GENDER_ICONS[genderKey] || "\u{1F464}";
+      genderIcon = `${GENDER_ICONS[genderKey] || "\u{1F464}"} `;
     }
     let currentStreakDisplay = "";
     if (performer.custom_fields?.hotornot_stats) {
@@ -1397,40 +1835,45 @@
       }
     }
     let countsHtml = "";
-    const sceneCount = performer.scene_count || 0;
-    const galleryCount = performer.gallery_count || 0;
-    const imageCount = performer.image_count || 0;
-    if (sceneCount > 0 || galleryCount > 0 || imageCount > 0) {
-      const sceneDisplay = sceneCount > 0 ? `\u{1F3A5}(${sceneCount})` : "";
-      const galleryDisplay = galleryCount > 0 ? `\u{1F5BC}\uFE0F(${galleryCount})` : "";
-      const imageDisplay = imageCount > 0 ? `\u{1F4F7}(${imageCount})` : "";
-      const countsArray = [sceneDisplay, galleryDisplay, imageDisplay].filter(Boolean);
-      if (countsArray.length > 0) {
-        countsHtml = ` | ${countsArray.join(" ")}`;
+    if (!getCardDisplayOption("HideMediaCounters")) {
+      const sceneCount = performer.scene_count || 0;
+      const galleryCount = performer.gallery_count || 0;
+      const imageCount = performer.image_count || 0;
+      if (sceneCount > 0 || galleryCount > 0 || imageCount > 0) {
+        const sceneDisplay = sceneCount > 0 ? `\u{1F3A5}(${sceneCount})` : "";
+        const galleryDisplay = galleryCount > 0 ? `\u{1F5BC}\uFE0F(${galleryCount})` : "";
+        const imageDisplay = imageCount > 0 ? `\u{1F4F7}(${imageCount})` : "";
+        const countsArray = [sceneDisplay, galleryDisplay, imageDisplay].filter(Boolean);
+        if (countsArray.length > 0) {
+          countsHtml = ` | ${countsArray.join(" ")}`;
+        }
       }
     }
     const metaItems = [];
-    if (battleScore !== null) {
+    if (!getCardDisplayOption("HideAscendedScore") && battleScore !== null) {
       metaItems.push(`<div class="hon-meta-item"><strong>Ascended Score:</strong> ${tierDisplay}<span class="hon-asc-score" data-asc-score="${battleScore.toFixed(2)}">${battleScore.toFixed(2)}</span></div>`);
-    } else {
+    } else if (battleScore === null) {
       metaItems.push(`<div class="hon-meta-item"><strong>Rating:</strong> ${tierDisplay}${stashRating}</div>`);
     }
-    if (performer.country) {
+    if (!getCardDisplayOption("HideGender") && performer.gender) {
+      metaItems.push(`<div class="hon-meta-item"><strong>Gender:</strong> ${getGenderDisplay(performer.gender)}</div>`);
+    }
+    if (!getCardDisplayOption("HideCountry") && performer.country) {
       metaItems.push(`<div class="hon-meta-item"><strong>Country:</strong> ${getCountryDisplay(performer.country)}</div>`);
     }
-    if (performer.height_cm) {
+    if (!getCardDisplayOption("HideHeight") && performer.height_cm) {
       const heightFormatted = formatHeight(performer.height_cm);
       if (heightFormatted) {
         metaItems.push(`<div class="hon-meta-item"><strong>Height:</strong> ${heightFormatted}</div>`);
       }
     }
-    if (performer.measurements) {
+    if (!getCardDisplayOption("HideMeasurements") && performer.measurements) {
       metaItems.push(`<div class="hon-meta-item"><strong>Measurements:</strong> ${performer.measurements}</div>`);
     }
-    if (performer.fake_tits) {
+    if (!getCardDisplayOption("HideFakeTits") && performer.fake_tits) {
       metaItems.push(`<div class="hon-meta-item"><strong>Fake Tits:</strong> ${performer.fake_tits}</div>`);
     }
-    if (performer.tags?.length) {
+    if (!getCardDisplayOption("HideTags") && performer.tags?.length) {
       const tags = performer.tags;
       if (tags.length <= 3) {
         let tagString = "";
@@ -1457,7 +1900,7 @@
         const remainingCount = tags.length - 3;
         metaItems.push(`
         <div class="hon-meta-item hon-tags-container">
-          <strong>Tags:</strong> 
+          <strong>Tags:</strong>
           <span class="hon-tags-displayed">${displayedString}</span>
           <span class="hon-tags-ellipsis">...</span>
           <span class="hon-tags-more" style="color: #007bff; cursor: pointer; text-decoration: underline;" data-tags-expanded="false">(+${remainingCount} more)</span>
@@ -1465,17 +1908,18 @@
         </div>`);
       }
     }
-    const minMetaItems = 6;
-    while (metaItems.length < minMetaItems) {
-      metaItems.push('<div class="hon-meta-item hon-meta-placeholder">&nbsp;</div>');
-    }
     const streakDisplay = gauntletStreak && gauntletStreak >= 3 ? `<div class="hon-streak-badge">${formatStreakDisplay(gauntletStreak)}</div>` : "";
+    const namePart = getCardDisplayOption("HidePerformerName") ? "" : `<span class="hon-performer-name">${name}</span> `;
+    const chooseButtonHtml = getCardDisplayOption("HideChooseThisPerformerButton") ? "" : '<div class="hon-choose-btn">\u2713 Choose This Performer</div>';
+    const isPictureOnly = getCardDisplayOption("PictureOnlyMode");
+    const pictureOnlyClass = isPictureOnly ? "hon-picture-only" : "";
+    const imageWinnerAttr = isPictureOnly ? ` data-winner="${performer.id}"` : "";
+    const performerImageHtml = imagePath ? `<img class="hon-performer-image hon-scene-image" src="${imagePath}" alt="${name}" />` : `<div class="hon-no-image">No Image</div>`;
+    const imageContainerInner = isPictureOnly ? performerImageHtml : `<a href="/performers/${performer.id}" target="_blank" class="hon-performer-link">${performerImageHtml}</a>`;
     return `
-    <div class="hon-performer-card hon-scene-card${tierClass}" data-performer-id="${performer.id}" data-side="${side}" data-rating="${performer.rating100 || 1}" data-asc-score="${battleScore?.toFixed(2) ?? ""}">
-      <div class="hon-performer-image-container hon-scene-image-container">
-        <a href="/performers/${performer.id}" target="_blank" class="hon-performer-link">
-          ${imagePath ? `<img class="hon-performer-image hon-scene-image" src="${imagePath}" alt="${name}" />` : `<div class="hon-no-image">No Image</div>`}
-        </a>
+    <div class="hon-performer-card hon-scene-card hon-card-enter hon-card-enter-${side}${tierClass}${pictureOnlyClass ? " " + pictureOnlyClass : ""}" data-performer-id="${performer.id}" data-side="${side}" data-rating="${performer.rating100 || 1}" data-asc-score="${battleScore?.toFixed(2) ?? ""}">
+      <div class="hon-performer-image-container hon-scene-image-container"${imageWinnerAttr}>
+        ${imageContainerInner}
         ${currentStreakDisplay}
         ${streakDisplay}
       </div>
@@ -1483,14 +1927,14 @@
         <div class="hon-performer-info hon-scene-info">
           <div class="hon-performer-title-row hon-scene-title-row">
             <h3 class="hon-performer-title hon-scene-title">
-              ${name} ${genderIcon}${countsHtml}
+              ${namePart}${genderIcon}${countsHtml}
             </h3>
           </div>
           <div class="hon-performer-meta hon-scene-meta">
             ${metaItems.join("")}
           </div>
         </div>
-        <div class="hon-choose-btn">\u2713 Choose This Performer</div>
+        ${chooseButtonHtml}
       </div>
     </div>`;
   }
@@ -1498,9 +1942,12 @@
     const thumbnailPath = image.paths?.thumbnail || null;
     const rankDisplay = rank != null ? `<span class="hon-image-rank hon-scene-rank">#${rank}</span>` : "";
     const streakDisplay = gauntletStreak && gauntletStreak >= 3 ? `<div class="hon-streak-badge">${formatStreakDisplay(gauntletStreak)}</div>` : "";
+    const isPictureOnly = getCardDisplayOption("PictureOnlyMode");
+    const pictureOnlyClass = isPictureOnly ? "hon-picture-only" : "";
+    const imageWinnerAttr = isPictureOnly ? ` data-winner="${image.id}"` : "";
     return `
-    <div class="hon-image-card hon-scene-card" data-image-id="${image.id}" data-side="${side}" data-rating="${image.rating100 || 1}">
-      <div class="hon-image-image-container hon-scene-image-container" data-image-url="/images/${image.id}">
+    <div class="hon-image-card hon-scene-card hon-card-enter hon-card-enter-${side} ${pictureOnlyClass}" data-image-id="${image.id}" data-side="${side}" data-rating="${image.rating100 || 1}">
+      <div class="hon-image-image-container hon-scene-image-container" data-image-url="/images/${image.id}"${imageWinnerAttr}>
         ${thumbnailPath ? `<img class="hon-scene-image" src="${thumbnailPath}" />` : `<div class="hon-no-image">No Image</div>`}
         ${streakDisplay}
         ${rankDisplay ? `<div class="hon-image-rank-overlay">${rankDisplay}</div>` : ""}
@@ -1583,941 +2030,627 @@
     }
   });
 
-  // dom-utils.js
-  function clearDOMCache() {
-    elementCollectionCache.clear();
-    commonElementsCache.clear();
+  // ui-event-log.js
+  function initEventLog() {
+    console.log = function(...args) {
+      originalConsoleLog.apply(console, args);
+      captureLogEntry("log", args);
+    };
+    console.warn = function(...args) {
+      originalConsoleWarn.apply(console, args);
+      captureLogEntry("warn", args);
+    };
+    console.error = function(...args) {
+      originalConsoleError.apply(console, args);
+      captureLogEntry("error", args);
+    };
+    createEventLogUI();
   }
-  var elementCollectionCache, commonElementsCache;
-  var init_dom_utils = __esm({
-    "dom-utils.js"() {
-      elementCollectionCache = /* @__PURE__ */ new Map();
-      commonElementsCache = /* @__PURE__ */ new Map();
-    }
-  });
-
-  // parsers.js
-  function getPerformerFilter(cachedUrlFilter, selectedGenders) {
-    const filter = { ...cachedUrlFilter };
-    delete filter.gender;
-    if (selectedGenders.length > 0) {
-      filter.gender = { value_list: selectedGenders, modifier: "INCLUDES" };
-    }
-    const hasOtherFilters = Object.keys(cachedUrlFilter || {}).some((k) => k !== "gender");
-    if (!hasOtherFilters && !filter.NOT) {
-      filter.NOT = { is_missing: "image" };
-    }
-    return filter;
-  }
-  var init_parsers = __esm({
-    "parsers.js"() {
-      init_constants();
-    }
-  });
-
-  // api-client.js
-  var api_client_exports = {};
-  __export(api_client_exports, {
-    IMAGE_FRAGMENT: () => IMAGE_FRAGMENT,
-    PERFORMER_FRAGMENT: () => PERFORMER_FRAGMENT,
-    SCENE_FRAGMENT: () => SCENE_FRAGMENT,
-    fetchAllPerformerStats: () => fetchAllPerformerStats,
-    fetchAllPerformersSorted: () => fetchAllPerformersSorted,
-    fetchAllSceneMetadata: () => fetchAllSceneMetadata,
-    fetchGlobalPerformerRatings: () => fetchGlobalPerformerRatings,
-    fetchImageCount: () => fetchImageCount,
-    fetchPerformerById: () => fetchPerformerById,
-    fetchPerformerCount: () => fetchPerformerCount,
-    fetchRandomImages: () => fetchRandomImages,
-    fetchRandomPerformers: () => fetchRandomPerformers,
-    fetchSceneById: () => fetchSceneById,
-    fetchScenesByIds: () => fetchScenesByIds,
-    getAllPerformersSorted: () => getAllPerformersSorted,
-    getHotOrNotConfig: () => getHotOrNotConfig,
-    graphqlQuery: () => graphqlQuery,
-    handleComparison: () => handleComparison,
-    isBattleRankBadgeEnabled: () => isBattleRankBadgeEnabled,
-    undoLastMatch: () => undoLastMatch,
-    updateImageRating: () => updateImageRating,
-    updateItemRating: () => updateItemRating,
-    updatePerformerRating: () => updatePerformerRating,
-    updateSceneRating: () => updateSceneRating
-  });
-  async function graphqlQuery(query, variables = {}) {
-    if (typeof PluginApi !== "undefined" && PluginApi.utils?.StashService?.getClient && PluginApi.libraries?.Apollo) {
-      try {
-        const { gql } = PluginApi.libraries.Apollo;
-        const client = PluginApi.utils.StashService.getClient();
-        const doc = gql(query);
-        const isMutation = doc.definitions.some((def) => def.kind === "OperationDefinition" && def.operation === "mutation");
-        const result2 = isMutation ? await client.mutate({ mutation: doc, variables }) : await client.query({ query: doc, variables, fetchPolicy: "no-cache" });
-        return result2.data;
-      } catch (e) {
-        console.warn("[Ascension] Apollo fallback to fetch:", e.message);
-      }
-    }
-    const response = await fetch("/graphql", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query, variables })
-    });
-    const result = await response.json();
-    if (result.errors && result.errors.length > 0) {
-      if (result.errors.length === 1) {
-        throw new Error(`GraphQL Error: ${result.errors[0].message}`);
-      }
-      const errorMessage = result.errors.map((e) => e.message).join("; ");
-      throw new Error(`GraphQL Errors: ${errorMessage}`);
-    }
-    return result.data;
-  }
-  async function fetchAllItems2(queryTemplate, variablesBase = {}, pageSize = 1e3) {
-    const allItems = [];
-    let currentPage = 1;
-    const baseFilter = variablesBase.filter || {};
-    while (true) {
-      const variables = {
-        ...variablesBase,
-        filter: Object.assign({}, baseFilter, {
-          per_page: pageSize,
-          page: currentPage
-        })
-      };
-      const result = await graphqlQuery(queryTemplate, variables);
-      const items = result.findPerformers?.performers || result.findImages?.images || result.findScenes?.scenes || [];
-      if (items.length === 0)
-        break;
-      allItems.push.apply(allItems, items);
-      if (items.length < pageSize)
-        break;
-      currentPage++;
-    }
-    return allItems;
-  }
-  async function fetchAllSceneMetadata() {
-    const queryTemplate = `
-    query FindSceneMetadata($filter: FindFilterType) {
-      findScenes(filter: $filter) {
-        scenes { id rating100 custom_fields }
-      }
-    }
-  `;
-    return await fetchAllItems2(queryTemplate, {
-      filter: { sort: "rating100", direction: "DESC" }
-    }, 1e3);
-  }
-  async function fetchScenesByIds(ids) {
-    if (!ids || ids.length === 0)
-      return [];
-    const query = `
-    query FindScenesByIds($filter: FindFilterType) {
-      findScenes(filter: $filter) {
-        scenes { ${SCENE_FRAGMENT} }
-      }
-    }
-  `;
-    const result = await graphqlQuery(query, {
-      filter: { per_page: ids.length, ids }
-    });
-    return result?.findScenes?.scenes || [];
-  }
-  function sortPerformersByRating(performers) {
-    const performerStats = /* @__PURE__ */ new Map();
-    return performers.sort((a, b) => {
-      const ratingDiff = (b.rating100 ?? 1) - (a.rating100 ?? 1);
-      if (ratingDiff !== 0)
-        return ratingDiff;
-      if (!performerStats.has(a.id)) {
-        performerStats.set(a.id, parsePerformerEloData(a));
-      }
-      if (!performerStats.has(b.id)) {
-        performerStats.set(b.id, parsePerformerEloData(b));
-      }
-      const statsA = performerStats.get(a.id);
-      const statsB = performerStats.get(b.id);
-      const matchCountDiff = (statsB.total_matches || 0) - (statsA.total_matches || 0);
-      if (matchCountDiff !== 0)
-        return matchCountDiff;
-      if (a.name && b.name) {
-        return a.name.localeCompare(b.name);
-      }
-      const nameA = a.name || "";
-      const nameB = b.name || "";
-      return nameA.localeCompare(nameB);
-    });
-  }
-  async function fetchAllPerformersSorted(sortBy = "rating", direction = "DESC") {
-    const queryTemplate = `
-    query FindAllPerformers($filter: FindFilterType) {
-      findPerformers(filter: $filter) {
-        performers { ${FRAGMENTS.PERFORMER} }
-      }
-    }
-  `;
-    const performers = await fetchAllItems2(queryTemplate, {
-      filter: { sort: sortBy, direction }
-    });
-    return sortPerformersByRating(performers);
-  }
-  async function fetchAllPerformerStats() {
-    return await fetchAllPerformersSorted();
-  }
-  async function fetchGlobalPerformerRatings() {
-    const queryTemplate = `
-    query FindAllPerformers($filter: FindFilterType) {
-      findPerformers(filter: $filter) {
-        performers { id rating100 custom_fields }
-      }
-    }
-  `;
-    const performers = await fetchAllItems2(queryTemplate, {
-      filter: { sort: "rating", direction: "DESC" }
-    });
-    return performers.map((p) => {
-      let total_matches = 0;
-      let wins = 0;
-      let win_margin = 0;
-      const statsJson = p.custom_fields?.["hotornot_stats"];
-      if (statsJson) {
+  function captureLogEntry(level, args) {
+    const fullMessage = args.map((arg) => {
+      if (typeof arg === "object" && arg !== null) {
         try {
-          const stats = typeof statsJson === "string" ? JSON.parse(statsJson) : statsJson;
-          total_matches = stats?.total_matches ?? 0;
-          wins = stats?.wins ?? 0;
-          win_margin = stats?.win_margin ?? 0;
+          return JSON.stringify(arg);
         } catch (e) {
+          return String(arg);
         }
       }
-      return {
-        id: p.id,
-        rating100: p.rating100 ?? 1,
-        total_matches,
-        wins,
-        win_margin
-      };
-    });
-  }
-  async function getAllPerformersSorted() {
-    return await fetchAllPerformersSorted();
-  }
-  async function fetchRandomPerformers(count = 2) {
-    if (state.selectedGenders.length === 0) {
-      throw new Error("No genders selected.");
-    }
-    const battleGender = state.selectedGenders[Math.floor(Math.random() * state.selectedGenders.length)];
-    const performerFilter = getPerformerFilter(state.cachedUrlFilter, [battleGender]);
-    const totalPerformers = await fetchPerformerCount(performerFilter);
-    if (totalPerformers < 2) {
-      throw new Error("Not enough performers matching the selected gender.");
-    }
-    const performerQuery = `
-    query FindRandomPerformers($performer_filter: PerformerFilterType, $filter: FindFilterType) {
-      findPerformers(performer_filter: $performer_filter, filter: $filter) {
-        performers {
-          ${FRAGMENTS.PERFORMER}
-        }
-      }
-    }
-  `;
-    const result = await graphqlQuery(performerQuery, {
-      performer_filter: performerFilter,
-      filter: {
-        per_page: Math.min(100, totalPerformers),
-        sort: "random"
-      }
-    });
-    const allPerformers = result?.findPerformers?.performers || [];
-    if (allPerformers.length < 2) {
-      throw new Error("Not enough performers for comparison.");
-    }
-    const shuffled = [...allPerformers].sort(() => Math.random() - 0.5);
-    return shuffled.slice(0, 2);
-  }
-  async function fetchPerformerById(id) {
-    const result = await graphqlQuery(`query($id: ID!) { findPerformer(id: $id) { ${PERFORMER_FRAGMENT} } }`, { id });
-    return result.findPerformer;
-  }
-  async function fetchPerformerCount(filter = {}) {
-    const result = await graphqlQuery(`query($f: PerformerFilterType) { findPerformers(performer_filter: $f, filter: { per_page: 0 }) { count } }`, { f: filter });
-    return result.findPerformers.count;
-  }
-  async function fetchRandomImages(count = 2) {
-    const totalImages = await fetchImageCount();
-    if (totalImages < 2) {
-      throw new Error("Not enough images for comparison. You need at least 2 images.");
-    }
-    const imagesQuery = `
-    query FindRandomImages($filter: FindFilterType) {
-      findImages(filter: $filter) {
-        images {
-          ${IMAGE_FRAGMENT}
-        }
-      }
-    }
-  `;
-    const result = await graphqlQuery(imagesQuery, {
-      filter: {
-        per_page: Math.min(100, totalImages),
-        sort: "random"
-      }
-    });
-    const allImages = result.findImages.images || [];
-    if (allImages.length < 2) {
-      throw new Error("Not enough images returned from query.");
-    }
-    const shuffled = allImages.sort(() => Math.random() - 0.5);
-    return shuffled.slice(0, count);
-  }
-  function isSTierPerformer(performerObj) {
-    return state.battleType === "performers" && performerObj && state.globalPerformerPool && state.globalPerformerPool.length > 0 && getRatingTier(performerObj, state.globalPerformerPool) === "S-Tier";
-  }
-  function formatResultStatus(won, change) {
-    if (won === null || won === void 0)
-      return "UPDATE";
-    const pointChange = change !== null && !isNaN(change) ? (change / 10).toFixed(1) : "?";
-    const signed = change > 0 ? `+${pointChange}` : pointChange;
-    return won ? `WIN(${signed})` : `LOSS(${signed})`;
-  }
-  function getRecordKeyForBattleType(battleType) {
-    if (battleType === "performers")
-      return "performer_record";
-    if (battleType === "scenes")
-      return "scene_record";
-    return null;
-  }
-  function normalizeSceneRecordEntry(entry) {
-    if (!entry || typeof entry !== "object")
-      return null;
-    const normalized = {
-      date: entry.date || (/* @__PURE__ */ new Date()).toISOString(),
-      won: entry.won,
-      ratingAfter: entry.ratingAfter
-    };
-    if (entry.opponentId) {
-      normalized.opponentId = entry.opponentId.toString().replace(/\D/g, "") || "0";
-    } else if (entry.opponent && typeof entry.opponent === "string") {
-      normalized.opponentId = entry.opponent.split(":")[0] || "0";
-    } else {
-      normalized.opponentId = "0";
-    }
-    return normalized;
-  }
-  function getOldStatsSnapshot(itemObj, battleType) {
-    const recordKey = getRecordKeyForBattleType(battleType);
-    const stats = parsePerformerEloData(itemObj) || {};
-    if (!recordKey)
-      return stats;
-    let recordArray = [];
-    const rawRecord = itemObj?.custom_fields?.[recordKey];
-    if (rawRecord) {
-      try {
-        recordArray = typeof rawRecord === "string" ? JSON.parse(rawRecord) : rawRecord;
-        if (!Array.isArray(recordArray))
-          recordArray = [];
-      } catch (e) {
-        console.warn(`[Ascension] Failed to parse ${recordKey} for snapshot, starting fresh.`);
-        recordArray = [];
-      }
-    }
-    if (battleType === "scenes") {
-      recordArray = recordArray.map(normalizeSceneRecordEntry).filter(Boolean);
-    }
-    return {
-      ...stats,
-      [recordKey]: recordArray
-    };
-  }
-  async function handleComparison(winnerId, loserId, winnerCurrentRating, loserCurrentRating, loserRank = null, winnerObj = null, loserObj = null, isDraw = false) {
-    const startTime = performance.now();
-    console.log(`[Ascension Timing] handleComparison started for Winner ID: ${winnerId}, Loser ID: ${loserId}`);
-    let winnerRating = winnerCurrentRating || 1;
-    let loserRating = loserCurrentRating || 1;
-    let freshWinnerObj = null;
-    let freshLoserObj = null;
-    if (state.currentMode === "gauntlet" || state.currentMode === "champion") {
-      console.log(`[Ascension] ${state.currentMode} mode detected - fetching fresh performer data from DB`);
-      try {
-        [freshWinnerObj, freshLoserObj] = await Promise.all([
-          fetchPerformerById(winnerId),
-          fetchPerformerById(loserId)
-        ]);
-        console.log(`[Ascension] Fresh data fetched. Winner record has ${freshWinnerObj.custom_fields?.performer_record?.length || 0} matches, Loser has ${freshLoserObj.custom_fields?.performer_record?.length || 0} matches`);
-        if (freshWinnerObj && freshWinnerObj.rating100 > 0) {
-          winnerRating = freshWinnerObj.rating100;
-        }
-        if (freshLoserObj && freshLoserObj.rating100 > 0) {
-          loserRating = freshLoserObj.rating100;
-        }
-      } catch (fetchError) {
-        console.error(`[Ascension] Failed to fetch fresh data, falling back to provided objects:`, fetchError);
-        freshWinnerObj = winnerObj;
-        freshLoserObj = loserObj;
-      }
-    } else {
-      try {
-        const isWinnerValid = winnerObj && typeof winnerObj === "object" && winnerObj.id != void 0 && winnerObj.id == winnerId && winnerObj.custom_fields !== void 0;
-        const isLoserValid = loserObj && typeof loserObj === "object" && loserObj.id != void 0 && loserObj.id == loserId && loserObj.custom_fields !== void 0;
-        if (isWinnerValid && isLoserValid) {
-          freshWinnerObj = winnerObj;
-          freshLoserObj = loserObj;
-        } else {
-          throw new Error(`Provided objects failed validation`);
-        }
-      } catch (useProvidedError) {
-        console.log(`[Ascension] Falling back to fetching fresh scene data:`, useProvidedError.message);
-        [freshWinnerObj, freshLoserObj] = await Promise.all([
-          fetchSceneById(winnerId),
-          fetchSceneById(loserId)
-        ]);
-      }
-    }
-    let winnerMatchCount = 0;
-    let loserMatchCount = 0;
-    let winnerStats = {};
-    let loserStats = {};
-    winnerStats = parsePerformerEloData(freshWinnerObj) || {};
-    loserStats = parsePerformerEloData(freshLoserObj) || {};
-    winnerMatchCount = winnerStats.total_matches || 0;
-    loserMatchCount = loserStats.total_matches || 0;
-    const isPerformerBattle = state.battleType === "performers";
-    const globalPool = state.globalPerformerPool || [];
-    let winnerTier = null;
-    let loserTier = null;
-    let winnerEffectiveRating = null;
-    let loserEffectiveRating = null;
-    if (isPerformerBattle && globalPool.length > 0) {
-      if (freshWinnerObj) {
-        winnerTier = getRatingTier(freshWinnerObj, globalPool);
-        winnerEffectiveRating = calculateEffectiveEloRating(freshWinnerObj, globalPool);
-      }
-      if (freshLoserObj) {
-        loserTier = getRatingTier(freshLoserObj, globalPool);
-        loserEffectiveRating = calculateEffectiveEloRating(freshLoserObj, globalPool);
-      }
-      if (winnerEffectiveRating !== null && loserEffectiveRating !== null) {
-        console.log(`[Ascension] Effective ratings - Winner: ${winnerEffectiveRating.toFixed(1)} (${winnerTier}), Loser: ${loserEffectiveRating.toFixed(1)} (${loserTier})`);
-      }
-    }
-    let winnerGain = 0;
-    let loserLoss = 0;
-    if (isDraw) {
-      const ratingDiff2 = (loserEffectiveRating ?? loserRating) - (winnerEffectiveRating ?? winnerRating);
-      const expectedWinner = 1 / (1 + Math.pow(10, ratingDiff2 / 400));
-      const winnerK = getProgressiveKFactor(winnerRating, null, winnerMatchCount, "swiss");
-      const loserK = getProgressiveKFactor(loserRating, null, loserMatchCount, "swiss");
-      winnerGain = Math.round(winnerK * (0.5 - expectedWinner));
-      loserLoss = Math.round(loserK * (1 - expectedWinner - 0.5));
-    } else {
-      const isChampionWinner = !!state.gauntletChampion && winnerId === state.gauntletChampion.id;
-      const isFallingWinner = state.gauntletFalling && !!state.gauntletFallingItem && winnerId === state.gauntletFallingItem.id;
-      const isChampionLoser = !!state.gauntletChampion && loserId === state.gauntletChampion.id;
-      const isFallingLoser = state.gauntletFalling && !!state.gauntletFallingItem && loserId === state.gauntletFallingItem.id;
-      ({ winnerGain, loserLoss } = calculateMatchOutcome({
-        winnerRating,
-        loserRating,
-        winnerEffectiveRating,
-        loserEffectiveRating,
-        winnerTier,
-        loserTier,
-        mode: state.currentMode,
-        winnerMatchCount,
-        loserMatchCount,
-        isChampionWinner,
-        isFallingWinner,
-        isChampionLoser,
-        isFallingLoser,
-        loserRank,
-        winnerStats,
-        loserStats,
-        isSpecialChallenge: state.currentPair?.isSpecialChallenge || false,
-        specialChallengeRules: state.currentPair?.specialChallengeRules || null
-      }));
-    }
-    const newWinnerRating = Math.min(100, Math.max(1, winnerRating + winnerGain));
-    const newLoserRating = Math.min(100, Math.max(1, loserRating - loserLoss));
-    const shouldTrackWinner = state.battleType === "performers" || state.battleType === "scenes";
-    const shouldTrackLoser = state.battleType === "performers" || state.battleType === "scenes";
-    const winnerStatus = isDraw ? null : true;
-    const loserStatus = isDraw ? null : false;
-    const winnerOldStats = shouldTrackWinner ? getOldStatsSnapshot(freshWinnerObj, state.battleType) : null;
-    const loserOldStats = shouldTrackLoser ? getOldStatsSnapshot(freshLoserObj, state.battleType) : null;
-    if (!state.matchHistory)
-      state.matchHistory = [];
-    state.matchHistory.push({
-      winnerId,
-      loserId,
-      winnerOldRating: winnerRating,
-      loserOldRating: loserRating,
-      winnerOldStats,
-      loserOldStats,
-      pairSnapshot: {
-        left: state.currentPair.left ? { ...state.currentPair.left } : null,
-        right: state.currentPair.right ? { ...state.currentPair.right } : null,
-        rankLeft: state.currentRanks.left,
-        rankRight: state.currentRanks.right
-      },
-      gauntletSnapshot: {
-        gauntletChampion: state.gauntletChampion ? { ...state.gauntletChampion } : null,
-        gauntletWins: state.gauntletWins,
-        gauntletDefeated: [...state.gauntletDefeated || []],
-        gauntletFalling: state.gauntletFalling,
-        gauntletFallingItem: state.gauntletFallingItem ? { ...state.gauntletFallingItem } : null
-      }
-    });
-    if (state.matchHistory.length > 10)
-      state.matchHistory.shift();
-    if (!winnerId || !loserId) {
-      console.error("[Ascension] Cannot update rating: One or both IDs are missing", { winnerId, loserId });
-      return { newWinnerRating, newLoserRating, winnerChange: winnerGain, loserChange: -loserLoss };
-    }
-    const updateStartTime = performance.now();
-    try {
-      const [winnerUpdateResult, loserUpdateResult] = await Promise.all([
-        updateItemRating(
-          winnerId,
-          newWinnerRating,
-          freshWinnerObj,
-          winnerStatus,
-          loserId,
-          winnerGain
-        ).catch((err) => {
-          console.error(`[Ascension] Error updating winner (${winnerId}):`, err);
-          throw new Error(`Failed to update winner: ${err.message}`);
-        }),
-        updateItemRating(
-          loserId,
-          newLoserRating,
-          freshLoserObj,
-          loserStatus,
-          winnerId,
-          -loserLoss
-        ).catch((err) => {
-          console.error(`[Ascension] Error updating loser (${loserId}):`, err);
-          throw new Error(`Failed to update loser: ${err.message}`);
-        })
-      ]);
-      const updateEndTime = performance.now();
-      console.log(`[Ascension Timing] Parallel updates completed in ${(updateEndTime - updateStartTime).toFixed(2)} ms.`);
-    } catch (updateError) {
-      const updateEndTime = performance.now();
-      console.error(`[Ascension Timing] One or both updates failed after ${(updateEndTime - updateStartTime).toFixed(2)} ms:`, updateError);
-      throw updateError;
-    }
-    const endTime = performance.now();
-    console.log(`[Ascension Timing] handleComparison completed in ${(endTime - startTime).toFixed(2)} ms.`);
-    return {
-      newWinnerRating,
-      newLoserRating,
-      winnerChange: winnerGain,
-      loserChange: -loserLoss
-    };
-  }
-  async function updateItemRating(itemId, newRating, itemObj = null, won = null, opponentId = null, change = null) {
-    if (state.battleType === "performers") {
-      return await updatePerformerRating(itemId, newRating, itemObj, won, opponentId, change);
-    } else if (state.battleType === "images") {
-      return await updateImageRating(itemId, newRating);
-    } else if (state.battleType === "scenes") {
-      return await updateSceneRating(itemId, newRating, itemObj, won, opponentId, change);
-    } else {
-      console.warn(`[Ascension] Unknown battle type: ${state.battleType}`);
-      return null;
-    }
-  }
-  async function fetchImageCount() {
-    const countQuery = `
-      query FindImages {
-        findImages(filter: { per_page: 0 }) {
-          count
-        }
-      }
-    `;
-    const countResult = await graphqlQuery(countQuery);
-    return countResult.findImages.count;
-  }
-  async function updateSceneRating(id, rating, sceneObj = null, won = null, opponentId = null, change = null) {
-    if (!id) {
-      console.error("[Ascension] Cannot update scene: ID is missing");
+      return String(arg);
+    }).join(" ");
+    if (!fullMessage.includes("[Ascension]") && !fullMessage.includes("[HotOrNot]")) {
       return;
     }
-    let sceneTitle = "Unknown Scene";
-    if (sceneObj?.title && sceneObj.title.trim() !== "") {
-      sceneTitle = sceneObj.title;
-    } else if (state.currentPair) {
-      if (state.currentPair.left?.id == id) {
-        sceneTitle = state.currentPair.left.title || extractTitleFromFile(state.currentPair.left);
-      } else if (state.currentPair.right?.id == id) {
-        sceneTitle = state.currentPair.right.title || extractTitleFromFile(state.currentPair.right);
+    const verboseUndoPatterns = [
+      /"winnerOldStats"/,
+      /"loserOldStats"/,
+      /"pairSnapshot"/,
+      /"gauntletSnapshot"/,
+      /Restoring performer_record/i,
+      /Restoring performers\s+\d+\s+with fields/i,
+      /Restored gauntlet state/i,
+      /Restored pair snapshot/i,
+      /Successfully restored ratings and records/i,
+      /"scene_record"/,
+      /"sceneSnapshot"/,
+      /"sceneLeft"/,
+      /"sceneRight"/,
+      /Restoring scene_record/i,
+      /Restoring scenes\s+\d+\s+with fields/i
+    ];
+    if (verboseUndoPatterns.some((p) => p.test(fullMessage))) {
+      return;
+    }
+    let readableMessage = extractReadableContent(args);
+    if (/Effective ratings/i.test(readableMessage)) {
+      return;
+    }
+    readableMessage = readableMessage.replace(/\[\s*([\d.]+)\s*\]/g, "[$1]");
+    readableMessage = rewriteWithAscScore(readableMessage);
+    readableMessage = linkPerformerNames(readableMessage);
+    let tierInfo = null;
+    if (readableMessage.includes("Tier Selection:")) {
+      const tierMatch = readableMessage.match(/Tier Selection: ([\w\-]+)/);
+      if (tierMatch && tierMatch[1])
+        tierInfo = tierMatch[1];
+    }
+    let tierFilterTiers = null;
+    if (readableMessage.includes("Tier Filter active:")) {
+      const tierFilterMatch = readableMessage.match(/Tier Filter active: ([\w\-,\s]+)/);
+      if (tierFilterMatch && tierFilterMatch[1]) {
+        tierFilterTiers = tierFilterMatch[1].split(",").map((t) => t.trim()).filter(Boolean);
       }
-    } else if (sceneObj) {
-      sceneTitle = extractTitleFromFile(sceneObj);
     }
-    let cleanRating = Math.round(Number(rating));
-    if (isNaN(cleanRating)) {
-      console.warn(`[Ascension] Invalid rating for scene ${id}, falling back to existing data.`);
-      cleanRating = sceneObj?.rating100 || 1;
+    const entry = {
+      id: Date.now() + Math.random(),
+      timestamp: /* @__PURE__ */ new Date(),
+      level,
+      message: readableMessage,
+      formattedMessage: readableMessage,
+      tierInfo,
+      tierFilterTiers,
+      battleType: state.battleType
+    };
+    eventLogEntries.push(entry);
+    if (eventLogEntries.length > MAX_LOG_ENTRIES) {
+      eventLogEntries.splice(0, eventLogEntries.length - MAX_LOG_ENTRIES);
     }
-    if (change === null && sceneObj && !isNaN(sceneObj.rating100)) {
-      change = cleanRating - Math.round(Number(sceneObj.rating100));
+    updateEventLogDisplay();
+  }
+  function saveEventLogState(updates) {
+    try {
+      const current = loadEventLogState();
+      localStorage.setItem(EVENT_LOG_STORAGE_KEY, JSON.stringify({ ...current, ...updates }));
+    } catch (e) {
+      console.warn("[Ascension] Failed to save event log state:", e);
     }
-    const statusText = formatResultStatus(won, change);
-    const statusColor = won === true ? "#4CAF50" : won === false ? "#F44336" : "#9E9E9E";
-    const displayRating = (cleanRating / 10).toFixed(1);
-    console.log(
-      `%c[Ascension] %cUpdating: %c${sceneTitle || "???"} %c(ID: ${id})%c, %cNew Rating: %c${displayRating}%c, %cResult: %c${statusText}`,
-      "color: #1cb4d6; font-weight: bold;",
-      "color: #1cb4d6;",
-      "color: #1cb4d6; font-weight: bold;",
-      "color: #1cb4d6;",
-      "color: #888;",
-      "color: #FF69B4;",
-      "color: #FF69B4; font-weight: bold;",
-      "color: #888;",
-      "color: #1cb4d6;",
-      `color: ${statusColor}; font-weight: bold;`
+  }
+  function loadEventLogState() {
+    try {
+      const data = localStorage.getItem(EVENT_LOG_STORAGE_KEY);
+      return data ? JSON.parse(data) : {};
+    } catch (e) {
+      console.warn("[Ascension] Failed to load event log state:", e);
+      return {};
+    }
+  }
+  function extractReadableContent(args) {
+    let cleanParts = [];
+    for (let i = 0; i < args.length; i++) {
+      const arg = args[i];
+      if (arg === "%c" || typeof arg === "string" && (arg.startsWith("color:") || arg.startsWith("font-weight:") || arg.startsWith("background:"))) {
+        continue;
+      }
+      if (typeof arg === "object" && arg !== null) {
+        try {
+          cleanParts.push(JSON.stringify(arg));
+        } catch (e) {
+          cleanParts.push(String(arg));
+        }
+      } else {
+        cleanParts.push(String(arg));
+      }
+    }
+    return cleanParts.join(" ").replace(/%c/g, "").replace(/\s+/g, " ").trim();
+  }
+  function findPerformerByName(name) {
+    const pool = state.globalPerformerPool;
+    if (!pool || !name)
+      return null;
+    const trimmed = name.trim();
+    if (!trimmed)
+      return null;
+    let found = pool.find((p) => p.name?.trim() === trimmed);
+    if (found)
+      return found;
+    const lowerTrimmed = trimmed.toLowerCase();
+    found = pool.find((p) => p.name?.trim().toLowerCase() === lowerTrimmed);
+    if (found)
+      return found;
+    return pool.find((p) => p.name?.trim().toLowerCase().includes(lowerTrimmed)) || null;
+  }
+  function ascScoreWithTierMarker(performer) {
+    const score = calculateBattleScore(performer);
+    if (score == null || Number.isNaN(score))
+      return null;
+    const tier = getRatingTier(performer, state.globalPerformerPool);
+    const tierColor = getTierColor(tier);
+    return `${tier} Asc.Score: ${score.toFixed(2)} __HON_TIER_FMT__${tierColor}__`;
+  }
+  function rewriteWithAscScore(message) {
+    const isPerformerLine = /\[Ascension\]\s*(?:Match|CROSS-TIER|Custom Cross-Tier|Updating|Champion Selected):/i.test(message) || /\bvs\b/i.test(message);
+    if (!isPerformerLine)
+      return message;
+    if (/(?:Match|CROSS-TIER|Custom Cross-Tier):/i.test(message)) {
+      message = rewriteMatchLine(message);
+    }
+    return message;
+  }
+  function rewriteMatchLine(message) {
+    const pool = state.globalPerformerPool;
+    if (!pool || pool.length === 0)
+      return message;
+    return message.replace(
+      /(Match|CROSS-TIER|Custom Cross-Tier):\s*([^(]+?)\s*\(w:\s*([\d.]+)\)\s*\[([\d.]+)\]\s*vs\s*([^(]+?)\s*\(w:\s*([\d.]+)\)\s*\[([\d.]+)\]/gi,
+      (match, prefix, name1, w1, r1, name2, w2, r2) => {
+        const p1 = findPerformerByName(name1);
+        const p2 = findPerformerByName(name2);
+        const score1 = p1 ? ascScoreWithTierMarker(p1) : null;
+        const score2 = p2 ? ascScoreWithTierMarker(p2) : null;
+        const left = score1 ? `(w: ${w1}, ${score1})` : `(w: ${w1}) [${r1}]`;
+        const right = score2 ? `(w: ${w2}, ${score2})` : `(w: ${w2}) [${r2}]`;
+        return `${prefix}: ${name1} ${left} vs ${name2} ${right}`;
+      }
     );
-    const variables = {
-      id: id.toString(),
-      rating: cleanRating,
-      fields: {}
-    };
-    if (sceneObj) {
-      try {
-        const currentStats = parsePerformerEloData(sceneObj);
-        const updatedStats = updatePerformerStats(currentStats, won, change);
-        if (updatedStats) {
-          const statsToStore = { ...updatedStats };
-          delete statsToStore.performer_record;
-          variables.fields.hotornot_stats = JSON.stringify(statsToStore);
-        }
-      } catch (e) {
-        console.error(`[Ascension] Stats update failed for scene ${id}:`, e);
+  }
+  function getEntityBasePath() {
+    return state.battleType === "scenes" ? "/scenes" : "/performers";
+  }
+  function linkPerformerNames(message) {
+    const basePath = getEntityBasePath();
+    const linkClass = state.battleType === "scenes" ? "hon-log-scene-link" : "hon-log-performer-link";
+    message = message.replace(
+      /(Updating:|Champion Selected:)\s+([^(]+?)\s*\(ID:\s*(\d+)\)/g,
+      (match, prefix, name, id) => {
+        return `${prefix} <a href="${basePath}/${id}" target="_blank" class="${linkClass}">${name.trim()}</a> (ID: ${id})`;
       }
-      let matchHistory = [];
-      try {
-        const rawRecord = sceneObj.custom_fields?.scene_record;
-        if (rawRecord) {
-          matchHistory = typeof rawRecord === "string" ? JSON.parse(rawRecord) : rawRecord;
-          if (!Array.isArray(matchHistory))
-            matchHistory = [];
-        }
-      } catch (e) {
-        console.warn(`[Ascension] Failed to parse scene_record for ${id}, resetting history.`);
-        matchHistory = [];
+    );
+    message = message.replace(
+      /(Match|CROSS-TIER|Custom Cross-Tier):\s*([^(]+?)\s*\(ID:\s*(\d+)\)\s*\(w:/gi,
+      (match, prefix, name, id) => {
+        return `${prefix}: <a href="${basePath}/${id}" target="_blank" class="${linkClass}">${name.trim()}</a> (ID: ${id}) (w:`;
       }
-      matchHistory = matchHistory.map(normalizeSceneRecordEntry).filter(Boolean);
-      let opponentIdValue = "0";
-      if (opponentId) {
-        if (typeof opponentId === "string" && opponentId.includes(":")) {
-          opponentIdValue = opponentId.split(":")[0];
-        } else {
-          opponentIdValue = (typeof opponentId === "object" ? opponentId.id : opponentId).toString().replace(/\D/g, "");
-        }
+    );
+    message = message.replace(
+      /vs\s+([^(]+?)\s*\(ID:\s*(\d+)\)\s*\(w:/g,
+      (match, name, id) => {
+        return `vs <a href="${basePath}/${id}" target="_blank" class="${linkClass}">${name.trim()}</a> (ID: ${id}) (w:`;
       }
-      matchHistory.push({
-        date: (/* @__PURE__ */ new Date()).toISOString(),
-        opponentId: opponentIdValue,
-        won,
-        ratingAfter: cleanRating
-      });
-      if (matchHistory.length > 30)
-        matchHistory = matchHistory.slice(-30);
-      variables.fields.scene_record = JSON.stringify(matchHistory);
-    }
-    variables.fields = variables.fields || {};
-    try {
-      return await graphqlQuery(`
-      mutation($id: ID!, $rating: Int!, $fields: Map) {
-        sceneUpdate(input: {
-          id: $id,
-          rating100: $rating,
-          custom_fields: { partial: $fields }
-        }) {
-          id
-        }
-      }`, variables);
-    } catch (err) {
-      console.error(`[Ascension] GraphQL Update Failed for scene ${id}:`, err);
-      throw err;
-    }
+    );
+    return message;
   }
-  function extractTitleFromFile(sceneObj) {
-    if (!sceneObj || !sceneObj.files || sceneObj.files.length === 0) {
-      return "Unknown Scene";
-    }
-    const file = sceneObj.files[0];
-    if (!file.path) {
-      return "Unknown Scene";
-    }
-    let title = file.path.split(/[\/\\]/).pop();
-    if (title.includes(".")) {
-      title = title.substring(0, title.lastIndexOf("."));
-    }
-    return title || "Unknown Scene";
-  }
-  async function fetchSceneById(id) {
-    const SCENE_COMPLETE_FRAGMENT = `
-    id
-    title
-    rating100
-    custom_fields
-    files {
-      path
-    }
-  `;
-    const query = `query FindSceneComplete($id: ID!) { findScene(id: $id) { ${SCENE_COMPLETE_FRAGMENT} } }`;
-    try {
-      const result = await graphqlQuery(query, { id });
-      return result.findScene;
-    } catch (error) {
-      console.error(`[Ascension] Failed to fetch complete scene data for ID ${id}:`, error);
-      throw error;
-    }
-  }
-  async function updateImageRating(id, rating) {
-    await graphqlQuery(`mutation($i: ImageUpdateInput!) { imageUpdate(input: $i) { id } }`, {
-      i: { id, rating100: Math.max(1, Math.min(100, rating)) }
-    });
-  }
-  async function updatePerformerRating(id, rating, performerObj = null, won = null, opponentId = null, change = null) {
-    if (!id) {
-      console.error("[Ascension] Cannot update performer: ID is missing");
+  function createEventLogUI() {
+    if (document.getElementById("hon-event-log")) {
       return;
     }
-    let performerName = "Unknown";
-    if (performerObj?.name) {
-      performerName = performerObj.name;
-    } else if (state.currentPair) {
-      if (state.currentPair.left?.id == id)
-        performerName = state.currentPair.left.name;
-      else if (state.currentPair.right?.id == id)
-        performerName = state.currentPair.right.name;
+    const logContainer = document.createElement("div");
+    logContainer.id = "hon-event-log";
+    logContainer.className = "hon-event-log-container";
+    logContainer.innerHTML = `
+    <div class="hon-event-log-header">
+      <span class="hon-event-log-title">\u{1F4D1} Log</span>
+      <div class="hon-event-log-controls">
+        <button id="hon-event-log-export" class="hon-event-log-btn" title="Export Log">\u{1F4BE}</button>
+        <button id="hon-event-log-clear" class="hon-event-log-btn" title="Clear Log">\u{1F5D1}\uFE0F</button>
+        <button id="hon-event-log-toggle" class="hon-event-log-btn" title="Toggle Visibility">\u{1F441}\uFE0F</button>
+        <button id="hon-event-log-close" class="hon-event-log-btn" title="Close Log">\u2715</button>
+      </div>
+    </div>
+    <div class="hon-event-log-content" id="hon-event-log-content"></div>
+    <div class="hon-event-log-resize-handle-left" id="hon-event-log-resize-left" title="Resize left"></div>
+    <div class="hon-event-log-resize-handle" id="hon-event-log-resize" title="Resize height"></div>
+    <div class="hon-event-log-resize-handle-diagonal-left" id="hon-event-log-resize-diagonal-left" title="Resize left and height"></div>
+  `;
+    const savedState = loadEventLogState();
+    if (savedState.height)
+      logContainer.style.height = savedState.height;
+    if (savedState.width)
+      logContainer.style.width = savedState.width;
+    if (savedState.left) {
+      const parsedLeft = parseInt(savedState.left, 10);
+      if (!isNaN(parsedLeft) && parsedLeft >= -2e3) {
+        logContainer.style.left = savedState.left;
+      }
     }
-    let cleanRating = Math.round(Number(rating));
-    if (isNaN(cleanRating)) {
-      console.warn(`[Ascension] Invalid rating for ${id}, falling back to existing data.`);
-      cleanRating = performerObj?.rating100 || 1;
-    }
-    if (change === null && performerObj && !isNaN(performerObj.rating100)) {
-      change = cleanRating - Math.round(Number(performerObj.rating100));
-    }
-    const isSTier = isSTierPerformer(performerObj);
-    const battleScore = isSTier ? calculateBattleScore(performerObj) : null;
-    const statusText = formatResultStatus(won, change);
-    const statusColor = won === true ? "#4CAF50" : won === false ? "#F44336" : "#9E9E9E";
-    const displayRating = (cleanRating / 10).toFixed(1);
-    if (isSTier && typeof battleScore === "number" && !isNaN(battleScore)) {
-      const battleScoreStr = battleScore.toFixed(1);
-      console.log(
-        `%c[Ascension] %cUpdating: %c${performerName || "???"} %c(ID: ${id})%c, %cNew Rating: %c${displayRating}%c (Ascended: %c${battleScoreStr}%c), %cResult: %c${statusText}`,
-        "color: #1cb4d6; font-weight: bold;",
-        "color: #1cb4d6;",
-        "color: #1cb4d6; font-weight: bold;",
-        "color: #1cb4d6;",
-        "color: #888;",
-        "color: #FF69B4;",
-        "color: #FF69B4; font-weight: bold;",
-        "color: #888;",
-        "color: #eb9834; font-weight: bold;",
-        "color: #888;",
-        "color: #1cb4d6;",
-        `color: ${statusColor}; font-weight: bold;`
-      );
+    waitForModalAndInject(logContainer);
+  }
+  function waitForModalAndInject(logContainer) {
+    const checkInterval = setInterval(() => {
+      const pluginLayout = document.querySelector(".hon-plugin-layout");
+      if (pluginLayout) {
+        const isMobileView = window.innerWidth <= 768;
+        pluginLayout.appendChild(logContainer);
+        setupEventLogEventListeners();
+        if (!isMobileView) {
+          setupLayoutConstraints(pluginLayout, logContainer);
+        }
+        applySavedLogState(loadEventLogState());
+        updateEventLogDisplay();
+        clearInterval(checkInterval);
+      }
+    }, 100);
+    setTimeout(() => clearInterval(checkInterval), 5e3);
+  }
+  function applySavedLogState(savedState) {
+    const content = document.getElementById("hon-event-log-content");
+    const toggleBtn = document.getElementById("hon-event-log-toggle");
+    if (!content || !toggleBtn)
+      return;
+    if (savedState.closed) {
+      content.style.display = "none";
+      toggleBtn.textContent = "\u{1F441}\uFE0F";
+      toggleBtn.title = "Show Log";
     } else {
-      console.log(
-        `%c[Ascension] %cUpdating: %c${performerName || "???"} %c(ID: ${id})%c, %cNew Rating: %c${displayRating}%c, %cResult: %c${statusText}`,
-        "color: #1cb4d6; font-weight: bold;",
-        "color: #1cb4d6;",
-        "color: #1cb4d6; font-weight: bold;",
-        "color: #1cb4d6;",
-        "color: #888;",
-        "color: #FF69B4;",
-        "color: #FF69B4; font-weight: bold;",
-        "color: #888;",
-        "color: #1cb4d6;",
-        `color: ${statusColor}; font-weight: bold;`
-      );
-    }
-    const variables = {
-      id: id.toString(),
-      rating: cleanRating,
-      fields: {}
-    };
-    if (performerObj) {
-      try {
-        const currentStats = parsePerformerEloData(performerObj);
-        const updatedStats = updatePerformerStats(currentStats, won, change);
-        if (updatedStats) {
-          const statsToStore = { ...updatedStats };
-          delete statsToStore.performer_record;
-          variables.fields.hotornot_stats = JSON.stringify(statsToStore);
-        }
-      } catch (e) {
-        console.error(`[Ascension] Stats update failed for ${id}:`, e);
-      }
-      let matchHistory = [];
-      try {
-        const rawRecord = performerObj.custom_fields?.performer_record;
-        if (rawRecord) {
-          matchHistory = typeof rawRecord === "string" ? JSON.parse(rawRecord) : rawRecord;
-        }
-      } catch (e) {
-        console.warn(`[Ascension] Failed to parse performer_record for ${id}, resetting history.`);
-        matchHistory = [];
-      }
-      let opponentData = "0:Unknown";
-      if (opponentId) {
-        if (typeof opponentId === "string" && opponentId.includes(":")) {
-          opponentData = opponentId;
-        } else {
-          const oppId = (typeof opponentId === "object" ? opponentId.id : opponentId).toString().replace(/\D/g, "");
-          let oppName = "Unknown";
-          if (opponentId.name) {
-            oppName = opponentId.name;
-          } else if (state.currentPair) {
-            if (state.currentPair.left?.id == oppId)
-              oppName = state.currentPair.left.name;
-            else if (state.currentPair.right?.id == oppId)
-              oppName = state.currentPair.right.name;
-          }
-          opponentData = `${oppId}:${oppName || "Unknown"}`;
-        }
-      }
-      matchHistory.push({
-        date: (/* @__PURE__ */ new Date()).toISOString(),
-        opponent: opponentData,
-        won,
-        ratingAfter: cleanRating
-      });
-      if (matchHistory.length > 30)
-        matchHistory = matchHistory.slice(-30);
-      variables.fields.performer_record = JSON.stringify(matchHistory);
-    }
-    variables.fields = variables.fields || {};
-    try {
-      return await graphqlQuery(`
-      mutation($id: ID!, $rating: Int!, $fields: Map) {
-        performerUpdate(input: {
-          id: $id,
-          rating100: $rating,
-          custom_fields: { partial: $fields }
-        }) {
-          id
-        }
-      }`, {
-        id: id.toString(),
-        rating: cleanRating,
-        fields: variables.fields
-      });
-    } catch (err) {
-      console.error(`[Ascension] GraphQL Update Failed for ${id}:`, err);
-      throw err;
+      content.style.display = "block";
+      toggleBtn.textContent = "\u{1F6AB}";
+      toggleBtn.title = "Hide Log";
     }
   }
-  async function undoLastMatch() {
-    if (!state.matchHistory || state.matchHistory.length === 0) {
-      console.log("[Ascension] No match history to undo");
-      return null;
+  function setupLayoutConstraints(pluginLayout, logContainer) {
+    if (layoutObserver) {
+      layoutObserver.disconnect();
     }
-    const last = state.matchHistory.pop();
-    console.log("[Ascension] Undoing match:", last);
-    try {
-      await Promise.all([
-        updateItemRatingDirect(last.winnerId, last.winnerOldRating, last.winnerOldStats),
-        updateItemRatingDirect(last.loserId, last.loserOldRating, last.loserOldStats)
-      ]);
-      console.log("[Ascension] Successfully restored ratings and records");
-    } catch (error) {
-      state.matchHistory.push(last);
-      console.error("[Ascension] Failed to restore ratings:", error);
-      throw new Error(`Failed to undo match: ${error.message}`);
-    }
-    if (last.gauntletSnapshot) {
-      const snap = last.gauntletSnapshot;
-      state.gauntletChampion = snap.gauntletChampion;
-      state.gauntletWins = snap.gauntletWins;
-      state.gauntletDefeated = [...snap.gauntletDefeated];
-      state.gauntletFalling = snap.gauntletFalling;
-      state.gauntletFallingItem = snap.gauntletFallingItem ? { ...snap.gauntletFallingItem } : null;
-      console.log("[Ascension] Restored gauntlet state");
-    }
-    let restoredPairSnapshot = null;
-    if (last.pairSnapshot) {
-      const { left, right } = last.pairSnapshot;
-      state.currentPair = { left, right };
-      state.currentRanks = { left: last.pairSnapshot.rankLeft, right: last.pairSnapshot.rankRight };
-      restoredPairSnapshot = last.pairSnapshot;
-      console.log("[Ascension] Restored pair snapshot");
-    }
-    return restoredPairSnapshot || null;
+    layoutObserver = new ResizeObserver(() => {
+      constrainEventLogPosition(pluginLayout, logContainer);
+    });
+    layoutObserver.observe(pluginLayout);
+    constrainEventLogPosition(pluginLayout, logContainer);
   }
-  async function updateItemRatingDirect(itemId, rating, statsObj) {
-    const recordKey = getRecordKeyForBattleType(state.battleType);
-    if (state.battleType === "performers" || state.battleType === "scenes") {
-      const fields = {};
-      if (statsObj) {
-        const statsToRestore = { ...statsObj };
-        if (recordKey)
-          delete statsToRestore[recordKey];
-        fields.hotornot_stats = JSON.stringify(statsToRestore);
-        if (recordKey && recordKey in statsObj) {
-          const recordData = statsObj[recordKey];
-          console.log(`[Ascension] Restoring ${recordKey} for ${itemId}:`, recordData);
-          if (recordData !== void 0 && recordData !== null) {
-            fields[recordKey] = Array.isArray(recordData) ? JSON.stringify(recordData) : recordData;
-          } else {
-            fields[recordKey] = "[]";
-          }
-        }
-      }
-      const mutationName = state.battleType === "performers" ? "performerUpdate" : "sceneUpdate";
-      console.log(`[Ascension] Restoring ${state.battleType} ${itemId} with fields:`, fields);
-      await graphqlQuery(`
-      mutation($id: ID!, $rating: Int!, $fields: Map) {
-        ${mutationName}(input: {
-          id: $id,
-          rating100: $rating,
-          custom_fields: { partial: $fields }
-        }) {
-          id
-        }
-      }`, {
-        id: itemId,
-        rating: Math.round(rating),
-        fields
-      });
-    } else if (state.battleType === "images") {
-      await updateImageRating(itemId, rating);
+  function constrainEventLogPosition(pluginLayout, logContainer) {
+    if (!pluginLayout || !logContainer)
+      return;
+    const mainContent = pluginLayout.querySelector(".hon-main-plugin-content");
+    const defaultLeft = 10;
+    let currentLeft = parseInt(document.defaultView.getComputedStyle(logContainer).left, 10);
+    if (isNaN(currentLeft))
+      currentLeft = defaultLeft;
+    if (currentLeft < -3e3) {
+      logContainer.style.left = `${defaultLeft}px`;
+      currentLeft = defaultLeft;
+    }
+    if (mainContent) {
+      const layoutRect = pluginLayout.getBoundingClientRect();
+      const mainRect = mainContent.getBoundingClientRect();
+      const maxWidth2 = mainRect.left - layoutRect.left - currentLeft - 20;
+      logContainer.style.maxWidth = `${Math.max(200, maxWidth2)}px`;
     } else {
-      console.warn(`[Ascension] Unknown battle type for direct update: ${state.battleType}`);
+      logContainer.style.maxWidth = "none";
+    }
+    const currentWidth = parseInt(document.defaultView.getComputedStyle(logContainer).width, 10);
+    const maxWidth = parseInt(logContainer.style.maxWidth, 10);
+    if (!isNaN(currentWidth) && !isNaN(maxWidth) && currentWidth > maxWidth) {
+      logContainer.style.width = `${maxWidth}px`;
     }
   }
-  async function getHotOrNotConfig() {
-    if (pluginConfigCache)
-      return pluginConfigCache;
-    const result = await graphqlQuery(`query { configuration { plugins } }`);
-    pluginConfigCache = (result.configuration.plugins || {})["HotOrNot"] || {};
-    return pluginConfigCache;
+  function setupEventLogEventListeners() {
+    const exportBtn = document.getElementById("hon-event-log-export");
+    const clearBtn = document.getElementById("hon-event-log-clear");
+    const toggleBtn = document.getElementById("hon-event-log-toggle");
+    const closeBtn = document.getElementById("hon-event-log-close");
+    const resizeHandle = document.getElementById("hon-event-log-resize");
+    const leftResizeHandle = document.getElementById("hon-event-log-resize-left");
+    const diagonalLeftResizeHandle = document.getElementById("hon-event-log-resize-diagonal-left");
+    if (exportBtn) {
+      exportBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        exportLogEntries();
+      });
+    }
+    if (clearBtn) {
+      clearBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        eventLogEntries = [];
+        updateEventLogDisplay();
+      });
+    }
+    if (toggleBtn) {
+      toggleBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const content = document.querySelector(".hon-event-log-content");
+        const isVisible = content.style.display !== "none";
+        content.style.display = isVisible ? "none" : "block";
+        toggleBtn.textContent = isVisible ? "\u{1F441}\uFE0F" : "\u{1F6AB}";
+        toggleBtn.title = isVisible ? "Show Log" : "Hide Log";
+        saveEventLogState({ closed: !isVisible });
+      });
+    }
+    if (closeBtn) {
+      closeBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const logContainer = document.getElementById("hon-event-log");
+        if (logContainer) {
+          logContainer.style.display = "none";
+        }
+      });
+    }
+    if (resizeHandle)
+      setupResizeHandler(resizeHandle, "vertical");
+    if (leftResizeHandle)
+      setupResizeHandler(leftResizeHandle, "left");
+    if (diagonalLeftResizeHandle)
+      setupResizeHandler(diagonalLeftResizeHandle, "diagonal-left");
   }
-  async function isBattleRankBadgeEnabled() {
-    const config = await getHotOrNotConfig();
-    return config.showBattleRankBadge !== false;
-  }
-  var FRAGMENTS, PERFORMER_FRAGMENT, IMAGE_FRAGMENT, SCENE_FRAGMENT, pluginConfigCache;
-  var init_api_client = __esm({
-    "api-client.js"() {
-      init_rating_utils();
-      init_parsers();
-      init_math_utils();
-      init_state();
-      FRAGMENTS = {
-        PERFORMER: `id name image_path rating100 details custom_fields birthdate ethnicity country gender height_cm measurements fake_tits scene_count image_count gallery_count tags { name }`,
-        IMAGE: `id rating100 paths { thumbnail image }`,
-        SCENE: `id title date rating100 organized details director files { duration path } paths { screenshot preview } performers { id name image_path rating100 } studio { id name } tags { id name } play_count last_played_at play_duration o_counter custom_fields`
+  function setupResizeHandler(resizeHandle, direction) {
+    let isResizing = false;
+    resizeHandle.addEventListener("mousedown", (e) => {
+      isResizing = true;
+      e.preventDefault();
+      e.stopPropagation();
+      const logContainer = document.getElementById("hon-event-log");
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const startWidth = parseInt(document.defaultView.getComputedStyle(logContainer).width, 10);
+      const startHeight = parseInt(document.defaultView.getComputedStyle(logContainer).height, 10);
+      const startLeft = parseInt(document.defaultView.getComputedStyle(logContainer).left, 10);
+      const doDrag = (e2) => {
+        if (!isResizing)
+          return;
+        e2.preventDefault();
+        if (direction === "left" || direction === "diagonal-left") {
+          const deltaX = e2.clientX - startX;
+          let newWidth = startWidth - deltaX;
+          let newLeft = startLeft + deltaX;
+          if (newWidth < 200) {
+            newWidth = 200;
+            newLeft = startLeft + startWidth - 200;
+          }
+          if (newLeft < -2e3) {
+            newLeft = -2e3;
+            newWidth = startLeft + startWidth + 2e3;
+          }
+          logContainer.style.width = newWidth + "px";
+          logContainer.style.left = newLeft + "px";
+        }
+        if (direction === "vertical" || direction === "diagonal-left") {
+          let newHeight = startHeight - (e2.clientY - startY);
+          newHeight = Math.max(100, Math.min(600, newHeight));
+          logContainer.style.height = newHeight + "px";
+        }
+        const pluginLayout = document.querySelector(".hon-plugin-layout");
+        if (pluginLayout)
+          constrainEventLogPosition(pluginLayout, logContainer);
       };
-      PERFORMER_FRAGMENT = FRAGMENTS.PERFORMER;
-      IMAGE_FRAGMENT = FRAGMENTS.IMAGE;
-      SCENE_FRAGMENT = FRAGMENTS.SCENE;
-      pluginConfigCache = null;
+      const stopDrag = () => {
+        isResizing = false;
+        document.removeEventListener("mousemove", doDrag);
+        document.removeEventListener("mouseup", stopDrag);
+        const logContainer2 = document.getElementById("hon-event-log");
+        if (logContainer2) {
+          saveEventLogState({
+            height: logContainer2.style.height,
+            width: logContainer2.style.width,
+            left: logContainer2.style.left
+          });
+        }
+      };
+      document.addEventListener("mousemove", doDrag);
+      document.addEventListener("mouseup", stopDrag);
+    });
+  }
+  function exportLogEntries() {
+    if (eventLogEntries.length === 0) {
+      alert("No log entries to export");
+      return;
+    }
+    const logText = eventLogEntries.map((entry) => {
+      const timeString = entry.timestamp.toLocaleString();
+      const level = entry.level.toUpperCase();
+      const itemLabel = entry.battleType === "scenes" ? "Scene" : "Performer";
+      let message = entry.message;
+      message = message.replace(
+        /(\[Ascension\] (?:Match|CROSS-TIER|Custom Cross-Tier): )([^(]+)(\s+\([^)]+\))/g,
+        "$1PerformerA$3"
+      );
+      message = message.replace(
+        /(vs\s+)([^(]+)(\s+\([^)]+\))/g,
+        "$1PerformerB$3"
+      );
+      message = message.replace(
+        /(\[Ascension\] Updating: )(.+?)\s*\(ID: (\d+)\)/g,
+        `$1${itemLabel} (ID: $3)`
+      );
+      message = message.replace(
+        /(\[Ascension\] Champion Selected: )([^(]+)(\s+\([^)]+\))/g,
+        "$1PerformerA$3"
+      );
+      return `[${timeString}] ${level}: ${message}`;
+    }).join("\n");
+    const blob = new Blob([logText], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const fileName = `battle-log-${(/* @__PURE__ */ new Date()).toISOString().slice(0, 19).replace(/:/g, "-")}.txt`;
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 100);
+    addEventLog(`Log exported to file: ${fileName}`, "log");
+  }
+  function updateEventLogDisplay() {
+    const content = document.getElementById("hon-event-log-content");
+    if (!content)
+      return;
+    const isScrolledToBottom = content.scrollHeight - content.clientHeight <= content.scrollTop + 1;
+    const existingEntriesCount = content.querySelectorAll(".hon-log-entry").length;
+    const tierColors = {
+      "any": "#00ff00",
+      "newcomers": "#00ff00",
+      "S-Tier": "#eb9834",
+      "A-Tier": "#e014aa",
+      "B-Tier": "#7f1e82",
+      "C-Tier": "#14bbe0",
+      "D-Tier": "#92e014",
+      "F-Tier": "#808080"
+    };
+    const allEntriesHTML = eventLogEntries.map((entry, index) => {
+      const timeString = entry.timestamp.toLocaleTimeString();
+      const levelClass = `hon-log-${entry.level}`;
+      const isNewEntry = index >= existingEntriesCount;
+      const animationClass = isNewEntry ? "new-entry" : "";
+      let messageText = entry.formattedMessage.replace(/%c/g, "").trim();
+      let messageHtml = messageText;
+      messageHtml = messageHtml.replace(
+        /\[Ascension\]/g,
+        '[<span style="color: #1cb4d6; font-weight: bold;">Ascension</span>]'
+      );
+      messageHtml = messageHtml.replace(/\bWIN\b/g, '<span style="color: #4CAF50; font-weight: bold;">WIN</span>').replace(/\bLOSS\b/g, '<span style="color: #F44336; font-weight: bold;">LOSS</span>').replace(/\bDRAW\b/g, '<span style="color: #9E9E9E; font-weight: bold;">DRAW</span>');
+      const placeholders = [];
+      function addPlaceholder(html) {
+        const key = `__HON_FMT_${placeholders.length}__`;
+        placeholders.push({ key, html });
+        return key;
+      }
+      messageHtml = messageHtml.replace(/\(\+(\d+(?:\.\d+)?)\)/g, (_, num) => addPlaceholder(`(<span style="color: #4CAF50; font-weight: bold;">+${num}</span>)`)).replace(/\(-(\d+(?:\.\d+)?)\)/g, (_, num) => addPlaceholder(`(<span style="color: #F44336; font-weight: bold;">-${num}</span>)`));
+      messageHtml = messageHtml.replace(
+        /\b(S-Tier|A-Tier|B-Tier|C-Tier|D-Tier|F-Tier)\s+Asc\.Score:\s*(\d+(?:\.\d+)?)\s*__HON_TIER_FMT__#?([0-9a-fA-F]{6})__/g,
+        (_, tier, num, hexColor) => {
+          return addPlaceholder(
+            `<span style="color: #${hexColor}; font-weight: bold;">${tier}</span> Asc.Score: <span style="color: #${hexColor}; font-weight: bold;">${num}</span>`
+          );
+        }
+      );
+      messageHtml = messageHtml.replace(
+        /\b(S-Tier|A-Tier|B-Tier|C-Tier|D-Tier|F-Tier)\s+Asc\.Score:\s*(\d+(?:\.\d+)?)/g,
+        (_, tier, num) => {
+          const color = tierColors[tier] || "#00ff00";
+          return addPlaceholder(
+            `<span style="color: ${color}; font-weight: bold;">${tier}</span> Asc.Score: <span style="color: ${color}; font-weight: bold;">${num}</span>`
+          );
+        }
+      );
+      messageHtml = messageHtml.replace(
+        /(\(\s*w\s*:\s*)([\d.]+)/g,
+        (_, prefix, num) => addPlaceholder(`${prefix}<span style="color: #1cb4d6; font-weight: bold;">${num}</span>`)
+      );
+      messageHtml = messageHtml.replace(
+        /\(\s*ID\s*:\s*(\d+)\s*\)/g,
+        '(<span style="color: #1cb4d6;">ID: $1</span>)'
+      );
+      messageHtml = messageHtml.replace(
+        /\[([\d\.]+)\]/g,
+        '[<span style="color: #1cb4d6;">$1</span>]'
+      );
+      messageHtml = messageHtml.replace(
+        /\bvs\b/g,
+        '<span style="color: #888;">vs</span>'
+      );
+      messageHtml = messageHtml.replace(
+        /Weight\s*:/g,
+        '<span style="color: #888;">Weight:</span>'
+      );
+      messageHtml = messageHtml.replace(
+        /Total Match Count\s*:/g,
+        '<span style="color: #888;">Total Match Count:</span>'
+      );
+      messageHtml = messageHtml.replace(
+        /\b(\d+\.\d+)\b/g,
+        '<span style="color: #FF69B4; font-weight: bold;">$1</span>'
+      );
+      messageHtml = messageHtml.replace(
+        /(CROSS-TIER:)/g,
+        '<span style="color: #E91E63; font-weight: bold;">$1</span>'
+      );
+      messageHtml = messageHtml.replace(
+        /(Custom Cross-Tier:)/g,
+        '<span style="color: #E91E63; font-weight: bold;">$1</span>'
+      );
+      placeholders.forEach(({ key, html }) => {
+        messageHtml = messageHtml.replace(key, html);
+      });
+      if (entry.tierInfo) {
+        let tierColor = tierColors[entry.tierInfo] || "#00ff00";
+        const tierRegex = new RegExp(`(Tier Selection:)\\\\\\\\s+(${entry.tierInfo})`);
+        messageHtml = messageHtml.replace(
+          tierRegex,
+          `$1 <span style="color: ${tierColor}; font-weight: bold;">$2</span>`
+        );
+      }
+      if (entry.tierFilterTiers && entry.tierFilterTiers.length > 0) {
+        const tierListHtml = entry.tierFilterTiers.map((tier) => {
+          const color = tierColors[tier] || "#00ff00";
+          return `<span style="color: ${color}; font-weight: bold;">${tier}</span>`;
+        }).join('<span style="color: #888;">, </span>');
+        messageHtml = messageHtml.replace(
+          /(Tier Filter active:)\s+([\w\-,\s]+)/,
+          `$1 ${tierListHtml}`
+        );
+      }
+      return `
+      <div class="hon-log-entry ${levelClass} ${animationClass}" data-entry-id="${entry.id}">
+        <span class="hon-log-timestamp">${timeString}</span>
+        <span class="hon-log-message">${messageHtml}</span>
+      </div>
+    `;
+    }).join("");
+    content.innerHTML = allEntriesHTML;
+    if (isScrolledToBottom) {
+      content.scrollTop = content.scrollHeight;
+    }
+    setTimeout(() => {
+      const newEntries = content.querySelectorAll(".new-entry");
+      newEntries.forEach((entry) => {
+        entry.classList.remove("new-entry");
+      });
+    }, 400);
+  }
+  function addEventLog(message, level = "log") {
+    const entry = {
+      id: Date.now() + Math.random(),
+      timestamp: /* @__PURE__ */ new Date(),
+      level,
+      message: `[Ascension] ${message}`,
+      formattedMessage: message,
+      battleType: state.battleType
+    };
+    eventLogEntries.push(entry);
+    if (eventLogEntries.length > MAX_LOG_ENTRIES) {
+      eventLogEntries.splice(0, eventLogEntries.length - MAX_LOG_ENTRIES);
+    }
+    updateEventLogDisplay();
+  }
+  function destroyEventLog() {
+    console.log = originalConsoleLog;
+    console.warn = originalConsoleWarn;
+    console.error = originalConsoleError;
+    const logContainer = document.getElementById("hon-event-log");
+    if (logContainer) {
+      logContainer.remove();
+    }
+    eventLogEntries = [];
+    if (layoutObserver) {
+      layoutObserver.disconnect();
+      layoutObserver = null;
+    }
+    try {
+      localStorage.removeItem(EVENT_LOG_STORAGE_KEY);
+    } catch (e) {
+      console.warn("[Ascension] Failed to clear event log state:", e);
+    }
+  }
+  var eventLogEntries, MAX_LOG_ENTRIES, originalConsoleLog, originalConsoleWarn, originalConsoleError, layoutObserver, EVENT_LOG_STORAGE_KEY;
+  var init_ui_event_log = __esm({
+    "ui-event-log.js"() {
+      init_state();
+      init_rating_utils();
+      eventLogEntries = [];
+      MAX_LOG_ENTRIES = 100;
+      originalConsoleLog = console.log;
+      originalConsoleWarn = console.warn;
+      originalConsoleError = console.error;
+      layoutObserver = null;
+      EVENT_LOG_STORAGE_KEY = "hon-event-log-state";
     }
   });
 
@@ -2590,27 +2723,6 @@
       isCacheInitializing = false;
     }
   }
-  async function getPluginSettings() {
-    try {
-      const response = await fetch("/graphql", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          query: `{
-          configuration {
-            plugins
-          }
-        }`
-        })
-      });
-      const result = await response.json();
-      const pluginSettings = result.data.configuration.plugins.ascension;
-      return pluginSettings?.HideAscRankBadge === true;
-    } catch (e) {
-      console.error("Ascension: Could not fetch config", e);
-      return false;
-    }
-  }
   function cleanup() {
     if (observer) {
       observer.disconnect();
@@ -2654,6 +2766,9 @@
   function isOnPerformerListPage() {
     return window.location.pathname === "/performers" || window.location.pathname.startsWith("/performers?");
   }
+  function isOnMainPage() {
+    return window.location.pathname === "/" || window.location.pathname === "";
+  }
   function isOnScenePage() {
     return window.location.pathname.includes("/scenes/");
   }
@@ -2692,10 +2807,11 @@
       <span class="hon-asc-separator" style="margin: 0 6px; opacity: 0.6;">|</span>
     `;
     }
+    const hideRecordOnList = HIDE_BADGE_RECORD && (isOnPerformerListPage() || isOnMainPage());
     let matchStatsHTML = "";
     let winRate = "0.0";
     const hasMatchStats = stats && stats.total_matches > 0;
-    if (hasMatchStats) {
+    if (hasMatchStats && !hideRecordOnList) {
       winRate = (stats.wins / (stats.total_matches || 1) * 100).toFixed(1);
       let streakDisplay = "";
       if (stats.current_streak > 0) {
@@ -2727,7 +2843,7 @@
       tooltipText += ` (Ascended Score: ${battleScore.toFixed(2)})`;
     }
     tooltipText += ` (Rating: ${rating}/100)`;
-    if (hasMatchStats) {
+    if (hasMatchStats && !hideRecordOnList) {
       tooltipText += `
 
 Match Stats:`;
@@ -2750,6 +2866,7 @@ Match Stats:`;
 \u2022 Worst Streak: ${Math.abs(stats.worst_streak)}`;
     }
     badge.title = tooltipText;
+    badge.classList.add("hon-badge-enter");
     return badge;
   }
   async function injectBattleRankBadgeInner() {
@@ -2787,7 +2904,6 @@ Match Stats:`;
           rankInfo.rating,
           rankInfo.stats,
           false,
-          // Full badge on single performer page
           tier,
           rankInfo.battleScore
         );
@@ -3006,13 +3122,20 @@ Match Stats:`;
     let scoreSuffix = `/10.0`;
     if (battleType === "performers") {
       try {
-        await initCacheFromDB();
-        if (!allPerformersCache) {
-          allPerformersCache = await getAllPerformersSorted();
-          rankCache = calculateAllPerformerRanks(allPerformersCache);
-          await writeCache("allPerformers", allPerformersCache);
-          await writeCache("rankMap", rankCache);
+        allPerformersCache = null;
+        rankCache = null;
+        state.globalPerformerPool = null;
+        const fresh = await getAllPerformersSorted();
+        const itemId = String(item.id);
+        const merged = fresh.map((p) => String(p.id) === itemId ? { ...p, ...item } : p);
+        if (!merged.some((p) => String(p.id) === itemId)) {
+          merged.push(item);
         }
+        allPerformersCache = merged;
+        state.globalPerformerPool = merged;
+        rankCache = calculateAllPerformerRanks(merged);
+        await writeCache("allPerformers", merged);
+        await writeCache("rankMap", rankCache);
         let rankInfo = rankCache ? rankCache.get(item.id) : null;
         if (!rankInfo) {
           rankInfo = await getPerformerGlobalRank(item.id, allPerformersCache);
@@ -3083,84 +3206,78 @@ Match Stats:`;
       });
     }
   }
-  function showTierChangeNotification(card, oldRating, newRating) {
-    const oldTier = getRatingTier(oldRating);
-    const newTier = getRatingTier(newRating);
-    if (oldTier === newTier)
+  async function checkAndShowTierChange(card, oldRating100, newRating100, performer) {
+    if (!card)
+      return;
+    await initCacheFromDB();
+    const pool = allPerformersCache || state.globalPerformerPool || [];
+    const oldSnapshot = { ...performer, rating100: oldRating100 };
+    const newSnapshot = { ...performer, rating100: newRating100 };
+    const oldTier = getRatingTier(oldSnapshot, pool);
+    const newTier = getRatingTier(newSnapshot, pool);
+    if (oldTier !== newTier) {
+      showTierChangeNotification(card, oldTier, newTier);
+    }
+  }
+  function showTierChangeNotification(card, oldTier, newTier) {
+    if (!card || !oldTier || !newTier || oldTier === newTier)
       return;
     const tiers = ["F-Tier", "D-Tier", "C-Tier", "B-Tier", "A-Tier", "S-Tier"];
     const oldIndex = tiers.indexOf(oldTier);
     const newIndex = tiers.indexOf(newTier);
     const isUpgrade = newIndex > oldIndex;
     const isMobile3 = window.innerWidth <= 1200;
-    if (isMobile3) {
-      if (!card.classList.contains("active"))
-        return;
-    }
+    if (isMobile3 && !card.classList.contains("active"))
+      return;
     const notification = document.createElement("div");
     notification.className = "hon-tier-change-notification";
     const tierColor = getTierColor(newTier);
     notification.innerHTML = `Tier Change: ${isUpgrade ? "\u2B06\uFE0F" : "\u2B07\uFE0F"} <span style="color: ${tierColor}">${newTier}</span>`;
-    if (isMobile3) {
+    notification.style.position = "absolute";
+    notification.style.top = "1px";
+    notification.style.left = "50%";
+    notification.style.fontSize = "1.5rem";
+    notification.style.fontWeight = "bold";
+    notification.style.textAlign = "center";
+    notification.style.zIndex = "150";
+    notification.style.pointerEvents = "none";
+    notification.style.whiteSpace = "nowrap";
+    notification.style.opacity = "0";
+    notification.style.background = "transparent";
+    notification.style.padding = "0";
+    notification.style.borderRadius = "0";
+    notification.style.boxShadow = "none";
+    notification.style.margin = "0";
+    notification.style.transition = "opacity 0.3s ease, transform 0.5s cubic-bezier(0.25, 0.46, 0.45, 0.94)";
+    if (!isMobile3) {
       card.style.position = "relative";
-      card.classList.add("tier-changing");
-      card.appendChild(notification);
-      notification.offsetHeight;
-      setTimeout(() => {
-        notification.classList.add("show");
-      }, 10);
-      setTimeout(() => {
-        notification.classList.remove("show");
-        notification.classList.add("exit");
-        setTimeout(() => {
-          if (notification.parentNode) {
-            notification.remove();
-            card.classList.remove("tier-changing");
-          }
-        }, 400);
-      }, 2e3);
-    } else {
-      notification.style.position = "absolute";
-      notification.style.top = "1px";
-      notification.style.left = "50%";
-      notification.style.fontSize = "1.5rem";
-      notification.style.fontWeight = "bold";
-      notification.style.textAlign = "center";
-      notification.style.zIndex = "150";
-      notification.style.pointerEvents = "none";
-      notification.style.whiteSpace = "nowrap";
-      notification.style.opacity = "0";
-      notification.style.background = "transparent";
-      notification.style.padding = "0";
-      notification.style.borderRadius = "0";
-      notification.style.boxShadow = "none";
-      notification.style.margin = "0";
-      notification.style.transition = "opacity 0.3s ease, transform 0.5s cubic-bezier(0.25, 0.46, 0.45, 0.94)";
-      if (isUpgrade) {
-        notification.style.transform = "translateX(-50%) translateY(20px)";
-      } else {
-        notification.style.transform = "translateX(-50%) translateY(-20px)";
-      }
-      card.style.position = "relative";
-      card.appendChild(notification);
-      setTimeout(() => {
-        notification.style.opacity = "1";
-        notification.style.transform = "translateX(-50%) translateY(0)";
-      }, 10);
-      setTimeout(() => {
-        notification.style.opacity = "0";
-        if (isUpgrade) {
-          notification.style.transform = "translateX(-50%) translateY(-20px)";
-        } else {
-          notification.style.transform = "translateX(-50%) translateY(20px)";
-        }
-        setTimeout(() => {
-          if (notification.parentNode) {
-            notification.remove();
-          }
-        }, 300);
-      }, 1700);
     }
+    card.appendChild(notification);
+    if (isUpgrade) {
+      notification.style.transform = "translateX(-50%) translateY(20px)";
+    } else {
+      notification.style.transform = "translateX(-50%) translateY(-20px)";
+    }
+    setTimeout(() => {
+      notification.style.opacity = "1";
+      notification.style.transform = "translateX(-50%) translateY(0)";
+    }, 10);
+    setTimeout(() => {
+      notification.style.opacity = "0";
+      if (isUpgrade) {
+        notification.style.transform = "translateX(-50%) translateY(-20px)";
+      } else {
+        notification.style.transform = "translateX(-50%) translateY(20px)";
+      }
+      setTimeout(() => {
+        if (notification.parentNode) {
+          notification.remove();
+        }
+        if (isMobile3) {
+          card.classList.remove("tier-changing");
+        }
+      }, 300);
+    }, 1700);
   }
   function createBattleRankTooltip(rank, total, rating, stats = null, battleScore = null) {
     let tooltipText = `Battle Rank #${rank} of ${total} performers`;
@@ -3221,7 +3338,7 @@ Match Stats:`;
             const tooltipText = createBattleRankTooltip(
               rankInfo.rank,
               rankInfo.total,
-              rankInfo.rank,
+              rankInfo.rating,
               rankInfo.stats,
               rankInfo.battleScore
             );
@@ -3258,7 +3375,6 @@ Match Stats:`;
     attachedListeners.add("navigation");
   }
   function showRatingAnimation(card, oldRating, newRating, change, isWinner) {
-    showTierChangeNotification(card, oldRating, newRating);
     let overlay = card.querySelector(".hon-rating-overlay");
     if (!overlay) {
       overlay = document.createElement("div");
@@ -3308,7 +3424,22 @@ Match Stats:`;
   }
   async function initPlugin() {
     cleanup();
-    HIDE_ASC_RANK_BADGE = await getPluginSettings();
+    HIDE_ASC_RANK_BADGE = getBadgeDisplayOption("HideAscRankBadge", false);
+    HIDE_BADGE_RECORD = getBadgeDisplayOption("HideBadgeRecord", false);
+    onBadgeSettingsChange(() => {
+      HIDE_ASC_RANK_BADGE = getBadgeDisplayOption("HideAscRankBadge", false);
+      HIDE_BADGE_RECORD = getBadgeDisplayOption("HideBadgeRecord", false);
+      document.querySelectorAll(".hon-battle-rank-badge").forEach((el) => el.remove());
+      document.querySelectorAll(".hon-rating-overlay").forEach((el) => el.remove());
+      document.querySelectorAll(".hon-tier-change-notification").forEach((el) => el.remove());
+      document.querySelectorAll(".thumbnail-section.processed").forEach((card) => {
+        processedCards.delete(card);
+        card.classList.remove("processed");
+      });
+      injectBattleRankBadge();
+      replaceAllRatingBannersWithBadges();
+      setTimeout(setupScenePageTooltips, 500);
+    });
     setupNavigationListener();
     setupMutationObserver();
     if (document.readyState === "loading") {
@@ -3323,14 +3454,16 @@ Match Stats:`;
       setTimeout(setupScenePageTooltips, 1e3);
     }
   }
-  var HIDE_ASC_RANK_BADGE, attachedListeners, observer, processedCards, allPerformersCache, rankCache, isFetchingAllPerformers, isCacheInitializing, performerQueue, pushStateOriginal, cleanupFunctions, DB_NAME, DB_VERSION, STORE_NAME, ASCENSION_FLAME_SVG, debouncedInjectBattleRankBadge, lastPath;
+  var HIDE_ASC_RANK_BADGE, HIDE_BADGE_RECORD, attachedListeners, observer, processedCards, allPerformersCache, rankCache, isFetchingAllPerformers, isCacheInitializing, performerQueue, pushStateOriginal, cleanupFunctions, DB_NAME, DB_VERSION, STORE_NAME, ASCENSION_FLAME_SVG, debouncedInjectBattleRankBadge, lastPath;
   var init_ui_badge = __esm({
     "ui-badge.js"() {
       init_state();
       init_api_client();
       init_rating_utils();
       init_battle_engine();
-      HIDE_ASC_RANK_BADGE = false;
+      init_ui_sidebar();
+      HIDE_ASC_RANK_BADGE = getBadgeDisplayOption("HideAscRankBadge", false);
+      HIDE_BADGE_RECORD = getBadgeDisplayOption("HideBadgeRecord", false);
       attachedListeners = /* @__PURE__ */ new Set();
       observer = null;
       processedCards = /* @__PURE__ */ new WeakSet();
@@ -3375,7 +3508,8 @@ Match Stats:`;
     hidePerformerSelection: () => hidePerformerSelection,
     loadPerformerSelection: () => loadPerformerSelection,
     showPerformerSelection: () => showPerformerSelection,
-    showPlacementScreen: () => showPlacementScreen
+    showPlacementScreen: () => showPlacementScreen,
+    startGauntletWithPerformerId: () => startGauntletWithPerformerId
   });
   function formatHeight2(heightCm) {
     if (!heightCm)
@@ -3406,7 +3540,7 @@ Match Stats:`;
     let tierDisplay = "";
     let tierClass = "";
     let battleScore = null;
-    if (performer.rating100 === null || performer.rating100 === 1) {
+    if (performer.rating100 === null || performer.rating100 === void 0) {
       ratingDisplay = "<span class='hon-selection-rating-value'>Unrated</span>";
       tierClass = "tier-f";
     } else {
@@ -3564,7 +3698,7 @@ Match Stats:`;
     state.gauntletWins = 0;
     state.gauntletFalling = false;
     const performerName = performer.name || `Performer #${performer.id}`;
-    const performerRating = performer.rating100 ? (performer.rating100 / 10).toFixed(1) : "Unrated";
+    const performerRating = performer.rating100 !== null && performer.rating100 !== void 0 ? (performer.rating100 / 10).toFixed(1) : "Unrated";
     console.log(`[Ascension] Champion Selected: ${performerName} (ID: ${performer.id}) | Rating: ${performerRating}`);
     const sel = document.getElementById("hon-performer-selection");
     const comp = document.getElementById("hon-comparison-area");
@@ -3583,6 +3717,19 @@ Match Stats:`;
       modal.classList.add(`hon-mode-${state.currentMode}`);
     }
     loadNewPair();
+  }
+  async function startGauntletWithPerformerId(performerId) {
+    try {
+      const { fetchPerformerById: fetchPerformerById2 } = await Promise.resolve().then(() => (init_api_client(), api_client_exports));
+      const performer = await fetchPerformerById2(performerId);
+      if (!performer) {
+        throw new Error(`Performer ${performerId} not found`);
+      }
+      startGauntletWithPerformer(performer);
+    } catch (err) {
+      console.error(`[Ascension] Failed to auto-select page performer ${performerId}:`, err);
+      showPerformerSelection();
+    }
   }
   function showPerformerSelection() {
     const selectionContainer = document.getElementById("hon-performer-selection");
@@ -3632,6 +3779,3713 @@ Match Stats:`;
     }
   });
 
+  // ui-stats.js
+  var ui_stats_exports = {};
+  __export(ui_stats_exports, {
+    attachNameTooltips: () => attachNameTooltips,
+    createStatsModalContent: () => createStatsModalContent,
+    generateBarGroups: () => generateBarGroups,
+    generateStatTables: () => generateStatTables,
+    openStatsModal: () => openStatsModal,
+    preloadStatsModal: () => preloadStatsModal
+  });
+  function getFlagEmoji(countryCode) {
+    if (!countryCode)
+      return "";
+    return COUNTRY_FLAGS[countryCode.toUpperCase()] || "\u{1F3F3}\uFE0F";
+  }
+  function getGenderEmoji(gender) {
+    switch (gender?.toLowerCase()) {
+      case "male":
+        return "\u2642\uFE0F";
+      case "female":
+        return "\u2640\uFE0F";
+      case "non-binary":
+      case "other":
+        return "\u26A7\uFE0F";
+      default:
+        return "";
+    }
+  }
+  function formatWeight(weight) {
+    if (weight === void 0 || weight === null)
+      return "N/A\u2690";
+    return (weight / 10).toFixed(1);
+  }
+  function calculateTimeUntilFull(performer) {
+    if (!performer.last_match || performer.weight >= 1e3)
+      return 0;
+    const lastMatchDate = new Date(performer.last_match);
+    const msSince = Date.now() - lastMatchDate.getTime();
+    const hoursSince = msSince / (1e3 * 60 * 60);
+    const rechargeRatePerHour = 1e3 / 12;
+    const recovered = hoursSince * rechargeRatePerHour;
+    const currentWeight = Math.min(1e3, (performer.weight || 0) + recovered);
+    if (currentWeight >= 1e3)
+      return 0;
+    const remaining = 1e3 - currentWeight;
+    const hoursUntilFull = remaining / rechargeRatePerHour;
+    return Math.max(0, Math.ceil(hoursUntilFull * 3600));
+  }
+  function formatCountdown(seconds) {
+    if (seconds <= 0)
+      return "";
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor(seconds % 3600 / 60);
+    const secs = seconds % 60;
+    if (hours > 0) {
+      return `${hours}h ${minutes}m`;
+    } else {
+      return `${minutes}m ${secs}s`;
+    }
+  }
+  function fixImagePath(imagePath, currentOrigin) {
+    if (!imagePath)
+      return null;
+    let fixedImagePath = imagePath;
+    try {
+      const imageUrl = new URL(imagePath);
+      const currentUrl = new URL(currentOrigin);
+      imageUrl.protocol = currentUrl.protocol;
+      imageUrl.hostname = currentUrl.hostname;
+      imageUrl.port = currentUrl.port;
+      fixedImagePath = imageUrl.toString();
+    } catch (err) {
+      try {
+        const path = new URL(imagePath).pathname + new URL(imagePath).search;
+        fixedImagePath = currentOrigin + path;
+      } catch (err2) {
+        fixedImagePath = imagePath;
+      }
+    }
+    return fixedImagePath;
+  }
+  function removeExistingTooltips(container) {
+    const existing = (container || document).querySelectorAll(".opponent-tooltip, .hon-performer-tooltip");
+    existing.forEach((t) => t.remove());
+  }
+  function attachPerformerTooltip(element, performer, modalDialog) {
+    if (!performer)
+      return;
+    const isDesktop = window.innerWidth > 1200;
+    element.addEventListener("mouseenter", (e) => {
+      if (modalDialog) {
+        removeExistingTooltips(modalDialog);
+      } else {
+        removeExistingTooltips();
+      }
+      const currentOrigin = window.location.origin;
+      const tooltip = document.createElement("div");
+      tooltip.className = "opponent-tooltip";
+      tooltip.style.position = "fixed";
+      tooltip.style.zIndex = "10002";
+      tooltip.style.backgroundColor = "rgba(0, 0, 0, 0.9)";
+      tooltip.style.border = "1px solid #555";
+      tooltip.style.borderRadius = "8px";
+      tooltip.style.padding = isDesktop ? "14px" : "8px";
+      tooltip.style.minWidth = isDesktop ? "180px" : "120px";
+      tooltip.style.maxWidth = isDesktop ? "320px" : "200px";
+      tooltip.style.textAlign = "center";
+      tooltip.style.boxShadow = "0 4px 8px rgba(0,0,0,0.3)";
+      tooltip.style.pointerEvents = "none";
+      tooltip.style.color = "#fff";
+      tooltip.style.fontSize = isDesktop ? "1rem" : "0.9rem";
+      if (performer.image_path) {
+        const fixedImagePath = fixImagePath(performer.image_path, currentOrigin);
+        const imageContainer = document.createElement("div");
+        const imgSize = isDesktop ? "120px" : "80px";
+        imageContainer.style.width = imgSize;
+        imageContainer.style.height = imgSize;
+        imageContainer.style.borderRadius = "50%";
+        imageContainer.style.overflow = "hidden";
+        imageContainer.style.border = "2px solid #555";
+        imageContainer.style.margin = "0 auto 8px";
+        const img = document.createElement("img");
+        img.src = fixedImagePath;
+        img.alt = `${performer.name} profile image`;
+        img.style.width = "100%";
+        img.style.height = "100%";
+        img.style.objectFit = "cover";
+        img.style.display = "block";
+        img.style.objectPosition = "center 15%";
+        img.onerror = function() {
+          imageContainer.innerHTML = "";
+          const placeholderIcon = document.createElement("span");
+          placeholderIcon.innerText = "\u{1F464}";
+          placeholderIcon.style.fontSize = isDesktop ? "3rem" : "2rem";
+          placeholderIcon.style.color = "#888";
+          placeholderIcon.style.display = "flex";
+          placeholderIcon.style.alignItems = "center";
+          placeholderIcon.style.justifyContent = "center";
+          placeholderIcon.style.height = "100%";
+          imageContainer.appendChild(placeholderIcon);
+        };
+        imageContainer.appendChild(img);
+        tooltip.appendChild(imageContainer);
+      }
+      const nameContainer = document.createElement("div");
+      nameContainer.style.display = "flex";
+      nameContainer.style.alignItems = "center";
+      nameContainer.style.justifyContent = "center";
+      nameContainer.style.gap = "0.3rem";
+      nameContainer.style.marginBottom = "4px";
+      const flag = getFlagEmoji(performer.countryCode);
+      if (flag) {
+        const flagSpan = document.createElement("span");
+        flagSpan.innerText = flag;
+        nameContainer.appendChild(flagSpan);
+      }
+      const nameElement = document.createElement("div");
+      nameElement.innerText = performer.name;
+      nameElement.style.color = "#fff";
+      nameElement.style.fontWeight = "bold";
+      nameElement.style.fontSize = isDesktop ? "1.1rem" : "1rem";
+      nameContainer.appendChild(nameElement);
+      tooltip.appendChild(nameContainer);
+      const ascScoreDisplay = performer.ascScore && performer.ascScore !== "N/A" ? performer.ascScore : "N/A";
+      const scoreElement = document.createElement("div");
+      scoreElement.innerText = `Asc.Score: ${ascScoreDisplay}`;
+      scoreElement.style.fontSize = isDesktop ? "0.95rem" : "0.8rem";
+      scoreElement.style.fontWeight = "bold";
+      scoreElement.style.color = performer.tierColor || "#ddd";
+      tooltip.appendChild(scoreElement);
+      document.body.appendChild(tooltip);
+      const rect = element.getBoundingClientRect();
+      tooltip.style.left = `${rect.left}px`;
+      tooltip.style.top = `${rect.bottom + 8}px`;
+      const moveHandler = (ev) => {
+        tooltip.style.left = `${ev.clientX + 12}px`;
+        tooltip.style.top = `${ev.clientY + 18}px`;
+      };
+      element.addEventListener("mousemove", moveHandler);
+      const leaveHandler = () => {
+        element.removeEventListener("mousemove", moveHandler);
+        element.removeEventListener("mouseleave", leaveHandler);
+        if (tooltip.parentNode)
+          tooltip.remove();
+      };
+      element.addEventListener("mouseleave", leaveHandler);
+    });
+  }
+  function attachNameTooltips(container, performers) {
+    if (!container || !performers || !performers.length)
+      return;
+    const modalDialog = container.closest(".hon-stats-modal-dialog");
+    const performerMap = /* @__PURE__ */ new Map();
+    performers.forEach((p) => {
+      const rawRating = p.rating100 ?? 1;
+      const hasMatches = (p.wins || 0) + (p.losses || 0) + (p.draws || 0) > 0;
+      const isUnrated = rawRating === 1 && !hasMatches;
+      const ascScore = calculateBattleScore(p);
+      const tier = getRatingTier(p, performers);
+      performerMap.set(String(p.id), {
+        id: p.id,
+        name: p.name || `Performer #${p.id}`,
+        image_path: p.image_path || p.imagePath || "",
+        countryCode: p.country || "",
+        rating: isUnrated ? "Unrated" : (rawRating / 10).toFixed(1),
+        ascScore: ascScore ? ascScore.toFixed(2) : "N/A",
+        tierColor: getTierColor(tier)
+      });
+    });
+    const nameLinks = container.querySelectorAll(".hon-stats-name a");
+    nameLinks.forEach((link) => {
+      const match = link.getAttribute("href")?.match(/\/performers\/(\d+)/);
+      if (!match)
+        return;
+      const performer = performerMap.get(match[1]);
+      if (performer) {
+        attachPerformerTooltip(link, performer, modalDialog);
+      }
+    });
+  }
+  function getProcessedRecencyWeight(p) {
+    if (!p.last_match || p.total_matches === 0)
+      return 1;
+    const lastMatchDate = new Date(p.last_match);
+    const msSince = Date.now() - lastMatchDate.getTime();
+    const minutesSince = msSince / (1e3 * 60);
+    if (minutesSince < 30)
+      return 0;
+    const hoursSince = minutesSince / 60;
+    let freshness = Math.min(1, 0.1 + hoursSince * 0.075);
+    if (p.total_matches < 10) {
+      freshness = Math.min(1, freshness + 0.2);
+    }
+    return freshness;
+  }
+  function isUnratedPerformer(p) {
+    const rawRating = p.rawRating ?? p.rating100 ?? 1;
+    const totalMatches = p.total_matches ?? (p.wins || 0) + (p.losses || 0) + (p.draws || 0);
+    return rawRating === 1 && totalMatches === 0;
+  }
+  function calculateRankByAscScore(performers) {
+    const sorted = [...performers].sort((a, b) => {
+      const scoreA = a.ascScore || 0;
+      const scoreB = b.ascScore || 0;
+      if (scoreB !== scoreA)
+        return scoreB - scoreA;
+      return (b.wins || 0) - (a.wins || 0);
+    });
+    const rankMap = /* @__PURE__ */ new Map();
+    sorted.forEach((p, index) => {
+      rankMap.set(p.id, {
+        rank: index + 1,
+        total: sorted.length,
+        ascScore: p.ascScore
+      });
+    });
+    return rankMap;
+  }
+  async function preloadStatsModal() {
+    if (!cachedPerformers) {
+      try {
+        cachedPerformers = await fetchAllPerformerStats();
+        cachedModalContent = await createStatsModalContent(cachedPerformers);
+        cacheTimestamp = Date.now();
+      } catch (error) {
+        console.warn("[Ascension] Failed to preload stats:", error);
+      }
+    }
+  }
+  async function openStatsModal(forceRefresh = false) {
+    const existingStatsModal = document.getElementById("hon-stats-modal");
+    if (existingStatsModal)
+      existingStatsModal.remove();
+    const statsModal = document.createElement("div");
+    statsModal.id = "hon-stats-modal";
+    statsModal.className = "hon-stats-modal";
+    statsModal.innerHTML = `
+    <div class="hon-modal-backdrop"></div>
+    <div class="hon-stats-modal-dialog hon-panel-fading-in">
+      <button class="hon-modal-close">\u2715</button>
+      <div class="hon-stats-loading">Loading stats...</div>
+    </div>
+  `;
+    document.body.appendChild(statsModal);
+    const closeStats = () => {
+      if (weightCountdownInterval) {
+        clearInterval(weightCountdownInterval);
+        weightCountdownInterval = null;
+      }
+      statsModal.remove();
+    };
+    const dialogContainer = statsModal.querySelector(".hon-stats-modal-dialog");
+    dialogContainer.addEventListener("click", (e) => e.stopPropagation());
+    statsModal.querySelector(".hon-modal-backdrop").addEventListener("click", closeStats);
+    statsModal.querySelector(".hon-modal-close").addEventListener("click", closeStats);
+    const onDialogIntroEnd = (e) => {
+      if (e.target === dialogContainer && e.animationName === "hon-stats-dialog-in") {
+        dialogContainer.classList.remove("hon-panel-fading-in");
+        dialogContainer.removeEventListener("animationend", onDialogIntroEnd);
+      }
+    };
+    dialogContainer.addEventListener("animationend", onDialogIntroEnd);
+    try {
+      let performersToUse = cachedPerformers;
+      let usedCache = false;
+      try {
+        performersToUse = await fetchAllPerformerStats();
+        cachedPerformers = performersToUse;
+        cacheTimestamp = Date.now();
+        cachedModalContent = await createStatsModalContent(performersToUse);
+      } catch (fetchError) {
+        console.warn("[Ascension] Failed to fetch fresh stats:", fetchError);
+        if (cachedPerformers && cachedModalContent) {
+          performersToUse = cachedPerformers;
+          usedCache = true;
+          console.log("[Ascension] Using cached stats due to fetch failure");
+          if (cachedModalContent instanceof Promise) {
+            cachedModalContent = await cachedModalContent;
+          }
+        } else {
+          throw fetchError;
+        }
+      }
+      if (!cachedModalContent && performersToUse) {
+        cachedModalContent = await createStatsModalContent(performersToUse);
+      }
+      dialogContainer.innerHTML = `
+      <button class="hon-modal-close">\u2715</button>
+      ${cachedModalContent}
+      ${usedCache ? '<div class="hon-stats-cache-notice">Showing cached data</div>' : ""}
+    `;
+      dialogContainer.addEventListener("click", (e) => e.stopPropagation());
+      dialogContainer.querySelector(".hon-modal-close").addEventListener("click", closeStats);
+      if (!dialogContainer.classList.contains("hon-panel-fading-in")) {
+        void dialogContainer.offsetHeight;
+        dialogContainer.classList.add("hon-panel-fading-in");
+      }
+      const refreshBtn = dialogContainer.querySelector("#refresh-stats-btn");
+      if (refreshBtn) {
+        refreshBtn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          await openStatsModal(true);
+        });
+      }
+      attachNameTooltips(dialogContainer, performersToUse);
+      initStatsTabs(dialogContainer);
+      initStatsCollapsibles(dialogContainer);
+      initStatsSorting(dialogContainer);
+      initWeightCountdowns();
+      const activeDistributionTab = dialogContainer.querySelector('.hon-stats-tab[data-tab="distribution"].active');
+      if (activeDistributionTab) {
+        setTimeout(() => {
+          const bars = dialogContainer.querySelectorAll(".animated-bar:not(.animated)");
+          if (bars.length > 0) {
+            animateBars(bars);
+          }
+        }, 100);
+      }
+    } catch (error) {
+      console.error("[Ascension] Error loading stats:", error);
+      dialogContainer.innerHTML = `
+      <button class="hon-modal-close">\u2715</button>
+      <div class="hon-stats-error">Failed to load statistics.</div>
+    `;
+      dialogContainer.querySelector(".hon-modal-close").addEventListener("click", closeStats);
+    }
+  }
+  async function createStatsModalContent(performers) {
+    if (!performers || performers.length === 0) {
+      return '<div class="hon-stats-empty">No performer stats available</div>';
+    }
+    const processedPerformers = [];
+    performers.forEach((p) => {
+      const stats = parsePerformerEloData(p);
+      const rawRating = p.rating100 ?? 1;
+      const isUnrated = rawRating === 1 && stats.total_matches === 0;
+      const displayRating = isUnrated ? "Unrated" : (rawRating / 10).toFixed(1);
+      let currentWeight = 1e3;
+      if (stats.last_match) {
+        const lastMatchDate = new Date(stats.last_match);
+        const msSince = Date.now() - lastMatchDate.getTime();
+        const hoursSince = msSince / (1e3 * 60 * 60);
+        const rechargeRatePerHour = 1e3 / 12;
+        const recovered = hoursSince * rechargeRatePerHour;
+        currentWeight = Math.min(1e3, recovered);
+      }
+      const ascScore = calculateBattleScore(p);
+      const compositeScore = calculatePerformerCompositeScore(p);
+      const performerTier = getRatingTier(p, performers);
+      const ascScoreColor = getTierColor(performerTier);
+      processedPerformers.push({
+        ...stats,
+        id: p.id,
+        name: p.name || `Performer #${p.id}`,
+        rating: displayRating,
+        rawRating,
+        countryCode: p.country || "",
+        gender: p.gender || "",
+        weight: currentWeight,
+        last_match: stats.last_match || null,
+        ascScore,
+        compositeScore,
+        ascScoreColor,
+        image_path: p.image_path || ""
+      });
+    });
+    const rankMap = calculateRankByAscScore(processedPerformers);
+    processedPerformers.forEach((p) => {
+      const rankData = rankMap.get(p.id);
+      p.rank = rankData?.rank || processedPerformers.length + 1;
+      p.totalRanked = rankData?.total || processedPerformers.length;
+    });
+    const tierGroups = {};
+    const chargingCounts = {};
+    const unratedGroup = [];
+    processedPerformers.forEach((p) => {
+      if (isUnratedPerformer(p)) {
+        unratedGroup.push({ ...p });
+        return;
+      }
+      const tier = getRatingTier(p, performers);
+      if (!tierGroups[tier]) {
+        tierGroups[tier] = [];
+        chargingCounts[tier] = 0;
+      }
+      tierGroups[tier].push({ ...p });
+      if (p.weight < 1e3) {
+        chargingCounts[tier]++;
+      }
+    });
+    const sortedTiers = Object.keys(tierGroups).sort((a, b) => {
+      const tierValues = {
+        "S-Tier": 5,
+        "A-Tier": 4,
+        "B-Tier": 3,
+        "C-Tier": 2,
+        "D-Tier": 1,
+        "F-Tier": 0
+      };
+      return tierValues[b] - tierValues[a];
+    });
+    const allTiersSorted = [...processedPerformers].sort((a, b) => a.rank - b.rank);
+    const allTiersTotalCount = allTiersSorted.length;
+    const allTiersChargingCount = allTiersSorted.filter((p) => p.weight < 1e3).length;
+    const allTiersAvgRecencyWeight = allTiersTotalCount > 0 ? allTiersSorted.reduce((sum, p) => sum + getProcessedRecencyWeight(p), 0) / allTiersTotalCount : 0;
+    const allTiersRecencyStatus = allTiersAvgRecencyWeight >= 0.8 ? "\u2705" : "\u26A0\uFE0F";
+    const allTiersGroup = {
+      [`All Tier Performers (${allTiersTotalCount})|||(\u{1FAAB}: ${allTiersChargingCount}) (\u231B avg recency: ${allTiersAvgRecencyWeight.toFixed(2)} ${allTiersRecencyStatus})`]: allTiersSorted
+    };
+    const renamedTierGroups = {};
+    sortedTiers.forEach((tierName) => {
+      tierGroups[tierName].sort((a, b) => a.rank - b.rank);
+      const totalCount = tierGroups[tierName].length;
+      const chargingCount = chargingCounts[tierName] || 0;
+      const totalRecencyWeight = tierGroups[tierName].reduce(
+        (sum, p) => sum + getProcessedRecencyWeight(p),
+        0
+      );
+      const avgRecencyWeight = totalCount > 0 ? totalRecencyWeight / totalCount : 0;
+      const recencyStatus = avgRecencyWeight >= 0.8 ? "\u2705" : "\u26A0\uFE0F";
+      renamedTierGroups[`${tierName} Performers (${totalCount})|||(\u{1FAAB}: ${chargingCount}) (\u231B avg recency: ${avgRecencyWeight.toFixed(2)} ${recencyStatus})`] = tierGroups[tierName];
+    });
+    unratedGroup.sort((a, b) => a.rank - b.rank);
+    const unratedTotalCount = unratedGroup.length;
+    const unratedChargingCount = unratedGroup.filter((p) => p.weight < 1e3).length;
+    const unratedAvgRecencyWeight = unratedTotalCount > 0 ? unratedGroup.reduce((sum, p) => sum + getProcessedRecencyWeight(p), 0) / unratedTotalCount : 0;
+    const unratedRecencyStatus = unratedAvgRecencyWeight >= 0.8 ? "\u2705" : "\u26A0\uFE0F";
+    const unratedGroupName = `Unrated Performers (${unratedTotalCount})|||(\u{1FAAB}: ${unratedChargingCount}) (\u231B avg recency: ${unratedAvgRecencyWeight.toFixed(2)} ${unratedRecencyStatus})`;
+    const allGroups = {
+      ...allTiersGroup,
+      ...renamedTierGroups,
+      [unratedGroupName]: unratedGroup
+    };
+    const groupHTML = Object.keys(allGroups).map((groupName) => {
+      const performersInGroup = allGroups[groupName];
+      const isAllTiers = groupName.startsWith("All Tier Performers");
+      let groupColor;
+      if (isAllTiers) {
+        groupColor = "#ffffff";
+      } else if (groupName.startsWith("Unrated")) {
+        groupColor = "#888888";
+      } else {
+        groupColor = getTierColor(groupName.replace(" Performers", "").split(" ")[0]);
+      }
+      const [titlePart, chargingPart] = groupName.split("|||");
+      const displayGroupName = chargingPart ? `${titlePart}<br><span style="font-size: 0.8em; opacity: 0.8;">${chargingPart}</span>` : groupName;
+      const groupKey = groupName.toLowerCase().replace(/\s+/g, "-");
+      const rows = performersInGroup.map((p) => {
+        const winRate = p.total_matches > 0 ? (p.wins / p.total_matches * 100).toFixed(1) : "0.0";
+        const streakDisplay = p.current_streak > 0 ? `<span class="hon-stats-positive">+${p.current_streak}</span>` : p.current_streak < 0 ? `<span class="hon-stats-negative">${p.current_streak}</span>` : "0";
+        const bestStreakDisplay = p.best_streak > 0 ? `<span class="hon-stats-positive">+${formatBestStreakDisplay(p.best_streak)}</span>` : p.best_streak < 0 ? `<span class="hon-stats-negative">${formatBestStreakDisplay(p.best_streak)}</span>` : formatBestStreakDisplay(p.best_streak);
+        const worstStreakDisplay = p.worst_streak < 0 ? `<span class="hon-stats-negative">${p.worst_streak}</span>` : p.worst_streak > 0 ? `<span class="hon-stats-positive">${p.worst_streak}</span>` : p.worst_streak || 0;
+        const flag = getFlagEmoji(p.countryCode);
+        const countryCodeDisplay = p.countryCode || "N/A";
+        const genderEmoji = getGenderEmoji(p.gender);
+        const maxWeight = 1e3;
+        const rechargeRate = 1e3 / 12;
+        let currentWeight = maxWeight;
+        if (p.last_match) {
+          const lastMatchDate = new Date(p.last_match);
+          const msSince = Date.now() - lastMatchDate.getTime();
+          const hoursSince = msSince / (1e3 * 60 * 60);
+          const recovered = hoursSince * rechargeRate;
+          currentWeight = Math.min(maxWeight, recovered);
+        }
+        const weightFormatted = formatWeight(currentWeight);
+        let weightStatus;
+        if (currentWeight >= maxWeight) {
+          weightStatus = "\u{1F50B}";
+        } else if (currentWeight <= 0) {
+          weightStatus = "\u{1FAAB}";
+        } else {
+          weightStatus = "\u{1FAAB}";
+        }
+        const timeUntilFull = calculateTimeUntilFull({
+          ...p,
+          weight: currentWeight,
+          maxWeight,
+          rechargeRate
+        });
+        const countdownFormatted = formatCountdown(timeUntilFull);
+        const weightDisplay = currentWeight >= maxWeight ? weightStatus : `${weightStatus}<br><small class="countdown" data-performer-id="${p.id}" data-last-match="${p.last_match || ""}" style="font-size: 0.7em;">${countdownFormatted || weightFormatted}</small>`;
+        const performerTier = getRatingTier(p, performers);
+        const ratingColor = getTierColor(performerTier);
+        const compositeDisplay = p.total_matches > 0 ? p.compositeScore?.toFixed(2) || "0.00" : "N/A";
+        const ascScoreDisplay = p.ascScore ? p.ascScore.toFixed(2) : "N/A";
+        return `
+        <tr data-rank="${p.rank}"
+            data-ascscore="${p.ascScore || 0}"
+            data-rating="${p.rating}"
+            data-raw-rating="${p.rawRating || 1}"
+            data-composite-score="${p.total_matches > 0 ? p.compositeScore || 0 : ""}"
+            data-matches="${p.total_matches}"
+            data-wins="${p.wins}"
+            data-losses="${p.losses}"
+            data-draws="${p.draws || 0}"
+            data-winrate="${winRate}"
+            data-streak="${p.current_streak}"
+            data-beststreak="${p.best_streak}"
+            data-worststreak="${p.worst_streak}"
+            data-country="${countryCodeDisplay}"
+            data-gender="${p.gender}"
+            data-weight="${currentWeight}"
+            data-maxweight="${maxWeight}">
+          <td class="hon-stats-rank">#${p.rank}</td>
+          <td class="hon-stats-country">${flag} ${countryCodeDisplay}</td>
+          <td class="hon-stats-gender">${genderEmoji}</td>
+          <td class="hon-stats-name">
+            <a href="/performers/${p.id}" target="_blank">${escapeHtml(p.name)}</a>
+          </td>
+          <td class="hon-stats-ascscore" style="font-weight: bold; color: ${p.ascScoreColor};">${ascScoreDisplay}</td>
+          <td class="hon-stats-rating" style="color: ${ratingColor}; font-weight: bold;">
+            ${p.rating}
+          </td>
+          <td class="hon-stats-composite">${compositeDisplay}</td>
+          <td>${p.total_matches}</td>
+          <td><span class="hon-stats-positive">${p.wins}</span></td>
+          <td><span class="hon-stats-negative">${p.losses}</span></td>
+          <td>${p.draws || 0}</td>
+          <td>${winRate}%</td>
+          <td>${streakDisplay}</td>
+          <td>${bestStreakDisplay}</td>
+          <td>${worstStreakDisplay}</td>
+          <td class="hon-stats-weight">${weightDisplay}</td>
+        </tr>`;
+      }).join("");
+      return `
+      <div class="hon-rank-group">
+        <div class="hon-rank-group-header" data-group="${groupKey}" role="button">
+          <span class="hon-group-toggle">\u25B6</span>
+          <span class="hon-rank-group-title" style="color: ${groupColor}; font-weight: bold;">
+            ${displayGroupName}
+          </span>
+        </div>
+        <div class="hon-rank-group-content collapsed" data-group="${groupKey}">
+          <table class="hon-stats-table">
+            <thead>
+              <tr>
+                <th data-sort="rank">Rank</th>
+                <th data-sort="country">Country</th>
+                <th data-sort="gender">Gender</th>
+                <th data-sort="name">Name</th>
+                <th data-sort="ascscore">Asc.Score</th>
+                <th data-sort="rating">Rating</th>
+                <th data-sort="composite">Comp.Score</th>
+                <th data-sort="matches">Matches</th>
+                <th data-sort="wins">W</th>
+                <th data-sort="losses">L</th>
+                <th data-sort="draws">D</th>
+                <th data-sort="winrate">%</th>
+                <th data-sort="streak">Streak</th>
+                <th data-sort="beststreak">Best</th>
+                <th data-sort="worststreak">Worst</th>
+                <th data-sort="weight">\u231B</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </div>`;
+    }).join("");
+    const tierCounts = {
+      "S-Tier": 0,
+      "A-Tier": 0,
+      "B-Tier": 0,
+      "C-Tier": 0,
+      "D-Tier": 0,
+      "F-Tier": 0,
+      "Unrated": 0
+    };
+    processedPerformers.forEach((p) => {
+      if (isUnratedPerformer(p)) {
+        tierCounts["Unrated"] += 1;
+        return;
+      }
+      const tier = getRatingTier(p, performers);
+      tierCounts[tier] = (tierCounts[tier] || 0) + 1;
+    });
+    return `
+    <div class="hon-stats-header">
+      <h2>\u{1F4CA} Performer Statistics</h2>
+      <div class="hon-stats-tabs">
+        <button class="hon-stats-tab active" data-tab="leaderboard">Leaderboard</button>
+        <button class="hon-stats-tab" data-tab="distribution">Tier Distribution</button>
+      </div>
+    </div>
+    <div class="hon-stats-content">
+      <div class="hon-stats-tab-panel active" data-panel="leaderboard">
+        ${groupHTML}
+      </div>
+      <div class="hon-stats-tab-panel" data-panel="distribution">
+        <div class="hon-bar-graph">
+          ${generateBarGroups(tierCounts)}
+        </div>
+      </div>
+    </div>
+  `;
+  }
+  function generateStatTables(processedPerformers, allPerformers = null) {
+    const tierGroups = {};
+    const unratedGroup = [];
+    const tierPool = allPerformers || processedPerformers;
+    processedPerformers.forEach((p) => {
+      if (isUnratedPerformer(p)) {
+        unratedGroup.push({ ...p });
+        return;
+      }
+      const tier = getRatingTier(p, tierPool);
+      if (!tierGroups[tier]) {
+        tierGroups[tier] = [];
+      }
+      tierGroups[tier].push({ ...p });
+    });
+    const sortedTiers = Object.keys(tierGroups).sort((a, b) => {
+      const tierValues = {
+        "S-Tier": 5,
+        "A-Tier": 4,
+        "B-Tier": 3,
+        "C-Tier": 2,
+        "D-Tier": 1,
+        "F-Tier": 0
+      };
+      return tierValues[b] - tierValues[a];
+    });
+    const allTiersGroup = {
+      [`All Tier Performers (${processedPerformers.length})`]: processedPerformers
+    };
+    const renamedTierGroups = {};
+    sortedTiers.forEach((tierName) => {
+      renamedTierGroups[`${tierName} Performers (${tierGroups[tierName].length})`] = tierGroups[tierName];
+    });
+    const allGroups = {
+      ...allTiersGroup,
+      ...renamedTierGroups
+    };
+    if (unratedGroup.length > 0) {
+      allGroups[`Unrated Performers (${unratedGroup.length})`] = unratedGroup;
+    }
+    const groupHTML = Object.keys(allGroups).map((groupName) => {
+      const performersInGroup = allGroups[groupName];
+      const isAllTiers = groupName.startsWith("All Tier Performers");
+      let groupColor;
+      if (isAllTiers) {
+        groupColor = "#ffffff";
+      } else if (groupName.startsWith("Unrated")) {
+        groupColor = "#888888";
+      } else {
+        groupColor = getTierColor(groupName.replace(" Performers", "").split(" ")[0]);
+      }
+      const groupKey = groupName.toLowerCase().replace(/\s+/g, "-");
+      const rows = performersInGroup.map((p) => {
+        const winRate = p.total_matches > 0 ? (p.wins / p.total_matches * 100).toFixed(1) : "0.0";
+        const streakDisplay = p.current_streak > 0 ? `<span class="hon-stats-positive">+${p.current_streak}</span>` : p.current_streak < 0 ? `<span class="hon-stats-negative">${p.current_streak}</span>` : "0";
+        const bestStreakDisplay = p.best_streak > 0 ? `<span class="hon-stats-positive">+${formatBestStreakDisplay(p.best_streak)}</span>` : p.best_streak < 0 ? `<span class="hon-stats-negative">${formatBestStreakDisplay(p.best_streak)}</span>` : formatBestStreakDisplay(p.best_streak);
+        const worstStreakDisplay = p.worst_streak < 0 ? `<span class="hon-stats-negative">${p.worst_streak}</span>` : p.worst_streak > 0 ? `<span class="hon-stats-positive">${p.worst_streak}</span>` : p.worst_streak || 0;
+        const flag = getFlagEmoji(p.countryCode);
+        const countryCodeDisplay = p.countryCode || "N/A";
+        const genderEmoji = getGenderEmoji(p.gender);
+        const maxWeight = 1e3;
+        const rechargeRate = 1e3 / 12;
+        let currentWeight = maxWeight;
+        if (p.last_match) {
+          const lastMatchDate = new Date(p.last_match);
+          const msSince = Date.now() - lastMatchDate.getTime();
+          const hoursSince = msSince / (1e3 * 60 * 60);
+          const recovered = hoursSince * rechargeRate;
+          currentWeight = Math.min(maxWeight, recovered);
+        }
+        const weightFormatted = formatWeight(currentWeight);
+        let weightStatus;
+        if (currentWeight >= maxWeight) {
+          weightStatus = "\u{1F50B}";
+        } else if (currentWeight <= 0) {
+          weightStatus = "\u{1FAAB}";
+        } else {
+          weightStatus = "\u{1FAAB}";
+        }
+        const timeUntilFull = calculateTimeUntilFull({
+          ...p,
+          weight: currentWeight,
+          maxWeight,
+          rechargeRate
+        });
+        const countdownFormatted = formatCountdown(timeUntilFull);
+        const weightDisplay = currentWeight >= maxWeight ? weightStatus : `${weightStatus}<br><small class="countdown" data-performer-id="${p.id}" data-last-match="${p.last_match || ""}" style="font-size: 0.7em;">${countdownFormatted || weightFormatted}</small>`;
+        const performerTier = getRatingTier(p, tierPool);
+        const ratingColor = getTierColor(performerTier);
+        const ascScoreColor = p.ascScoreColor || ratingColor;
+        const compositeDisplay = p.total_matches > 0 ? p.compositeScore?.toFixed(1) || "0.0" : "N/A";
+        const ascScoreDisplay = p.ascScore ? p.ascScore.toFixed(2) : "N/A";
+        return `
+        <tr data-rank="${p.rank}"
+            data-ascscore="${p.ascScore || 0}"
+            data-rating="${p.rating}"
+            data-raw-rating="${p.rawRating || 1}"
+            data-composite-score="${p.total_matches > 0 ? p.compositeScore || 0 : ""}"
+            data-matches="${p.total_matches}"
+            data-wins="${p.wins}"
+            data-losses="${p.losses}"
+            data-draws="${p.draws || 0}"
+            data-winrate="${winRate}"
+            data-streak="${p.current_streak}"
+            data-beststreak="${p.best_streak}"
+            data-worststreak="${p.worst_streak}"
+            data-country="${countryCodeDisplay}"
+            data-gender="${p.gender}"
+            data-weight="${currentWeight}"
+            data-maxweight="${maxWeight}">
+          <td class="hon-stats-rank">#${p.rank}</td>
+          <td class="hon-stats-country">${flag} ${countryCodeDisplay}</td>
+          <td class="hon-stats-gender">${genderEmoji}</td>
+          <td class="hon-stats-name">
+            <a href="/performers/${p.id}" target="_blank">${escapeHtml(p.name)}</a>
+          </td>
+          <td class="hon-stats-ascscore" style="font-weight: bold; color: ${ascScoreColor};">${ascScoreDisplay}</td>
+          <td class="hon-stats-rating" style="color: ${ratingColor}; font-weight: bold;">
+            ${p.rating}
+          </td>
+          <td class="hon-stats-composite">${compositeDisplay}</td>
+          <td>${p.total_matches}</td>
+          <td><span class="hon-stats-positive">${p.wins}</span></td>
+          <td><span class="hon-stats-negative">${p.losses}</span></td>
+          <td>${p.draws || 0}</td>
+          <td>${winRate}%</td>
+          <td>${streakDisplay}</td>
+          <td>${bestStreakDisplay}</td>
+          <td>${worstStreakDisplay}</td>
+          <td class="hon-stats-weight">${weightDisplay}</td>
+        </tr>`;
+      }).join("");
+      return `
+      <div class="hon-rank-group">
+        <div class="hon-rank-group-header" data-group="${groupKey}" role="button">
+          <span class="hon-group-toggle">\u25B6</span>
+          <span class="hon-rank-group-title" style="color: ${groupColor}; font-weight: bold;">
+            ${groupName}
+          </span>
+        </div>
+        <div class="hon-rank-group-content collapsed" data-group="${groupKey}">
+          <table class="hon-stats-table">
+            <thead>
+              <tr>
+                <th data-sort="rank">Rank</th>
+                <th data-sort="country">Country</th>
+                <th data-sort="gender">Gender</th>
+                <th data-sort="name">Name</th>
+                <th data-sort="ascscore">Asc.Score</th>
+                <th data-sort="rating">Rating</th>
+                <th data-sort="composite">Comp.Score</th>
+                <th data-sort="matches">Matches</th>
+                <th data-sort="wins">W</th>
+                <th data-sort="losses">L</th>
+                <th data-sort="draws">D</th>
+                <th data-sort="winrate">%</th>
+                <th data-sort="streak">Streak</th>
+                <th data-sort="beststreak">Best</th>
+                <th data-sort="worststreak">Worst</th>
+                <th data-sort="weight">\u231B</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </div>`;
+    }).join("");
+    return groupHTML;
+  }
+  function initStatsSorting(dialog) {
+    const headers = dialog.querySelectorAll(".hon-stats-table th[data-sort]");
+    headers.forEach((header) => {
+      header.addEventListener("click", () => {
+        const table = header.closest("table");
+        const tbody = table.querySelector("tbody");
+        const sortType = header.dataset.sort;
+        const isAscending = header.classList.toggle("ascending");
+        headers.forEach((h) => {
+          if (h !== header) {
+            h.classList.remove("ascending", "descending", "sort-active");
+          }
+        });
+        header.classList.toggle("descending", !isAscending);
+        header.classList.add("sort-active");
+        table.className = table.className.replace(/sorted-by-\w+/g, "");
+        table.classList.add(`sorted-by-${sortType}`);
+        const rows = Array.from(tbody.querySelectorAll("tr"));
+        rows.sort((a, b) => {
+          let aValue = a.dataset[sortType];
+          let bValue = b.dataset[sortType];
+          if (sortType === "rating") {
+            const aIsUnrated = aValue === "Unrated";
+            const bIsUnrated = bValue === "Unrated";
+            if (aIsUnrated && bIsUnrated)
+              return 0;
+            if (aIsUnrated)
+              return isAscending ? 1 : -1;
+            if (bIsUnrated)
+              return isAscending ? -1 : 1;
+            aValue = parseFloat(a.dataset.rawRating || 1);
+            bValue = parseFloat(b.dataset.rawRating || 1);
+          } else if (sortType === "composite") {
+            const aHasMatches = parseInt(a.dataset.matches) > 0;
+            const bHasMatches = parseInt(b.dataset.matches) > 0;
+            if (!aHasMatches && !bHasMatches)
+              return 0;
+            if (!aHasMatches)
+              return isAscending ? 1 : -1;
+            if (!bHasMatches)
+              return isAscending ? -1 : 1;
+            aValue = parseFloat(a.dataset.compositeScore || 0);
+            bValue = parseFloat(b.dataset.compositeScore || 0);
+          } else if (sortType === "ascscore") {
+            aValue = parseFloat(a.dataset.ascscore || 0);
+            bValue = parseFloat(b.dataset.ascscore || 0);
+          } else if (sortType === "name" || sortType === "country" || sortType === "gender") {
+            aValue = aValue.toLowerCase();
+            bValue = bValue.toLowerCase();
+          } else if (sortType !== "name") {
+            aValue = parseFloat(aValue);
+            bValue = parseFloat(bValue);
+          }
+          if (aValue < bValue)
+            return isAscending ? -1 : 1;
+          if (aValue > bValue)
+            return isAscending ? 1 : -1;
+          return 0;
+        });
+        rows.forEach((row) => tbody.appendChild(row));
+      });
+    });
+  }
+  function initWeightCountdowns() {
+    if (weightCountdownInterval) {
+      clearInterval(weightCountdownInterval);
+    }
+    weightCountdownInterval = setInterval(() => {
+      const countdownElements = document.querySelectorAll(".countdown");
+      countdownElements.forEach((element) => {
+        const lastMatchStr = element.dataset.lastMatch;
+        if (!lastMatchStr) {
+          const parentCell = element.parentElement;
+          if (parentCell) {
+            parentCell.innerHTML = "\u{1F50B}";
+          }
+          return;
+        }
+        const lastMatchDate = new Date(lastMatchStr);
+        const msSince = Date.now() - lastMatchDate.getTime();
+        const hoursSince = msSince / (1e3 * 60 * 60);
+        const rechargeRatePerHour = 1e3 / 12;
+        const recovered = hoursSince * rechargeRatePerHour;
+        const currentWeight = Math.min(1e3, recovered);
+        if (currentWeight >= 1e3) {
+          element.parentElement.innerHTML = "\u{1F50B}";
+          return;
+        }
+        const remaining = 1e3 - currentWeight;
+        const hoursUntilFull = remaining / rechargeRatePerHour;
+        const secondsUntilFull = Math.max(0, Math.ceil(hoursUntilFull * 3600));
+        if (secondsUntilFull <= 0) {
+          element.parentElement.innerHTML = "\u{1F50B}";
+        } else {
+          element.textContent = formatCountdown(secondsUntilFull);
+        }
+      });
+    }, 1e3);
+  }
+  function generateBarGroups(tierCounts) {
+    const tiers = [
+      { label: "S-Tier", color: "#eb9834" },
+      { label: "A-Tier", color: "#e014aa" },
+      { label: "B-Tier", color: "#7f1e82" },
+      { label: "C-Tier", color: "#14bbe0" },
+      { label: "D-Tier", color: "#92e014" },
+      { label: "F-Tier", color: "#808080" },
+      { label: "Unrated", color: "#ffffff" }
+    ];
+    const nonZeroTiers = tiers.filter((tier) => (tierCounts[tier.label] || 0) > 0);
+    if (nonZeroTiers.length === 0)
+      return "";
+    const counts = nonZeroTiers.map((t) => tierCounts[t.label]);
+    const maxCount = Math.max(...counts, 1);
+    const minCount = Math.min(...counts);
+    return nonZeroTiers.map((tier) => {
+      const count = tierCounts[tier.label];
+      const logMax = Math.log(maxCount + 1);
+      const logMin = Math.log(minCount + 1);
+      const logCurrent = Math.log(count + 1);
+      let percentage;
+      if (logMax === logMin) {
+        percentage = 100;
+      } else {
+        percentage = 5 + (logCurrent - logMin) / (logMax - logMin) * 95;
+      }
+      return `
+      <div class="hon-bar-container" title="${tier.label}: ${count} performers">
+        <div class="hon-bar-label-wrapper">
+          <span class="hon-bar-label">${tier.label}</span>
+        </div>
+        <div class="hon-bar-wrapper">
+          <div class="hon-bar animated-bar"
+               data-target-width="${percentage}"
+               data-final-count="${count}"
+               data-actual-count="${count}"
+               style="background-color: ${tier.color}; width: 0%;">
+            <span class="hon-bar-count" style="opacity: 0;">${count}</span>
+          </div>
+        </div>
+      </div>`;
+    }).join("");
+  }
+  function initStatsTabs(dialog) {
+    const buttons = dialog.querySelectorAll(".hon-stats-tab");
+    const panels = dialog.querySelectorAll(".hon-stats-tab-panel");
+    buttons.forEach((btn) => {
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        const target = btn.dataset.tab;
+        buttons.forEach((b) => b.classList.toggle("active", b === btn));
+        panels.forEach((p) => p.classList.toggle("active", p.dataset.panel === target));
+        if (target === "distribution") {
+          setTimeout(() => {
+            const bars = dialog.querySelectorAll(".animated-bar:not(.animated)");
+            if (bars.length > 0) {
+              animateBars(bars);
+            }
+          }, 100);
+        }
+      };
+    });
+  }
+  function initStatsCollapsibles(dialog) {
+    const headers = dialog.querySelectorAll(".hon-rank-group-header, .hon-bar-group-header");
+    headers.forEach((header) => {
+      header.onclick = (e) => {
+        e.stopPropagation();
+        const groupType = header.classList.contains("hon-rank-group-header") ? ".hon-rank-group-content" : ".hon-bar-group-content";
+        const content = dialog.querySelector(`${groupType}[data-group="${header.dataset.group}"]`);
+        const isCollapsed = content.classList.toggle("collapsed");
+        header.setAttribute("aria-expanded", !isCollapsed);
+        header.querySelector(".hon-group-toggle").textContent = isCollapsed ? "\u25B6" : "\u25BC";
+      };
+    });
+  }
+  function animateBars(bars) {
+    bars.forEach((bar, index) => {
+      bar.classList.add("animated");
+      setTimeout(() => {
+        const targetWidth = parseFloat(bar.dataset.targetWidth);
+        const finalCount = parseInt(bar.dataset.finalCount);
+        const countElement = bar.querySelector(".hon-bar-count");
+        bar.style.width = `${targetWidth}%`;
+        let currentCount = 0;
+        const duration = 1e3;
+        const steps = 30;
+        const increment = finalCount / steps;
+        const stepTime = duration / steps;
+        const timer = setInterval(() => {
+          currentCount += increment;
+          if (currentCount >= finalCount) {
+            currentCount = finalCount;
+            clearInterval(timer);
+          }
+          countElement.textContent = Math.floor(currentCount);
+        }, stepTime);
+        setTimeout(() => {
+          countElement.style.opacity = "1";
+        }, 300);
+      }, index * 100);
+    });
+  }
+  var COUNTRY_FLAGS, CACHE_TTL2, cachedPerformers, cachedModalContent, cacheTimestamp, weightCountdownInterval;
+  var init_ui_stats = __esm({
+    "ui-stats.js"() {
+      init_api_client();
+      init_math_utils();
+      init_formatters();
+      init_rating_utils();
+      init_constants();
+      COUNTRY_FLAGS = {
+        "AD": "\u{1F1E6}\u{1F1E9}",
+        "AE": "\u{1F1E6}\u{1F1EA}",
+        "AF": "\u{1F1E6}\u{1F1EB}",
+        "AG": "\u{1F1E6}\u{1F1EC}",
+        "AI": "\u{1F1E6}\u{1F1EE}",
+        "AL": "\u{1F1E6}\u{1F1F1}",
+        "AM": "\u{1F1E6}\u{1F1F2}",
+        "AO": "\u{1F1E6}\u{1F1F4}",
+        "AQ": "\u{1F1E6}\u{1F1F6}",
+        "AR": "\u{1F1E6}\u{1F1F7}",
+        "AS": "\u{1F1E6}\u{1F1F8}",
+        "AT": "\u{1F1E6}\u{1F1F9}",
+        "AU": "\u{1F1E6}\u{1F1FA}",
+        "AW": "\u{1F1E6}\u{1F1FC}",
+        "AX": "\u{1F1E6}\u{1F1FD}",
+        "AZ": "\u{1F1E6}\u{1F1FF}",
+        "BA": "\u{1F1E7}\u{1F1E6}",
+        "BB": "\u{1F1E7}\u{1F1E7}",
+        "BD": "\u{1F1E7}\u{1F1E9}",
+        "BE": "\u{1F1E7}\u{1F1EA}",
+        "BF": "\u{1F1E7}\u{1F1EB}",
+        "BG": "\u{1F1E7}\u{1F1EC}",
+        "BH": "\u{1F1E7}\u{1F1ED}",
+        "BI": "\u{1F1E7}\u{1F1EE}",
+        "BJ": "\u{1F1E7}\u{1F1EF}",
+        "BL": "\u{1F1E7}\u{1F1F1}",
+        "BM": "\u{1F1E7}\u{1F1F2}",
+        "BN": "\u{1F1E7}\u{1F1F3}",
+        "BO": "\u{1F1E7}\u{1F1F4}",
+        "BQ": "\u{1F1E7}\u{1F1F6}",
+        "BR": "\u{1F1E7}\u{1F1F7}",
+        "BS": "\u{1F1E7}\u{1F1F8}",
+        "BT": "\u{1F1E7}\u{1F1F9}",
+        "BV": "\u{1F1E7}\u{1F1FB}",
+        "BW": "\u{1F1E7}\u{1F1FC}",
+        "BY": "\u{1F1E7}\u{1F1FE}",
+        "BZ": "\u{1F1E7}\u{1F1FF}",
+        "CA": "\u{1F1E8}\u{1F1E6}",
+        "CC": "\u{1F1E8}\u{1F1E8}",
+        "CD": "\u{1F1E8}\u{1F1E9}",
+        "CF": "\u{1F1E8}\u{1F1EB}",
+        "CG": "\u{1F1E8}\u{1F1EC}",
+        "CH": "\u{1F1E8}\u{1F1ED}",
+        "CI": "\u{1F1E8}\u{1F1EE}",
+        "CK": "\u{1F1E8}\u{1F1F0}",
+        "CL": "\u{1F1E8}\u{1F1F1}",
+        "CM": "\u{1F1E8}\u{1F1F2}",
+        "CN": "\u{1F1E8}\u{1F1F3}",
+        "CO": "\u{1F1E8}\u{1F1F4}",
+        "CR": "\u{1F1E8}\u{1F1F7}",
+        "CU": "\u{1F1E8}\u{1F1FA}",
+        "CV": "\u{1F1E8}\u{1F1FB}",
+        "CW": "\u{1F1E8}\u{1F1FC}",
+        "CX": "\u{1F1E8}\u{1F1FD}",
+        "CY": "\u{1F1E8}\u{1F1FE}",
+        "CZ": "\u{1F1E8}\u{1F1FF}",
+        "DE": "\u{1F1E9}\u{1F1EA}",
+        "DJ": "\u{1F1E9}\u{1F1EF}",
+        "DK": "\u{1F1E9}\u{1F1F0}",
+        "DM": "\u{1F1E9}\u{1F1F2}",
+        "DO": "\u{1F1E9}\u{1F1F4}",
+        "DZ": "\u{1F1E9}\u{1F1FF}",
+        "EC": "\u{1F1EA}\u{1F1E8}",
+        "EE": "\u{1F1EA}\u{1F1EA}",
+        "EG": "\u{1F1EA}\u{1F1EC}",
+        "EH": "\u{1F1EA}\u{1F1ED}",
+        "ER": "\u{1F1EA}\u{1F1F7}",
+        "ES": "\u{1F1EA}\u{1F1F8}",
+        "ET": "\u{1F1EA}\u{1F1F9}",
+        "FI": "\u{1F1EB}\u{1F1EE}",
+        "FJ": "\u{1F1EB}\u{1F1EF}",
+        "FK": "\u{1F1EB}\u{1F1F0}",
+        "FM": "\u{1F1EB}\u{1F1F2}",
+        "FO": "\u{1F1EB}\u{1F1F4}",
+        "FR": "\u{1F1EB}\u{1F1F7}",
+        "GA": "\u{1F1EC}\u{1F1E6}",
+        "GB": "\u{1F1EC}\u{1F1E7}",
+        "GD": "\u{1F1EC}\u{1F1E9}",
+        "GE": "\u{1F1EC}\u{1F1EA}",
+        "GF": "\u{1F1EC}\u{1F1EB}",
+        "GG": "\u{1F1EC}\u{1F1EC}",
+        "GH": "\u{1F1EC}\u{1F1ED}",
+        "GI": "\u{1F1EC}\u{1F1EE}",
+        "GL": "\u{1F1EC}\u{1F1F1}",
+        "GM": "\u{1F1EC}\u{1F1F2}",
+        "GN": "\u{1F1EC}\u{1F1F3}",
+        "GP": "\u{1F1EC}\u{1F1F5}",
+        "GQ": "\u{1F1EC}\u{1F1F6}",
+        "GR": "\u{1F1EC}\u{1F1F7}",
+        "GS": "\u{1F1EC}\u{1F1F8}",
+        "GT": "\u{1F1EC}\u{1F1F9}",
+        "GU": "\u{1F1EC}\u{1F1FA}",
+        "GW": "\u{1F1EC}\u{1F1FC}",
+        "GY": "\u{1F1EC}\u{1F1FE}",
+        "HK": "\u{1F1ED}\u{1F1F0}",
+        "HM": "\u{1F1ED}\u{1F1F2}",
+        "HN": "\u{1F1ED}\u{1F1F3}",
+        "HR": "\u{1F1ED}\u{1F1F7}",
+        "HT": "\u{1F1ED}\u{1F1F9}",
+        "HU": "\u{1F1ED}\u{1F1FA}",
+        "ID": "\u{1F1EE}\u{1F1E9}",
+        "IE": "\u{1F1EE}\u{1F1EA}",
+        "IL": "\u{1F1EE}\u{1F1F1}",
+        "IM": "\u{1F1EE}\u{1F1F2}",
+        "IN": "\u{1F1EE}\u{1F1F3}",
+        "IO": "\u{1F1EE}\u{1F1F4}",
+        "IQ": "\u{1F1EE}\u{1F1F6}",
+        "IR": "\u{1F1EE}\u{1F1F7}",
+        "IS": "\u{1F1EE}\u{1F1F8}",
+        "IT": "\u{1F1EE}\u{1F1F9}",
+        "JE": "\u{1F1EF}\u{1F1EA}",
+        "JM": "\u{1F1EF}\u{1F1F2}",
+        "JO": "\u{1F1EF}\u{1F1F4}",
+        "JP": "\u{1F1EF}\u{1F1F5}",
+        "KE": "\u{1F1F0}\u{1F1EA}",
+        "KG": "\u{1F1F0}\u{1F1EC}",
+        "KH": "\u{1F1F0}\u{1F1ED}",
+        "KI": "\u{1F1F0}\u{1F1EE}",
+        "KM": "\u{1F1F0}\u{1F1F2}",
+        "KN": "\u{1F1F0}\u{1F1F3}",
+        "KP": "\u{1F1F0}\u{1F1F5}",
+        "KR": "\u{1F1F0}\u{1F1F7}",
+        "KW": "\u{1F1F0}\u{1F1FC}",
+        "KY": "\u{1F1F0}\u{1F1FE}",
+        "KZ": "\u{1F1F0}\u{1F1FF}",
+        "LA": "\u{1F1F1}\u{1F1E6}",
+        "LB": "\u{1F1F1}\u{1F1E7}",
+        "LC": "\u{1F1F1}\u{1F1E8}",
+        "LI": "\u{1F1F1}\u{1F1EE}",
+        "LK": "\u{1F1F1}\u{1F1F0}",
+        "LR": "\u{1F1F1}\u{1F1F7}",
+        "LS": "\u{1F1F1}\u{1F1F8}",
+        "LT": "\u{1F1F1}\u{1F1F9}",
+        "LU": "\u{1F1F1}\u{1F1FA}",
+        "LV": "\u{1F1F1}\u{1F1FB}",
+        "LY": "\u{1F1F1}\u{1F1FE}",
+        "MA": "\u{1F1F2}\u{1F1E6}",
+        "MC": "\u{1F1F2}\u{1F1E8}",
+        "MD": "\u{1F1F2}\u{1F1E9}",
+        "ME": "\u{1F1F2}\u{1F1EA}",
+        "MF": "\u{1F1F2}\u{1F1EB}",
+        "MG": "\u{1F1F2}\u{1F1EC}",
+        "MH": "\u{1F1F2}\u{1F1ED}",
+        "MK": "\u{1F1F2}\u{1F1F0}",
+        "ML": "\u{1F1F2}\u{1F1F1}",
+        "MM": "\u{1F1F2}\u{1F1F2}",
+        "MN": "\u{1F1F2}\u{1F1F3}",
+        "MO": "\u{1F1F2}\u{1F1F4}",
+        "MP": "\u{1F1F2}\u{1F1F5}",
+        "MQ": "\u{1F1F2}\u{1F1F6}",
+        "MR": "\u{1F1F2}\u{1F1F7}",
+        "MS": "\u{1F1F2}\u{1F1F8}",
+        "MT": "\u{1F1F2}\u{1F1F9}",
+        "MU": "\u{1F1F2}\u{1F1FA}",
+        "MV": "\u{1F1F2}\u{1F1FB}",
+        "MW": "\u{1F1F2}\u{1F1FC}",
+        "MX": "\u{1F1F2}\u{1F1FD}",
+        "MY": "\u{1F1F2}\u{1F1FE}",
+        "MZ": "\u{1F1F2}\u{1F1FF}",
+        "NA": "\u{1F1F3}\u{1F1E6}",
+        "NC": "\u{1F1F3}\u{1F1E8}",
+        "NE": "\u{1F1F3}\u{1F1EA}",
+        "NF": "\u{1F1F3}\u{1F1EB}",
+        "NG": "\u{1F1F3}\u{1F1EC}",
+        "NI": "\u{1F1F3}\u{1F1EE}",
+        "NL": "\u{1F1F3}\u{1F1F1}",
+        "NO": "\u{1F1F3}\u{1F1F4}",
+        "NP": "\u{1F1F3}\u{1F1F5}",
+        "NR": "\u{1F1F3}\u{1F1F7}",
+        "NU": "\u{1F1F3}\u{1F1FA}",
+        "NZ": "\u{1F1F3}\u{1F1FF}",
+        "OM": "\u{1F1F4}\u{1F1F2}",
+        "PA": "\u{1F1F5}\u{1F1E6}",
+        "PE": "\u{1F1F5}\u{1F1EA}",
+        "PF": "\u{1F1F5}\u{1F1EB}",
+        "PG": "\u{1F1F5}\u{1F1EC}",
+        "PH": "\u{1F1F5}\u{1F1ED}",
+        "PK": "\u{1F1F5}\u{1F1F0}",
+        "PL": "\u{1F1F5}\u{1F1F1}",
+        "PM": "\u{1F1F5}\u{1F1F2}",
+        "PN": "\u{1F1F5}\u{1F1F3}",
+        "PR": "\u{1F1F5}\u{1F1F7}",
+        "PS": "\u{1F1F5}\u{1F1F8}",
+        "PT": "\u{1F1F5}\u{1F1F9}",
+        "PW": "\u{1F1F5}\u{1F1FC}",
+        "PY": "\u{1F1F5}\u{1F1FE}",
+        "QA": "\u{1F1F6}\u{1F1E6}",
+        "RE": "\u{1F1F7}\u{1F1EA}",
+        "RO": "\u{1F1F7}\u{1F1F4}",
+        "RS": "\u{1F1F7}\u{1F1F8}",
+        "RU": "\u{1F1F7}\u{1F1FA}",
+        "RW": "\u{1F1F7}\u{1F1FC}",
+        "SA": "\u{1F1F8}\u{1F1E6}",
+        "SB": "\u{1F1F8}\u{1F1E7}",
+        "SC": "\u{1F1F8}\u{1F1E8}",
+        "SD": "\u{1F1F8}\u{1F1E9}",
+        "SE": "\u{1F1F8}\u{1F1EA}",
+        "SG": "\u{1F1F8}\u{1F1EC}",
+        "SH": "\u{1F1F8}\u{1F1ED}",
+        "SI": "\u{1F1F8}\u{1F1EE}",
+        "SJ": "\u{1F1F8}\u{1F1EF}",
+        "SK": "\u{1F1F8}\u{1F1F0}",
+        "SL": "\u{1F1F8}\u{1F1F1}",
+        "SM": "\u{1F1F8}\u{1F1F2}",
+        "SN": "\u{1F1F8}\u{1F1F3}",
+        "SO": "\u{1F1F8}\u{1F1F4}",
+        "SR": "\u{1F1F8}\u{1F1F7}",
+        "SS": "\u{1F1F8}\u{1F1F8}",
+        "ST": "\u{1F1F8}\u{1F1F9}",
+        "SV": "\u{1F1F8}\u{1F1FB}",
+        "SX": "\u{1F1F8}\u{1F1FD}",
+        "SY": "\u{1F1F8}\u{1F1FE}",
+        "SZ": "\u{1F1F8}\u{1F1FF}",
+        "TC": "\u{1F1F9}\u{1F1E8}",
+        "TD": "\u{1F1F9}\u{1F1E9}",
+        "TF": "\u{1F1F9}\u{1F1EB}",
+        "TG": "\u{1F1F9}\u{1F1EC}",
+        "TH": "\u{1F1F9}\u{1F1ED}",
+        "TJ": "\u{1F1F9}\u{1F1EF}",
+        "TK": "\u{1F1F9}\u{1F1F0}",
+        "TL": "\u{1F1F9}\u{1F1F1}",
+        "TM": "\u{1F1F9}\u{1F1F2}",
+        "TN": "\u{1F1F9}\u{1F1F3}",
+        "TO": "\u{1F1F9}\u{1F1F4}",
+        "TR": "\u{1F1F9}\u{1F1F7}",
+        "TT": "\u{1F1F9}\u{1F1F9}",
+        "TV": "\u{1F1F9}\u{1F1FB}",
+        "TW": "\u{1F1F9}\u{1F1FC}",
+        "TZ": "\u{1F1F9}\u{1F1FF}",
+        "UA": "\u{1F1FA}\u{1F1E6}",
+        "UG": "\u{1F1FA}\u{1F1EC}",
+        "UM": "\u{1F1FA}\u{1F1F2}",
+        "US": "\u{1F1FA}\u{1F1F8}",
+        "UY": "\u{1F1FA}\u{1F1FE}",
+        "UZ": "\u{1F1FA}\u{1F1FF}",
+        "VA": "\u{1F1FB}\u{1F1E6}",
+        "VC": "\u{1F1FB}\u{1F1E8}",
+        "VE": "\u{1F1FB}\u{1F1EA}",
+        "VG": "\u{1F1FB}\u{1F1EC}",
+        "VI": "\u{1F1FB}\u{1F1EE}",
+        "VN": "\u{1F1FB}\u{1F1F3}",
+        "VU": "\u{1F1FB}\u{1F1FA}",
+        "WF": "\u{1F1FC}\u{1F1EB}",
+        "WS": "\u{1F1FC}\u{1F1F8}",
+        "YE": "\u{1F1FE}\u{1F1EA}",
+        "YT": "\u{1F1FE}\u{1F1F9}",
+        "ZA": "\u{1F1FF}\u{1F1E6}",
+        "ZM": "\u{1F1FF}\u{1F1F2}",
+        "ZW": "\u{1F1FF}\u{1F1FC}"
+      };
+      CACHE_TTL2 = 30 * 1e3;
+      cachedPerformers = null;
+      cachedModalContent = null;
+      cacheTimestamp = 0;
+      weightCountdownInterval = null;
+    }
+  });
+
+  // ui-sidebar.js
+  function getDefaultCardDisplayOptions() {
+    const defaults = {};
+    CARD_DISPLAY_OPTIONS.forEach((opt) => defaults[opt.key] = false);
+    return defaults;
+  }
+  function getCardDisplayOption2(key, defaultValue = false) {
+    return state.cardDisplayOptions?.[key] ?? defaultValue;
+  }
+  function setCardDisplayOption(key, value) {
+    if (!state.cardDisplayOptions) {
+      state.cardDisplayOptions = getDefaultCardDisplayOptions();
+    }
+    state.cardDisplayOptions[key] = value;
+    try {
+      localStorage.setItem(CARD_DISPLAY_LS_KEY, JSON.stringify(state.cardDisplayOptions));
+    } catch (err) {
+      console.warn("[Ascension] Could not save card display options:", err);
+    }
+  }
+  function getPictureOnlyMode() {
+    return getCardDisplayOption2(PICTURE_ONLY_MODE_KEY);
+  }
+  function setPictureOnlyMode(value) {
+    setCardDisplayOption(PICTURE_ONLY_MODE_KEY, !!value);
+    if (value) {
+      ALL_HIDE_OPTIONS.forEach((key) => setCardDisplayOption(key, false));
+    }
+  }
+  function toggleCardDisplayOption(key, checked) {
+    const currentPOM = getPictureOnlyMode();
+    if (key === PICTURE_ONLY_MODE_KEY) {
+      setPictureOnlyMode(checked);
+      return;
+    }
+    if (currentPOM) {
+      setCardDisplayOption(PICTURE_ONLY_MODE_KEY, false);
+      setCardDisplayOption(key, checked);
+      return;
+    }
+    setCardDisplayOption(key, checked);
+    const allHidden = ALL_HIDE_OPTIONS.every((k) => getCardDisplayOption2(k));
+    if (allHidden) {
+      setPictureOnlyMode(true);
+    }
+  }
+  function loadCardDisplayOptions() {
+    if (!state.cardDisplayOptions) {
+      state.cardDisplayOptions = getDefaultCardDisplayOptions();
+    }
+    try {
+      const saved = localStorage.getItem(CARD_DISPLAY_LS_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        Object.assign(state.cardDisplayOptions, parsed);
+      }
+    } catch (err) {
+      console.warn("[Ascension] Could not load card display options:", err);
+    }
+  }
+  function getDefaultBadgeDisplayOptions() {
+    const defaults = {};
+    BADGE_DISPLAY_OPTIONS.forEach((opt) => defaults[opt.key] = false);
+    return defaults;
+  }
+  function getBadgeDisplayOption(key, defaultValue = false) {
+    return state.badgeDisplayOptions?.[key] ?? defaultValue;
+  }
+  function setBadgeDisplayOption(key, value) {
+    if (!state.badgeDisplayOptions) {
+      state.badgeDisplayOptions = getDefaultBadgeDisplayOptions();
+    }
+    state.badgeDisplayOptions[key] = value;
+    try {
+      localStorage.setItem(BADGE_DISPLAY_LS_KEY, JSON.stringify(state.badgeDisplayOptions));
+    } catch (err) {
+      console.warn("[Ascension] Could not save badge display options:", err);
+    }
+  }
+  function loadBadgeDisplayOptions() {
+    if (!state.badgeDisplayOptions) {
+      state.badgeDisplayOptions = getDefaultBadgeDisplayOptions();
+    }
+    try {
+      const saved = localStorage.getItem(BADGE_DISPLAY_LS_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        Object.assign(state.badgeDisplayOptions, parsed);
+      }
+    } catch (err) {
+      console.warn("[Ascension] Could not load badge display options:", err);
+    }
+  }
+  function getSceneMinDuration() {
+    return state.sceneMinDuration ?? DEFAULT_SCENE_MIN_DURATION;
+  }
+  function setSceneMinDuration(seconds) {
+    const value = Math.max(0, Math.floor(Number(seconds) || 0));
+    state.sceneMinDuration = value;
+    try {
+      localStorage.setItem(SCENE_MIN_DURATION_LS_KEY, JSON.stringify(value));
+    } catch (err) {
+      console.warn("[Ascension] Could not save scene min duration:", err);
+    }
+  }
+  function loadSceneMinDuration() {
+    try {
+      const saved = localStorage.getItem(SCENE_MIN_DURATION_LS_KEY);
+      if (saved) {
+        state.sceneMinDuration = Math.max(0, Math.floor(Number(JSON.parse(saved)) || 0));
+      }
+    } catch (err) {
+      console.warn("[Ascension] Could not load scene min duration:", err);
+    }
+  }
+  function getSavedPerformerFilterName(id) {
+    const filters = state.savedPerformerFilters || [];
+    const match = filters.find((f) => String(f.id) === String(id));
+    return match?.name || id || "none";
+  }
+  function getSavedSceneFilterName(id) {
+    const filters = state.savedSceneFilters || [];
+    const match = filters.find((f) => String(f.id) === String(id));
+    return match?.name || id || "none";
+  }
+  function getUserFilterOverrideEnabled() {
+    return state.userFilterOverride ?? DEFAULT_USER_FILTER_OVERRIDE;
+  }
+  function setUserFilterOverrideEnabled(value) {
+    state.userFilterOverride = !!value;
+    try {
+      localStorage.setItem(USER_FILTER_OVERRIDE_LS_KEY, JSON.stringify(state.userFilterOverride));
+    } catch (err) {
+      console.warn("[Ascension] Could not save user filter override:", err);
+    }
+    const filterName = getSavedPerformerFilterName(getSelectedSavedFilterId());
+    addEventLog(`[Ascension] Performer Filter Override ${value ? "enabled" : "disabled"}: ${filterName}`, "log");
+  }
+  function loadUserFilterOverride() {
+    try {
+      const saved = localStorage.getItem(USER_FILTER_OVERRIDE_LS_KEY);
+      if (saved !== null) {
+        state.userFilterOverride = JSON.parse(saved);
+      }
+    } catch (err) {
+      console.warn("[Ascension] Could not load user filter override:", err);
+    }
+  }
+  function getSceneFilterOverrideEnabled() {
+    return state.sceneFilterOverride ?? DEFAULT_SCENE_FILTER_OVERRIDE;
+  }
+  function setSceneFilterOverrideEnabled(value) {
+    state.sceneFilterOverride = !!value;
+    try {
+      localStorage.setItem(SCENE_FILTER_OVERRIDE_LS_KEY, JSON.stringify(state.sceneFilterOverride));
+    } catch (err) {
+      console.warn("[Ascension] Could not save scene filter override:", err);
+    }
+    const filterName = getSavedSceneFilterName(getSelectedSavedSceneFilterId());
+    addEventLog(`[Ascension] Scene Filter Override ${value ? "enabled" : "disabled"}: ${filterName}`, "log");
+  }
+  function loadSceneFilterOverride() {
+    try {
+      const saved = localStorage.getItem(SCENE_FILTER_OVERRIDE_LS_KEY);
+      if (saved !== null) {
+        state.sceneFilterOverride = JSON.parse(saved);
+      }
+    } catch (err) {
+      console.warn("[Ascension] Could not load scene filter override:", err);
+    }
+  }
+  function getDisableImagelessPerformers() {
+    return state.disableImagelessPerformers ?? DEFAULT_DISABLE_IMAGELESS;
+  }
+  function setDisableImagelessPerformers(value) {
+    state.disableImagelessPerformers = !!value;
+    try {
+      localStorage.setItem(DISABLE_IMAGELESS_LS_KEY, JSON.stringify(state.disableImagelessPerformers));
+    } catch (err) {
+      console.warn("[Ascension] Could not save disable imageless performers setting:", err);
+    }
+  }
+  function loadDisableImagelessPerformers() {
+    try {
+      const saved = localStorage.getItem(DISABLE_IMAGELESS_LS_KEY);
+      if (saved !== null) {
+        state.disableImagelessPerformers = JSON.parse(saved);
+      }
+    } catch (err) {
+      console.warn("[Ascension] Could not load disable imageless performers setting:", err);
+    }
+  }
+  function getSelectedSavedFilterId() {
+    return state.selectedSavedFilterId ?? null;
+  }
+  function setSelectedSavedFilterId(id) {
+    state.selectedSavedFilterId = id || null;
+    try {
+      if (id) {
+        localStorage.setItem(SAVED_FILTER_LS_KEY, JSON.stringify(id));
+      } else {
+        localStorage.removeItem(SAVED_FILTER_LS_KEY);
+      }
+    } catch (err) {
+      console.warn("[Ascension] Could not save selected saved filter:", err);
+    }
+  }
+  function loadSelectedSavedFilterId() {
+    try {
+      const saved = localStorage.getItem(SAVED_FILTER_LS_KEY);
+      state.selectedSavedFilterId = saved ? JSON.parse(saved) : null;
+    } catch (err) {
+      console.warn("[Ascension] Could not load selected saved filter:", err);
+    }
+  }
+  async function fetchSavedPerformerFilters() {
+    try {
+      const { graphqlQuery: graphqlQuery2 } = await Promise.resolve().then(() => (init_api_client(), api_client_exports));
+      const result = await graphqlQuery2(`
+      query FindSavedFilters {
+        findSavedFilters {
+          id
+          name
+          mode
+          object_filter
+        }
+      }
+    `);
+      const filters = (result?.findSavedFilters || []).filter((f) => f.mode === "PERFORMERS").sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+      state.savedPerformerFilters = filters;
+      return filters;
+    } catch (err) {
+      console.warn("[Ascension] Failed to fetch saved filters:", err);
+      return [];
+    }
+  }
+  function applySelectedSavedFilter() {
+    const id = getSelectedSavedFilterId();
+    const filters = state.savedPerformerFilters || [];
+    const selected = filters.find((f) => String(f.id) === String(id));
+    let rawFilter = selected?.object_filter || null;
+    if (typeof rawFilter === "string") {
+      try {
+        rawFilter = JSON.parse(rawFilter);
+      } catch (err) {
+        console.warn("[Ascension] Saved performer filter object_filter is not valid JSON:", err);
+        rawFilter = null;
+      }
+    }
+    state.cachedUrlFilter = normalizePerformerFilter(rawFilter);
+    return selected || null;
+  }
+  function getSelectedSavedSceneFilterId() {
+    return state.selectedSavedSceneFilterId ?? null;
+  }
+  function setSelectedSavedSceneFilterId(id) {
+    state.selectedSavedSceneFilterId = id || null;
+    try {
+      if (id) {
+        localStorage.setItem(SAVED_SCENE_FILTER_LS_KEY, JSON.stringify(id));
+      } else {
+        localStorage.removeItem(SAVED_SCENE_FILTER_LS_KEY);
+      }
+    } catch (err) {
+      console.warn("[Ascension] Could not save selected saved scene filter:", err);
+    }
+  }
+  function loadSelectedSavedSceneFilterId() {
+    try {
+      const saved = localStorage.getItem(SAVED_SCENE_FILTER_LS_KEY);
+      state.selectedSavedSceneFilterId = saved ? JSON.parse(saved) : null;
+    } catch (err) {
+      console.warn("[Ascension] Could not load selected saved scene filter:", err);
+    }
+  }
+  async function fetchSavedSceneFilters() {
+    try {
+      const { graphqlQuery: graphqlQuery2 } = await Promise.resolve().then(() => (init_api_client(), api_client_exports));
+      const result = await graphqlQuery2(`
+      query FindSavedFilters {
+        findSavedFilters {
+          id
+          name
+          mode
+          object_filter
+        }
+      }
+    `);
+      const filters = (result?.findSavedFilters || []).filter((f) => f.mode === "SCENES").sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+      state.savedSceneFilters = filters;
+      return filters;
+    } catch (err) {
+      console.warn("[Ascension] Failed to fetch saved scene filters:", err);
+      return [];
+    }
+  }
+  function applySelectedSavedSceneFilter() {
+    const id = getSelectedSavedSceneFilterId();
+    const filters = state.savedSceneFilters || [];
+    const selected = filters.find((f) => String(f.id) === String(id));
+    let rawFilter = selected?.object_filter || null;
+    if (typeof rawFilter === "string") {
+      try {
+        rawFilter = JSON.parse(rawFilter);
+      } catch (err) {
+        console.warn("[Ascension] Saved scene filter object_filter is not valid JSON:", err);
+        rawFilter = null;
+      }
+    }
+    state.cachedSceneFilter = normalizeSceneFilter(rawFilter);
+    return selected || null;
+  }
+  function normalizeSceneFilter(filter) {
+    if (!filter || typeof filter !== "object")
+      return filter;
+    const result = {};
+    for (const [key, value] of Object.entries(filter)) {
+      if (["AND", "OR", "NOT"].includes(key)) {
+        if (Array.isArray(value)) {
+          const nested = value.map(normalizeSceneFilter).filter(Boolean);
+          if (nested.length)
+            result[key] = nested;
+        } else if (value) {
+          const nested = normalizeSceneFilter(value);
+          if (nested)
+            result[key] = nested;
+        }
+        continue;
+      }
+      result[key] = normalizeCriterionValue(key, value);
+    }
+    return result;
+  }
+  function extractIds(items) {
+    return (items || []).map((item) => typeof item === "string" ? item : item?.id).filter((id) => id != null && id !== "");
+  }
+  function normalizeOrientationCriterion(criterion) {
+    if (!criterion || typeof criterion !== "object")
+      return criterion;
+    let rawValue = criterion.value;
+    if (rawValue && typeof rawValue === "object" && !Array.isArray(rawValue) && "value" in rawValue) {
+      rawValue = rawValue.value;
+    }
+    const values = Array.isArray(rawValue) ? rawValue : rawValue !== void 0 && rawValue !== null ? [rawValue] : [];
+    const normalized = values.map((v) => {
+      if (typeof v !== "string")
+        return v;
+      const upper = v.toUpperCase();
+      if (upper === "PORTRAIT" || upper === "LANDSCAPE")
+        return upper;
+      return v;
+    }).filter((v) => v !== void 0 && v !== null && v !== "");
+    if (normalized.length === 0)
+      return null;
+    return { value: normalized };
+  }
+  function normalizeCriterionValue(key, criterion) {
+    if (!criterion || typeof criterion !== "object")
+      return criterion;
+    if (SCENE_BOOL_KEYS.has(key)) {
+      if (typeof criterion === "boolean")
+        return criterion;
+      if (typeof criterion.value === "boolean")
+        return criterion.value;
+      if (criterion.value && typeof criterion.value === "object" && typeof criterion.value.value === "boolean") {
+        return criterion.value.value;
+      }
+      return criterion;
+    }
+    if (SCENE_STRING_SCALAR_KEYS.has(key)) {
+      if (typeof criterion === "string")
+        return criterion;
+      if (criterion.value !== void 0 && typeof criterion.value !== "object") {
+        return String(criterion.value);
+      }
+      if (criterion.value && typeof criterion.value === "object" && typeof criterion.value.value === "string") {
+        return criterion.value.value;
+      }
+      return criterion;
+    }
+    const nullaryModifiers = /* @__PURE__ */ new Set(["IS_NULL", "NOT_NULL", "IS_NOT_NULL"]);
+    if (nullaryModifiers.has(criterion.modifier)) {
+      const out = { modifier: criterion.modifier };
+      const value = criterion.value || {};
+      if ("depth" in value)
+        out.depth = value.depth;
+      else if ("depth" in criterion)
+        out.depth = criterion.depth;
+      const excludes = extractIds(value.excluded);
+      if (excludes.length)
+        out.excludes = excludes;
+      return out;
+    }
+    if (isIntLikeCriterion(key, criterion)) {
+      const directValue = typeof criterion.value === "number" ? criterion.value : criterion.value?.value;
+      if (directValue === void 0 || directValue === null)
+        return criterion;
+      const { value, ...rest } = criterion;
+      return { ...rest, value: directValue };
+    }
+    if (key === "orientation") {
+      return normalizeOrientationCriterion(criterion);
+    }
+    if (isHierarchicalMultiCriterion(criterion)) {
+      const value = criterion.value || {};
+      const ids = extractIds(value.items);
+      const excludes = extractIds(value.excluded);
+      if (ids.length === 0 && excludes.length > 0) {
+        const out2 = { modifier: "EXCLUDES", value: excludes };
+        if ("depth" in value)
+          out2.depth = value.depth;
+        return out2;
+      }
+      if (ids.length === 0)
+        return null;
+      const out = { modifier: criterion.modifier, value: ids };
+      if ("depth" in value)
+        out.depth = value.depth;
+      if (excludes.length)
+        out.excludes = excludes;
+      return out;
+    }
+    return criterion;
+  }
+  function isIntLikeCriterion(key, criterion) {
+    const intKeys = ["tag_count", "file_count", "rating100", "o_counter", "duration", "framerate", "bitrate", "performer_count", "stash_id_count", "resume_time", "play_count", "play_duration"];
+    return intKeys.includes(key) && (typeof criterion.value === "number" || criterion.value && typeof criterion.value === "object" && typeof criterion.value.value === "number");
+  }
+  function isHierarchicalMultiCriterion(criterion) {
+    return criterion && typeof criterion === "object" && (Array.isArray(criterion.value?.items) || Array.isArray(criterion.items));
+  }
+  function getScalarCriterionValue(criterion) {
+    if (criterion.value === void 0 || criterion.value === null)
+      return void 0;
+    if (typeof criterion.value === "number") {
+      return criterion.value;
+    }
+    if (typeof criterion.value === "object" && !Array.isArray(criterion.value) && typeof criterion.value.value === "number") {
+      return criterion.value.value;
+    }
+    return void 0;
+  }
+  function normalizePerformerCriterionValue(key, criterion) {
+    if (!criterion || typeof criterion !== "object")
+      return criterion;
+    if (PERFORMER_BOOL_KEYS.has(key)) {
+      if (typeof criterion === "boolean")
+        return criterion;
+      if (typeof criterion.value === "boolean")
+        return criterion.value;
+      if (criterion.value && typeof criterion.value === "object" && typeof criterion.value.value === "boolean") {
+        return criterion.value.value;
+      }
+      return criterion;
+    }
+    if (PERFORMER_STRING_SCALAR_KEYS.has(key)) {
+      if (typeof criterion === "string")
+        return criterion;
+      if (criterion.value !== void 0 && typeof criterion.value !== "object") {
+        return criterion.value;
+      }
+      if (criterion.value && typeof criterion.value === "object" && typeof criterion.value.value === "string") {
+        return criterion.value.value;
+      }
+      return criterion;
+    }
+    const nullaryModifiers = /* @__PURE__ */ new Set(["IS_NULL", "NOT_NULL", "IS_NOT_NULL"]);
+    if (nullaryModifiers.has(criterion.modifier)) {
+      const out = { modifier: criterion.modifier };
+      const value = criterion.value || {};
+      if ("depth" in value)
+        out.depth = value.depth;
+      else if ("depth" in criterion)
+        out.depth = criterion.depth;
+      const excludes = extractIds(value.excluded);
+      if (excludes.length)
+        out.excludes = excludes;
+      return out;
+    }
+    const directValue = getScalarCriterionValue(criterion);
+    if (directValue !== void 0) {
+      const { value, ...rest } = criterion;
+      return { ...rest, value: directValue };
+    }
+    if (isHierarchicalMultiCriterion(criterion)) {
+      const value = criterion.value || {};
+      const ids = extractIds(value.items);
+      const excludes = extractIds(value.excluded);
+      if (ids.length === 0 && excludes.length > 0) {
+        const out2 = { modifier: "EXCLUDES", value: excludes };
+        if ("depth" in value)
+          out2.depth = value.depth;
+        return out2;
+      }
+      if (ids.length === 0)
+        return null;
+      const out = { modifier: criterion.modifier, value: ids };
+      if ("depth" in value)
+        out.depth = value.depth;
+      if (excludes.length)
+        out.excludes = excludes;
+      return out;
+    }
+    return criterion;
+  }
+  function normalizePerformerFilter(filter) {
+    if (!filter || typeof filter !== "object")
+      return filter;
+    const result = {};
+    for (const [key, value] of Object.entries(filter)) {
+      if (["AND", "OR", "NOT"].includes(key)) {
+        if (Array.isArray(value)) {
+          const nested = value.map(normalizePerformerFilter).filter(Boolean);
+          if (nested.length)
+            result[key] = nested;
+        } else if (value) {
+          const nested = normalizePerformerFilter(value);
+          if (nested)
+            result[key] = nested;
+        }
+        continue;
+      }
+      result[key] = normalizePerformerCriterionValue(key, value);
+    }
+    return result;
+  }
+  function onBadgeSettingsChange(callback) {
+    badgeSettingsChangeListeners.add(callback);
+  }
+  function notifyBadgeSettingsChange() {
+    badgeSettingsChangeListeners.forEach((fn) => {
+      try {
+        fn();
+      } catch (e) {
+        console.warn("[Ascension] Badge settings change listener error:", e);
+      }
+    });
+  }
+  function onSceneMinDurationChange(callback) {
+    sceneMinDurationChangeListeners.add(callback);
+  }
+  function notifySceneMinDurationChange() {
+    sceneMinDurationChangeListeners.forEach((fn) => {
+      try {
+        fn();
+      } catch (e) {
+        console.warn("[Ascension] Scene min duration change listener error:", e);
+      }
+    });
+  }
+  function createSidebar() {
+    const savedMode = localStorage.getItem("hotornot_selected_mode");
+    if (savedMode) {
+      state.currentMode = savedMode;
+    }
+    const swissActive = state.currentMode === "swiss" ? "active" : "";
+    const gauntletActive = state.currentMode === "gauntlet" ? "active" : "";
+    const championActive = state.currentMode === "champion" ? "active" : "";
+    const mobileClass = isMobile() ? "mobile" : "";
+    return `
+    <div id="hon-sidebar" class="hon-sidebar ${mobileClass}">
+      <div class="hon-sidebar-content">
+        <!-- Main Performer Matchmaking Section -->
+        <div class="hon-sidebar-section">
+          <!-- Flattened Mode Options -->
+          <div class="hon-sidebar-row ${swissActive}" data-mode="swiss">
+            <span class="hon-sidebar-row-text"><span class="hon-mode-icon">\u{1F94A}</span> Head to Head</span>
+          </div>
+          <div class="hon-sidebar-row ${gauntletActive}" data-mode="gauntlet">
+            <span class="hon-sidebar-row-text"><span class="hon-mode-icon">\u269C\uFE0F</span> Placement Mode</span>
+          </div>
+          <div class="hon-sidebar-row ${championActive}" data-mode="champion">
+            <span class="hon-sidebar-row-text"><span class="hon-mode-icon">\u{1F3C6}</span> Champion Mode</span>
+          </div>
+          <div class="hon-sidebar-row" data-mode="scenes">
+            <span class="hon-sidebar-row-text"><span class="hon-mode-icon">\u{1F3AC}</span> Scene Mode</span>
+          </div>
+
+          <!-- View All Stats Row -->
+          <div class="hon-sidebar-row" data-action="view-stats">
+            <span class="hon-sidebar-row-text"><span class="hon-mode-icon">\u{1F4CA}</span> Performer Statistics</span>
+          </div>
+
+          <!-- Metrics Dashboard Row -->
+          <div class="hon-sidebar-row" data-action="view-metrics-dashboard">
+            <span class="hon-sidebar-row-text"><span class="hon-mode-icon">\u{1F4C2}</span> Metrics Dashboard</span>
+          </div>
+
+          <!-- Options Row -->
+          <div class="hon-sidebar-row" data-action="open-options">
+            <span class="hon-sidebar-row-text"><span class="hon-mode-icon">\u2699\uFE0F</span> Options</span>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  `;
+  }
+  function attachSidebarEventListeners(container) {
+    const expandableRows = container.querySelectorAll(".hon-sidebar-expandable");
+    expandableRows.forEach((row) => {
+      row.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const targetId = row.dataset.target;
+        const content = container.querySelector(`#${targetId}`);
+        const icon = row.querySelector(".hon-sidebar-expand-icon");
+        if (content && icon) {
+          const isExpanded = content.style.display === "block";
+          content.style.display = isExpanded ? "none" : "block";
+          icon.textContent = isExpanded ? "\u25B6" : "\u{1F53D}";
+          row.classList.toggle("expanded", !isExpanded);
+        }
+      });
+    });
+    const modeRows = container.querySelectorAll(".hon-sidebar-row[data-mode]");
+    modeRows.forEach((row) => {
+      row.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const mode = row.dataset.mode;
+        const previousMode = state.currentMode;
+        if (optionsRestoreState.optionsOpen) {
+          closeOptionsPanel();
+        }
+        const modeNames = {
+          "swiss": "Head to Head",
+          "gauntlet": "Placement Mode",
+          "champion": "Champion Mode",
+          "scenes": "Scene Mode"
+        };
+        addEventLog(`User changed mode to: ${modeNames[mode] || mode}`, "log");
+        if (mode === "gauntlet" || mode === "champion" || previousMode === "gauntlet" || previousMode === "champion") {
+          resetBattleState();
+        }
+        state.currentMode = mode;
+        try {
+          localStorage.setItem("hotornot_selected_mode", mode);
+        } catch (err) {
+          console.warn("[Ascension] Could not save mode selection to localStorage:", err);
+        }
+        modeRows.forEach((r) => r.classList.remove("active"));
+        row.classList.add("active");
+        const selectionContainer = document.getElementById("hon-performer-selection");
+        const comparisonArea = document.getElementById("hon-comparison-area");
+        const actionsEl = document.querySelector(".hon-actions");
+        const modal = document.getElementById("hon-modal");
+        if (modal) {
+          modal.classList.remove("hon-mode-champion", "hon-mode-swiss", "hon-mode-gauntlet", "hon-mode-scenes", "hon-mode-placement");
+          modal.classList.add(`hon-mode-${mode}`);
+        }
+        if (mode === "scenes") {
+          state.battleType = "scenes";
+        } else {
+          state.battleType = "performers";
+        }
+        if (mode === "swiss") {
+          if (selectionContainer)
+            selectionContainer.style.display = "none";
+          if (comparisonArea)
+            comparisonArea.style.display = "";
+          if (actionsEl)
+            actionsEl.style.display = "";
+          const { loadNewPair: loadNewPair2 } = await Promise.resolve().then(() => (init_battle_engine(), battle_engine_exports));
+          loadNewPair2();
+        } else if (mode === "gauntlet" || mode === "champion") {
+          const pagePerformerId = getCurrentPagePerformerId();
+          if (pagePerformerId) {
+            if (selectionContainer)
+              selectionContainer.style.display = "none";
+            if (comparisonArea)
+              comparisonArea.style.display = "";
+            if (actionsEl)
+              actionsEl.style.display = "";
+            Promise.resolve().then(() => (init_gauntlet_selection(), gauntlet_selection_exports)).then((m) => m.startGauntletWithPerformerId(pagePerformerId));
+          } else {
+            if (selectionContainer)
+              selectionContainer.style.display = "block";
+            if (comparisonArea)
+              comparisonArea.style.display = "none";
+            if (actionsEl)
+              actionsEl.style.display = "none";
+            Promise.resolve().then(() => (init_gauntlet_selection(), gauntlet_selection_exports)).then((m) => m.loadPerformerSelection());
+          }
+        } else if (mode === "scenes") {
+          if (selectionContainer)
+            selectionContainer.style.display = "none";
+          if (comparisonArea)
+            comparisonArea.style.display = "";
+          if (actionsEl)
+            actionsEl.style.display = "";
+          state.gauntletChampion = null;
+          state.gauntletFalling = false;
+          state.gauntletWins = 0;
+          state.battleType = "scenes";
+          const { loadNewPair: loadNewPair2 } = await Promise.resolve().then(() => (init_battle_engine(), battle_engine_exports));
+          loadNewPair2();
+        }
+        updateSkipButtonVisibility();
+      });
+    });
+    const actionRows = container.querySelectorAll(".hon-sidebar-row[data-action]");
+    actionRows.forEach((row) => {
+      row.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const action = row.dataset.action;
+        if (action === "view-stats") {
+          if (optionsRestoreState.optionsOpen) {
+            closeOptionsPanel();
+          }
+          Promise.resolve().then(() => (init_ui_stats(), ui_stats_exports)).then((m) => m.openStatsModal());
+        }
+        if (action === "view-metrics-dashboard") {
+          window.location.href = "/stats";
+        }
+        if (action === "open-options") {
+          if (optionsRestoreState.optionsOpen) {
+            restoreVsContainer();
+          } else {
+            openOptionsPanel();
+          }
+        }
+      });
+    });
+    autoShowOptionsIfNoGenders();
+  }
+  async function toggleGender(gender, { skipReload = false } = {}) {
+    if (state.selectedGenders.includes(gender)) {
+      state.selectedGenders = state.selectedGenders.filter((g) => g !== gender);
+    } else {
+      state.selectedGenders.push(gender);
+    }
+    try {
+      localStorage.setItem("hotornot_selected_genders", JSON.stringify(state.selectedGenders));
+    } catch (err) {
+      console.warn("[Ascension] Could not save gender selection to localStorage:", err);
+    }
+    document.querySelectorAll(".hon-options-checkbox[data-gender]").forEach((label) => {
+      const genderValue = label.dataset.gender;
+      const checkbox = label.querySelector('input[type="checkbox"]');
+      const isSelected = state.selectedGenders.includes(genderValue);
+      label.classList.toggle("active", isSelected);
+      if (checkbox)
+        checkbox.checked = isSelected;
+    });
+    if (!skipReload && state.battleType === "performers") {
+      const { loadNewPair: loadNewPair2 } = await Promise.resolve().then(() => (init_battle_engine(), battle_engine_exports));
+      loadNewPair2();
+    }
+  }
+  async function toggleTier(tier, { skipReload = false } = {}) {
+    let tiers = [...state.selectedTiers];
+    if (tier === "any") {
+      tiers = ["any"];
+    } else {
+      tiers = tiers.filter((t) => t !== "any");
+      if (tiers.includes(tier)) {
+        tiers = tiers.filter((t) => t !== tier);
+      } else {
+        tiers.push(tier);
+      }
+      if (tiers.length === 0) {
+        tiers = ["any"];
+      }
+    }
+    state.selectedTiers = tiers;
+    try {
+      localStorage.setItem("hotornot_selected_tiers", JSON.stringify(tiers));
+    } catch (err) {
+      console.warn("[Ascension] Could not save tier selection to localStorage:", err);
+    }
+    syncTierCheckboxUI();
+    const warningSlot = document.getElementById("hon-tier-warning-slot");
+    if (warningSlot) {
+      warningSlot.innerHTML = getTierGapWarningHTML(tiers);
+    }
+    if (!skipReload && state.battleType === "performers" && state.currentMode === "swiss") {
+      const { loadNewPair: loadNewPair2 } = await Promise.resolve().then(() => (init_battle_engine(), battle_engine_exports));
+      loadNewPair2();
+    }
+  }
+  function openOptionsPanel() {
+    if (optionsRestoreState.optionsOpen)
+      return;
+    const selectionContainer = document.getElementById("hon-performer-selection");
+    const comparisonArea = document.getElementById("hon-comparison-area");
+    optionsRestoreState.wasSelectionVisible = selectionContainer && selectionContainer.style.display !== "none";
+    optionsRestoreState.wasComparisonVisible = comparisonArea && comparisonArea.style.display !== "none";
+    const actionsEl = document.querySelector(".hon-actions");
+    if (actionsEl)
+      actionsEl.style.display = "none";
+    if (selectionContainer)
+      selectionContainer.style.display = "none";
+    if (comparisonArea) {
+      comparisonArea.style.display = "";
+      comparisonArea.innerHTML = '<div class="hon-vs-container"></div>';
+    }
+    const vsContainer = comparisonArea ? comparisonArea.querySelector(".hon-vs-container") : null;
+    if (!vsContainer) {
+      console.warn("[Ascension] Could not find or create container to render options panel.");
+      return;
+    }
+    vsContainer.innerHTML = renderOptionsPanel();
+    attachOptionsPanelEventListeners(vsContainer);
+    syncTierCheckboxUI();
+    if (isMobile()) {
+      const sidebar = document.getElementById("hon-sidebar");
+      if (sidebar) {
+        optionsRestoreState.sidebarWasCollapsed = sidebar.classList.contains("collapsed");
+        sidebar.classList.add("collapsed");
+      }
+    }
+    optionsRestoreState.optionsOpen = true;
+  }
+  function closeOptionsPanel() {
+    const comparisonArea = document.getElementById("hon-comparison-area");
+    if (comparisonArea)
+      comparisonArea.innerHTML = "";
+    if (isMobile()) {
+      const sidebar = document.getElementById("hon-sidebar");
+      if (sidebar && !optionsRestoreState.sidebarWasCollapsed) {
+        sidebar.classList.remove("collapsed");
+      }
+    }
+    optionsRestoreState.optionsOpen = false;
+  }
+  function autoShowOptionsIfNoGenders() {
+    if (state.selectedGenders.length === 0) {
+      openOptionsPanel();
+      return true;
+    }
+    return false;
+  }
+  function getTierGapWarningHTML(selectedTiers) {
+    const warning = getTierGapWarning(selectedTiers);
+    if (!warning)
+      return "";
+    return `<p class="hon-options-hint hon-options-warning hon-tier-gap-warning" style="color:#ff4444;">${warning}</p>`;
+  }
+  function getTierGapWarning(selectedTiers) {
+    if (!selectedTiers || selectedTiers.includes("any"))
+      return "";
+    const letters = selectedTiers.filter((t) => t !== "newcomers");
+    const indices = letters.map((t) => TIER_ORDER_FOR_GAP.indexOf(t)).filter((i) => i >= 0);
+    if (indices.length < 2)
+      return "";
+    const minIdx = Math.min(...indices);
+    const maxIdx = Math.max(...indices);
+    const gap = maxIdx - minIdx;
+    if (gap >= 2) {
+      const top = TIER_ORDER_FOR_GAP[minIdx];
+      const bottom = TIER_ORDER_FOR_GAP[maxIdx];
+      return `\u26A0\uFE0F Large tier gap selected (${top} vs ${bottom}). Cross-tier matches will use a wider opponent search window. Competitive protection still applies.`;
+    }
+    return "";
+  }
+  function syncTierCheckboxUI() {
+    document.querySelectorAll(".hon-options-checkbox[data-tier]").forEach((label) => {
+      const tier = label.dataset.tier;
+      const checkbox = label.querySelector('input[type="checkbox"]');
+      const isSelected = state.selectedTiers.includes(tier);
+      label.classList.toggle("active", isSelected);
+      if (checkbox)
+        checkbox.checked = isSelected;
+      const tierDef = ALL_TIERS.find((t) => t.value === tier);
+      const tierColor = tierDef?.color || getTierColor(tier);
+      if (isSelected) {
+        label.style.borderColor = tierColor;
+        label.style.backgroundColor = `${tierColor}22`;
+        label.style.color = tierColor;
+      } else {
+        label.style.borderColor = "";
+        label.style.backgroundColor = "";
+        label.style.color = "";
+      }
+    });
+  }
+  function syncCardDisplayCheckboxUI(vsContainer) {
+    vsContainer.querySelectorAll(".hon-options-checkbox[data-card-display]").forEach((label) => {
+      const key = label.dataset.cardDisplay;
+      const checkbox = label.querySelector('input[type="checkbox"]');
+      const isChecked = getCardDisplayOption2(key);
+      label.classList.toggle("active", isChecked);
+      if (checkbox)
+        checkbox.checked = isChecked;
+    });
+  }
+  function renderOptionsPanel() {
+    const noGenderWarning = state.selectedGenders.length === 0 ? '<p class="hon-options-hint hon-options-warning">Please select at least one gender to continue.</p>' : '<p class="hon-options-hint">Select which genders to include in matchups.</p>';
+    const tierWarningHTML = getTierGapWarningHTML(state.selectedTiers);
+    const overrideEnabled = getUserFilterOverrideEnabled();
+    const savedFilters = state.savedPerformerFilters || [];
+    const selectedFilterId = getSelectedSavedFilterId();
+    const sceneOverrideEnabled = getSceneFilterOverrideEnabled();
+    const savedSceneFilters = state.savedSceneFilters || [];
+    const selectedSceneFilterId = getSelectedSavedSceneFilterId();
+    return `
+    <div class="hon-options-panel ${isMobile() ? "mobile" : ""}">
+      <h2 class="hon-options-title">\u2699\uFE0F Options</h2>
+
+      <div class="hon-options-section">
+        <h3 class="hon-options-section-title">Gender Filter</h3>
+        ${noGenderWarning}
+        <div class="hon-options-gender-grid">
+          ${ALL_GENDERS2.map((gender) => `
+            <label class="hon-options-checkbox ${state.selectedGenders.includes(gender.value) ? "active" : ""}" data-gender="${gender.value}">
+              <input type="checkbox" value="${gender.value}" ${state.selectedGenders.includes(gender.value) ? "checked" : ""}>
+              <span class="hon-options-checkmark">\u2713</span>
+              <span class="hon-options-label-text">${gender.label}</span>
+            </label>
+          `).join("")}
+        </div>
+      </div>
+
+      <div class="hon-options-section">
+        <h3 class="hon-options-section-title">Tier Filter</h3>
+        <div id="hon-tier-warning-slot">${tierWarningHTML}</div>
+        <p class="hon-options-hint">Select which tiers to include in Head to Head matchups. "All Tiers" restores the normal rotation.</p>
+        <div class="hon-options-gender-grid">
+          ${ALL_TIERS.map((tier) => {
+      const isSelected = state.selectedTiers.includes(tier.value);
+      const tierColor = tier.color || getTierColor(tier.value);
+      const activeStyle = isSelected ? `style="border-color:${tierColor}; background-color:${tierColor}22; color:${tierColor};"` : "";
+      return `
+              <label class="hon-options-checkbox ${isSelected ? "active" : ""}" data-tier="${tier.value}" ${activeStyle}>
+                <input type="checkbox" value="${tier.value}" ${isSelected ? "checked" : ""}>
+                <span class="hon-options-checkmark">\u2713</span>
+                <span class="hon-options-label-text">${tier.label}</span>
+              </label>
+            `;
+    }).join("")}
+        </div>
+      </div>
+
+      <div class="hon-options-section">
+        <h3 class="hon-options-section-title">Card Display</h3>
+        <p class="hon-options-hint">Choose which details to hide on battle cards. Picture Only Mode hides all meta details and expands the image.</p>
+        <div class="hon-options-gender-grid">
+          ${CARD_DISPLAY_OPTIONS.map((opt) => {
+      const isHidden = getCardDisplayOption2(opt.key);
+      return `
+              <label class="hon-options-checkbox ${isHidden ? "active" : ""}" data-card-display="${opt.key}">
+                <input type="checkbox" value="${opt.key}" ${isHidden ? "checked" : ""}>
+                <span class="hon-options-checkmark">\u2713</span>
+                <span class="hon-options-label-text">${opt.label}</span>
+              </label>
+            `;
+    }).join("")}
+        </div>
+      </div>
+
+      <div class="hon-options-section">
+        <h3 class="hon-options-section-title">Badge Display</h3>
+        <p class="hon-options-hint">Choose which rank badge elements to hide on performer grids and pages.</p>
+        <div class="hon-options-gender-grid">
+          ${BADGE_DISPLAY_OPTIONS.map((opt) => {
+      const isHidden = getBadgeDisplayOption(opt.key);
+      return `
+              <label class="hon-options-checkbox ${isHidden ? "active" : ""}" data-badge-display="${opt.key}">
+                <input type="checkbox" value="${opt.key}" ${isHidden ? "checked" : ""}>
+                <span class="hon-options-checkmark">\u2713</span>
+                <span class="hon-options-label-text">${opt.label}</span>
+              </label>
+            `;
+    }).join("")}
+        </div>
+      </div>
+
+      <div class="hon-options-section">
+        <h3 class="hon-options-section-title">Matchmaking</h3>
+        <p class="hon-options-hint">When enabled, the selected saved Stash filter is strictly respected. Only matching performers will be paired.</p>
+        <div class="hon-options-gender-grid">
+          <label class="hon-options-checkbox ${overrideEnabled ? "active" : ""}" data-user-filter-override>
+            <input type="checkbox" ${overrideEnabled ? "checked" : ""}>
+            <span class="hon-options-checkmark">\u2713</span>
+            <span class="hon-options-label-text">Enable Performer Filter Override</span>
+          </label>
+          <label class="hon-options-checkbox ${getDisableImagelessPerformers() ? "active" : ""}" data-disable-imageless>
+            <input type="checkbox" ${getDisableImagelessPerformers() ? "checked" : ""}>
+            <span class="hon-options-checkmark">\u2713</span>
+            <span class="hon-options-label-text">Disable Performers without an image</span>
+          </label>
+        </div>
+        <div class="hon-options-saved-filter-row" style="margin-top: 12px;">
+          <label for="hon-saved-filter">Saved performer filter:</label>
+          <select id="hon-saved-filter" data-saved-filter ${overrideEnabled ? "" : "disabled"}>
+            ${savedFilters.length === 0 ? `<option value="">No saved filters found</option>` : `
+                <option value="">-- Select a saved filter --</option>
+                ${savedFilters.map((f) => `
+                  <option value="${f.id}" ${String(f.id) === String(selectedFilterId) ? "selected" : ""}>${f.name}</option>
+                `).join("")}
+              `}
+          </select>
+        </div>
+      </div>
+
+      <div class="hon-options-section">
+        <h3 class="hon-options-section-title">Scene Filter</h3>
+        <p class="hon-options-hint">When enabled, the selected saved Stash scene filter is strictly respected in Scene Mode.</p>
+        <div class="hon-options-gender-grid">
+          <label class="hon-options-checkbox ${sceneOverrideEnabled ? "active" : ""}" data-scene-filter-override>
+            <input type="checkbox" ${sceneOverrideEnabled ? "checked" : ""}>
+            <span class="hon-options-checkmark">\u2713</span>
+            <span class="hon-options-label-text">Enable Scene Filter Override</span>
+          </label>
+        </div>
+        <div class="hon-options-saved-filter-row" style="margin-top: 12px;">
+          <label for="hon-saved-scene-filter">Saved scene filter:</label>
+          <select id="hon-saved-scene-filter" data-saved-scene-filter ${sceneOverrideEnabled ? "" : "disabled"}>
+            ${savedSceneFilters.length === 0 ? `<option value="">No saved scene filters found</option>` : `
+                <option value="">-- Select a saved scene filter --</option>
+                ${savedSceneFilters.map((f) => `
+                  <option value="${f.id}" ${String(f.id) === String(selectedSceneFilterId) ? "selected" : ""}>${f.name}</option>
+                `).join("")}
+              `}
+          </select>
+        </div>
+        <p class="hon-options-hint">Set the minimum scene duration (in seconds) that can be selected in Scene Mode. 0 means no minimum.</p>
+        <div class="hon-options-duration-row">
+          <label for="hon-scene-min-duration">Min duration (seconds):</label>
+          <input id="hon-scene-min-duration" type="number" min="0" step="1" value="${getSceneMinDuration()}" data-scene-min-duration>
+        </div>
+      </div>
+
+      <div class="hon-options-actions">
+        <button class="hon-options-close-btn" data-action="close-options">Close Options</button>
+      </div>
+    </div>
+  `;
+  }
+  function attachOptionsPanelEventListeners(vsContainer) {
+    const checkboxes = vsContainer.querySelectorAll('.hon-options-checkbox[data-gender] input[type="checkbox"]');
+    checkboxes.forEach((checkbox) => {
+      checkbox.addEventListener("change", async (e) => {
+        const gender = e.target.value;
+        await toggleGender(gender, { skipReload: true });
+        if (state.selectedGenders.length > 0) {
+          const hint = vsContainer.querySelector(".hon-options-hint");
+          if (hint) {
+            hint.classList.remove("hon-options-warning");
+            hint.textContent = "Select which genders to include in matchups.";
+          }
+        }
+      });
+    });
+    const tierCheckboxes = vsContainer.querySelectorAll('.hon-options-checkbox[data-tier] input[type="checkbox"]');
+    tierCheckboxes.forEach((checkbox) => {
+      checkbox.addEventListener("change", async (e) => {
+        const tier = e.target.value;
+        await toggleTier(tier, { skipReload: true });
+      });
+    });
+    const displayCheckboxes = vsContainer.querySelectorAll('.hon-options-checkbox[data-card-display] input[type="checkbox"]');
+    displayCheckboxes.forEach((checkbox) => {
+      checkbox.addEventListener("change", (e) => {
+        const key = e.target.value;
+        const checked = e.target.checked;
+        toggleCardDisplayOption(key, checked);
+        syncCardDisplayCheckboxUI(vsContainer);
+      });
+    });
+    const badgeCheckboxes = vsContainer.querySelectorAll('.hon-options-checkbox[data-badge-display] input[type="checkbox"]');
+    badgeCheckboxes.forEach((checkbox) => {
+      checkbox.addEventListener("change", (e) => {
+        const key = e.target.value;
+        const isHidden = e.target.checked;
+        setBadgeDisplayOption(key, isHidden);
+        const label = e.target.closest(".hon-options-checkbox");
+        if (label)
+          label.classList.toggle("active", isHidden);
+        notifyBadgeSettingsChange();
+      });
+    });
+    const durationInput = vsContainer.querySelector("[data-scene-min-duration]");
+    if (durationInput) {
+      durationInput.addEventListener("change", (e) => {
+        setSceneMinDuration(e.target.value);
+        notifySceneMinDurationChange();
+      });
+    }
+    const userFilterOverrideCheckbox = vsContainer.querySelector('[data-user-filter-override] input[type="checkbox"]');
+    if (userFilterOverrideCheckbox) {
+      userFilterOverrideCheckbox.addEventListener("change", (e) => {
+        const isEnabled = e.target.checked;
+        setUserFilterOverrideEnabled(isEnabled);
+        const label = e.target.closest(".hon-options-checkbox");
+        if (label)
+          label.classList.toggle("active", isEnabled);
+        const savedFilterSelect2 = vsContainer.querySelector("[data-saved-filter]");
+        if (savedFilterSelect2)
+          savedFilterSelect2.disabled = !isEnabled;
+        if (isEnabled) {
+          applySelectedSavedFilter();
+        } else {
+          state.cachedUrlFilter = null;
+        }
+      });
+    }
+    const disableImagelessCheckbox = vsContainer.querySelector('[data-disable-imageless] input[type="checkbox"]');
+    if (disableImagelessCheckbox) {
+      disableImagelessCheckbox.addEventListener("change", (e) => {
+        const isEnabled = e.target.checked;
+        setDisableImagelessPerformers(isEnabled);
+        const label = e.target.closest(".hon-options-checkbox");
+        if (label)
+          label.classList.toggle("active", isEnabled);
+      });
+    }
+    const savedFilterSelect = vsContainer.querySelector("[data-saved-filter]");
+    if (savedFilterSelect) {
+      savedFilterSelect.addEventListener("change", (e) => {
+        const id = e.target.value;
+        setSelectedSavedFilterId(id);
+        applySelectedSavedFilter();
+        if (id) {
+          addEventLog(`[Ascension] Performer Filter selected: ${getSavedPerformerFilterName(id)}`, "log");
+        }
+      });
+    }
+    const sceneFilterOverrideCheckbox = vsContainer.querySelector('[data-scene-filter-override] input[type="checkbox"]');
+    if (sceneFilterOverrideCheckbox) {
+      sceneFilterOverrideCheckbox.addEventListener("change", (e) => {
+        const isEnabled = e.target.checked;
+        setSceneFilterOverrideEnabled(isEnabled);
+        const label = e.target.closest(".hon-options-checkbox");
+        if (label)
+          label.classList.toggle("active", isEnabled);
+        const savedSceneFilterSelect2 = vsContainer.querySelector("[data-saved-scene-filter]");
+        if (savedSceneFilterSelect2)
+          savedSceneFilterSelect2.disabled = !isEnabled;
+        if (isEnabled) {
+          applySelectedSavedSceneFilter();
+        } else {
+          state.cachedSceneFilter = null;
+        }
+        state.sceneMetadataCache = null;
+      });
+    }
+    const savedSceneFilterSelect = vsContainer.querySelector("[data-saved-scene-filter]");
+    if (savedSceneFilterSelect) {
+      savedSceneFilterSelect.addEventListener("change", (e) => {
+        const id = e.target.value;
+        setSelectedSavedSceneFilterId(id);
+        applySelectedSavedSceneFilter();
+        state.sceneMetadataCache = null;
+        if (id) {
+          addEventLog(`[Ascension] Scene Filter selected: ${getSavedSceneFilterName(id)}`, "log");
+        }
+      });
+    }
+    fetchSavedPerformerFilters().then(() => {
+      const savedFilterSelect2 = vsContainer.querySelector("[data-saved-filter]");
+      if (!savedFilterSelect2)
+        return;
+      const filters = state.savedPerformerFilters || [];
+      const selectedId = getSelectedSavedFilterId();
+      savedFilterSelect2.innerHTML = filters.length === 0 ? `<option value="">No saved filters found</option>` : `
+        <option value="">-- Select a saved filter --</option>
+        ${filters.map((f) => `
+          <option value="${f.id}" ${String(f.id) === String(selectedId) ? "selected" : ""}>${f.name}</option>
+        `).join("")}`;
+      savedFilterSelect2.disabled = !getUserFilterOverrideEnabled();
+      applySelectedSavedFilter();
+    });
+    fetchSavedSceneFilters().then(() => {
+      const savedSceneFilterSelect2 = vsContainer.querySelector("[data-saved-scene-filter]");
+      if (!savedSceneFilterSelect2)
+        return;
+      const filters = state.savedSceneFilters || [];
+      const selectedId = getSelectedSavedSceneFilterId();
+      savedSceneFilterSelect2.innerHTML = filters.length === 0 ? `<option value="">No saved scene filters found</option>` : `
+        <option value="">-- Select a saved scene filter --</option>
+        ${filters.map((f) => `
+          <option value="${f.id}" ${String(f.id) === String(selectedId) ? "selected" : ""}>${f.name}</option>
+        `).join("")}`;
+      savedSceneFilterSelect2.disabled = !getSceneFilterOverrideEnabled();
+      applySelectedSavedSceneFilter();
+    });
+    const closeBtn = vsContainer.querySelector('[data-action="close-options"]');
+    if (closeBtn) {
+      closeBtn.addEventListener("click", () => {
+        if (state.selectedGenders.length === 0) {
+          const hint = vsContainer.querySelector(".hon-options-hint");
+          if (hint) {
+            hint.classList.add("hon-options-warning");
+            hint.textContent = "Please select at least one gender before closing.";
+          }
+          return;
+        }
+        restoreVsContainer();
+      });
+    }
+  }
+  async function restoreVsContainer() {
+    closeOptionsPanel();
+    const actionsEl = document.querySelector(".hon-actions");
+    const selectionContainer = document.getElementById("hon-performer-selection");
+    const comparisonArea = document.getElementById("hon-comparison-area");
+    if (comparisonArea) {
+      comparisonArea.innerHTML = "";
+    }
+    if (actionsEl) {
+      actionsEl.style.display = "";
+    }
+    if (optionsRestoreState.wasSelectionVisible) {
+      const pagePerformerId = getCurrentPagePerformerId();
+      const onPerformerPage = pagePerformerId && (state.currentMode === "gauntlet" || state.currentMode === "champion" || state.battleType === "scenes");
+      if (onPerformerPage) {
+        if (selectionContainer)
+          selectionContainer.style.display = "none";
+        if (comparisonArea)
+          comparisonArea.style.display = "";
+        if (actionsEl)
+          actionsEl.style.display = "";
+        Promise.resolve().then(() => (init_gauntlet_selection(), gauntlet_selection_exports)).then((m) => m.startGauntletWithPerformerId(pagePerformerId));
+      } else {
+        if (selectionContainer)
+          selectionContainer.style.display = "block";
+        if (comparisonArea)
+          comparisonArea.style.display = "none";
+        if (actionsEl)
+          actionsEl.style.display = "none";
+        Promise.resolve().then(() => (init_gauntlet_selection(), gauntlet_selection_exports)).then((m) => m.loadPerformerSelection());
+      }
+    } else {
+      if (selectionContainer)
+        selectionContainer.style.display = "none";
+      if (comparisonArea)
+        comparisonArea.style.display = "";
+      const { loadNewPair: loadNewPair2 } = await Promise.resolve().then(() => (init_battle_engine(), battle_engine_exports));
+      loadNewPair2();
+    }
+  }
+  var ALL_GENDERS2, TIER_ORDER_FOR_GAP, CARD_DISPLAY_LS_KEY, CARD_DISPLAY_OPTIONS, PICTURE_ONLY_MODE_KEY, ALL_HIDE_OPTIONS, BADGE_DISPLAY_LS_KEY, BADGE_DISPLAY_OPTIONS, SCENE_MIN_DURATION_LS_KEY, DEFAULT_SCENE_MIN_DURATION, USER_FILTER_OVERRIDE_LS_KEY, DEFAULT_USER_FILTER_OVERRIDE, SCENE_FILTER_OVERRIDE_LS_KEY, DEFAULT_SCENE_FILTER_OVERRIDE, DISABLE_IMAGELESS_LS_KEY, DEFAULT_DISABLE_IMAGELESS, SAVED_FILTER_LS_KEY, SAVED_SCENE_FILTER_LS_KEY, SCENE_BOOL_KEYS, SCENE_STRING_SCALAR_KEYS, PERFORMER_BOOL_KEYS, PERFORMER_STRING_SCALAR_KEYS, optionsRestoreState, badgeSettingsChangeListeners, sceneMinDurationChangeListeners;
+  var init_ui_sidebar = __esm({
+    "ui-sidebar.js"() {
+      init_state();
+      init_ui_dashboard();
+      init_ui_swipe();
+      init_ui_event_log();
+      init_rating_utils();
+      init_constants();
+      ALL_GENDERS2 = [
+        { value: "FEMALE", label: "Female" },
+        { value: "MALE", label: "Male" },
+        { value: "TRANSGENDER_MALE", label: "Trans Male" },
+        { value: "TRANSGENDER_FEMALE", label: "Trans Female" },
+        { value: "INTERSEX", label: "Intersex" },
+        { value: "NON_BINARY", label: "Non-Binary" }
+      ];
+      TIER_ORDER_FOR_GAP = ["S-Tier", "A-Tier", "B-Tier", "C-Tier", "D-Tier", "F-Tier"];
+      CARD_DISPLAY_LS_KEY = "hon_card_display_options";
+      CARD_DISPLAY_OPTIONS = [
+        { key: "PictureOnlyMode", label: "Picture Only Mode" },
+        { key: "HidePerformerName", label: "Hide Performer Name" },
+        { key: "HideAscendedScore", label: "Hide Ascended Score" },
+        { key: "HideCountry", label: "Hide Country" },
+        { key: "HideHeight", label: "Hide Height" },
+        { key: "HideMeasurements", label: "Hide Measurements" },
+        { key: "HideFakeTits", label: "Hide Fake Tits" },
+        { key: "HideGender", label: "Hide Gender" },
+        { key: "HideTags", label: "Hide Tags" },
+        { key: "HideChooseThisPerformerButton", label: "Hide Choose Button" },
+        { key: "HideMediaCounters", label: "Hide Media Counters" }
+      ];
+      PICTURE_ONLY_MODE_KEY = "PictureOnlyMode";
+      ALL_HIDE_OPTIONS = CARD_DISPLAY_OPTIONS.map((opt) => opt.key).filter((key) => key !== PICTURE_ONLY_MODE_KEY);
+      BADGE_DISPLAY_LS_KEY = "hon_badge_display_options";
+      BADGE_DISPLAY_OPTIONS = [
+        { key: "HideAscRankBadge", label: "Hide Ascension Rank Badge" },
+        { key: "HideBadgeRecord", label: "Hide W/L/D Record on Grids" }
+      ];
+      SCENE_MIN_DURATION_LS_KEY = "hon_scene_min_duration";
+      DEFAULT_SCENE_MIN_DURATION = 0;
+      USER_FILTER_OVERRIDE_LS_KEY = "hon_user_filter_override";
+      DEFAULT_USER_FILTER_OVERRIDE = false;
+      SCENE_FILTER_OVERRIDE_LS_KEY = "hon_scene_filter_override";
+      DEFAULT_SCENE_FILTER_OVERRIDE = false;
+      DISABLE_IMAGELESS_LS_KEY = "hon_disable_imageless_performers";
+      DEFAULT_DISABLE_IMAGELESS = true;
+      SAVED_FILTER_LS_KEY = "hon_selected_saved_filter_id";
+      SAVED_SCENE_FILTER_LS_KEY = "hon_selected_saved_scene_filter_id";
+      SCENE_BOOL_KEYS = /* @__PURE__ */ new Set([
+        "organized",
+        "interactive",
+        "performer_favorite"
+      ]);
+      SCENE_STRING_SCALAR_KEYS = /* @__PURE__ */ new Set([
+        "is_missing",
+        "has_markers"
+      ]);
+      PERFORMER_BOOL_KEYS = /* @__PURE__ */ new Set([
+        "filter_favorites",
+        "ignore_auto_tag"
+      ]);
+      PERFORMER_STRING_SCALAR_KEYS = /* @__PURE__ */ new Set([
+        "is_missing"
+      ]);
+      loadCardDisplayOptions();
+      loadBadgeDisplayOptions();
+      loadSceneMinDuration();
+      loadUserFilterOverride();
+      loadSceneFilterOverride();
+      loadDisableImagelessPerformers();
+      loadSelectedSavedFilterId();
+      loadSelectedSavedSceneFilterId();
+      optionsRestoreState = {
+        wasSelectionVisible: false,
+        wasComparisonVisible: false,
+        sidebarWasCollapsed: false,
+        optionsOpen: false
+      };
+      badgeSettingsChangeListeners = /* @__PURE__ */ new Set();
+      sceneMinDurationChangeListeners = /* @__PURE__ */ new Set();
+      onSceneMinDurationChange(async () => {
+        if (state.battleType === "scenes" && !optionsRestoreState.optionsOpen) {
+          const { loadNewPair: loadNewPair2 } = await Promise.resolve().then(() => (init_battle_engine(), battle_engine_exports));
+          loadNewPair2();
+        }
+      });
+      (async function initSavedFiltersOnStartup() {
+        await fetchSavedPerformerFilters();
+        await fetchSavedSceneFilters();
+        if (getUserFilterOverrideEnabled()) {
+          applySelectedSavedFilter();
+          addEventLog(`[Ascension] Performer Filter Override enabled: ${getSavedPerformerFilterName(getSelectedSavedFilterId())}`, "log");
+        }
+        if (getSceneFilterOverrideEnabled()) {
+          applySelectedSavedSceneFilter();
+          addEventLog(`[Ascension] Scene Filter Override enabled: ${getSavedSceneFilterName(getSelectedSavedSceneFilterId())}`, "log");
+        }
+      })();
+    }
+  });
+
+  // parsers.js
+  function getPerformerFilter(cachedUrlFilter, selectedGenders) {
+    const useUserFilter = getUserFilterOverrideEnabled();
+    const filter = useUserFilter ? { ...cachedUrlFilter || {} } : {};
+    delete filter.gender;
+    if (selectedGenders.length > 0) {
+      filter.gender = { value_list: selectedGenders, modifier: "INCLUDES" };
+    }
+    if (getDisableImagelessPerformers()) {
+      filter.NOT = { ...filter.NOT || {}, is_missing: "image" };
+    }
+    return filter;
+  }
+  var init_parsers = __esm({
+    "parsers.js"() {
+      init_constants();
+      init_ui_sidebar();
+    }
+  });
+
+  // scene-handler.js
+  function computeSceneRatingBands(scenes, requestedBandCount) {
+    if (!Array.isArray(scenes) || scenes.length < MIN_SCENE_BANDS * 2) {
+      return null;
+    }
+    const ratings = scenes.map((s) => s.rating100 ?? 1).filter((r) => typeof r === "number" && !isNaN(r)).sort((a, b) => a - b);
+    if (ratings.length < MIN_SCENE_BANDS * 2) {
+      return null;
+    }
+    const bandCount = requestedBandCount ?? Math.max(
+      MIN_SCENE_BANDS,
+      Math.min(MAX_SCENE_BANDS, Math.floor(scenes.length / 50))
+    );
+    const bands = [];
+    for (let i = 0; i < bandCount; i++) {
+      const lowerPercentile = i / bandCount;
+      const upperPercentile = (i + 1) / bandCount;
+      const lowerIndex = Math.max(0, Math.floor(lowerPercentile * ratings.length));
+      const upperIndex = Math.min(ratings.length - 1, Math.ceil(upperPercentile * ratings.length) - 1);
+      bands.push({
+        index: i,
+        lowerBound: ratings[lowerIndex],
+        upperBound: ratings[upperIndex],
+        lowerPercentile,
+        upperPercentile
+      });
+    }
+    return {
+      min: ratings[0],
+      max: ratings[ratings.length - 1],
+      count: bandCount,
+      bands
+    };
+  }
+  function getSceneBandIndex(scene, bandData) {
+    if (!bandData || !bandData.bands)
+      return 0;
+    const rating = scene?.rating100 ?? 1;
+    if (rating <= bandData.min)
+      return 0;
+    if (rating >= bandData.max)
+      return bandData.bands.length - 1;
+    return bandData.bands.find((b) => rating >= b.lowerBound && rating <= b.upperBound)?.index ?? 0;
+  }
+  function filterCandidatesByRatingBand(candidates, seedScene, bandData, maxBandGap = 1) {
+    if (!bandData)
+      return candidates;
+    const seedBand = getSceneBandIndex(seedScene, bandData);
+    return candidates.filter((item) => {
+      const scene = item.scene || item;
+      const candidateBand = getSceneBandIndex(scene, bandData);
+      return Math.abs(candidateBand - seedBand) <= maxBandGap;
+    });
+  }
+  function getMinimumCandidateCount(totalPool) {
+    return Math.max(8, Math.min(25, Math.floor(Math.sqrt(totalPool) * 1.5)));
+  }
+  function widenBandWindowUntilMinimum(candidates, seedScene, bandData, totalPool) {
+    if (!bandData)
+      return candidates;
+    const minCandidates = getMinimumCandidateCount(totalPool);
+    const maxPossibleGap = bandData.bands.length - 1;
+    let result = [];
+    let maxGap = 0;
+    while (maxGap <= maxPossibleGap && result.length < minCandidates) {
+      result = filterCandidatesByRatingBand(candidates, seedScene, bandData, maxGap);
+      if (result.length >= minCandidates)
+        break;
+      maxGap++;
+    }
+    if (result.length === 0 && candidates.length > 0) {
+      result = candidates.map((item) => ({
+        ...item,
+        bandDistance: Math.abs(
+          getSceneBandIndex(seedScene, bandData) - getSceneBandIndex(item.scene || item, bandData)
+        )
+      })).sort((a, b) => a.bandDistance - b.bandDistance).slice(0, Math.min(minCandidates, candidates.length)).map(({ bandDistance, ...rest }) => rest);
+    }
+    return result.length > 0 ? result : candidates;
+  }
+  function getSceneProgressiveKFactor(rating, opponentRating, matchCount, mode = "swiss") {
+    const count = matchCount || 0;
+    const experienceFactor = 0.5 + 0.5 / (1 + Math.exp((count - 18) / 6));
+    let baseK = 20 * experienceFactor;
+    if (rating > 40) {
+      const reductionFactor = Math.max(0.3, 1 - (rating - 40) / 50);
+      baseK *= reductionFactor;
+    }
+    if (opponentRating != null && rating > opponentRating) {
+      const gap = rating - opponentRating;
+      if (gap > 1) {
+        const gapFactor = Math.max(0.15, 1 - (gap - 1) / 50);
+        baseK *= gapFactor;
+      }
+    }
+    if (mode === "champion") {
+      return Math.min(22, Math.max(3, Math.round(baseK * 0.85)));
+    } else if (mode === "gauntlet") {
+      return Math.min(28, Math.max(4, Math.round(baseK * 1.1)));
+    }
+    return Math.min(24, Math.max(3, Math.round(baseK)));
+  }
+  function calculateSceneMatchOutcome({
+    winnerRating,
+    loserRating,
+    winnerEffectiveRating,
+    loserEffectiveRating,
+    mode,
+    winnerMatchCount,
+    loserMatchCount,
+    winnerStats = {},
+    loserStats = {},
+    isSpecialChallenge = false
+  }) {
+    const outcome = calculateMatchOutcome({
+      winnerRating,
+      loserRating,
+      winnerEffectiveRating,
+      loserEffectiveRating,
+      winnerTier: null,
+      loserTier: null,
+      mode,
+      winnerMatchCount,
+      loserMatchCount,
+      winnerStats,
+      loserStats,
+      isSpecialChallenge,
+      kFactorFn: getSceneProgressiveKFactor
+    });
+    if (winnerMatchCount < 3 && winnerRating < loserRating - 0.5) {
+      const volatilityCap = Math.max(5, 11 - winnerMatchCount * 2);
+      outcome.winnerGain = Math.min(outcome.winnerGain, volatilityCap);
+    }
+    outcome.winnerGain = Math.max(1, outcome.winnerGain);
+    outcome.loserLoss = Math.max(0, outcome.loserLoss);
+    return outcome;
+  }
+  var MIN_SCENE_BANDS, MAX_SCENE_BANDS;
+  var init_scene_handler = __esm({
+    "scene-handler.js"() {
+      init_math_utils();
+      MIN_SCENE_BANDS = 3;
+      MAX_SCENE_BANDS = 7;
+    }
+  });
+
+  // api-client.js
+  var api_client_exports = {};
+  __export(api_client_exports, {
+    IMAGE_FRAGMENT: () => IMAGE_FRAGMENT,
+    PERFORMER_FRAGMENT: () => PERFORMER_FRAGMENT,
+    SCENE_FRAGMENT: () => SCENE_FRAGMENT,
+    fetchAllPerformerStats: () => fetchAllPerformerStats,
+    fetchAllPerformersSorted: () => fetchAllPerformersSorted,
+    fetchAllSceneMetadata: () => fetchAllSceneMetadata,
+    fetchGlobalPerformerRatings: () => fetchGlobalPerformerRatings,
+    fetchImageCount: () => fetchImageCount,
+    fetchPerformerById: () => fetchPerformerById,
+    fetchPerformerCount: () => fetchPerformerCount,
+    fetchRandomImages: () => fetchRandomImages,
+    fetchRandomPerformers: () => fetchRandomPerformers,
+    fetchSceneById: () => fetchSceneById,
+    fetchScenesByIds: () => fetchScenesByIds,
+    getAllPerformersSorted: () => getAllPerformersSorted,
+    getHotOrNotConfig: () => getHotOrNotConfig,
+    graphqlQuery: () => graphqlQuery,
+    handleComparison: () => handleComparison,
+    isBattleRankBadgeEnabled: () => isBattleRankBadgeEnabled,
+    undoLastMatch: () => undoLastMatch,
+    updateImageRating: () => updateImageRating,
+    updateItemRating: () => updateItemRating,
+    updatePerformerRating: () => updatePerformerRating,
+    updateSceneRating: () => updateSceneRating
+  });
+  async function graphqlQuery(query, variables = {}) {
+    if (typeof PluginApi !== "undefined" && PluginApi.utils?.StashService?.getClient && PluginApi.libraries?.Apollo) {
+      try {
+        const { gql } = PluginApi.libraries.Apollo;
+        const client = PluginApi.utils.StashService.getClient();
+        const doc = gql(query);
+        const isMutation = doc.definitions.some((def) => def.kind === "OperationDefinition" && def.operation === "mutation");
+        const result2 = isMutation ? await client.mutate({ mutation: doc, variables }) : await client.query({ query: doc, variables, fetchPolicy: "no-cache" });
+        return result2.data;
+      } catch (e) {
+        console.warn("[Ascension] Apollo fallback to fetch:", e.message);
+      }
+    }
+    const response = await fetch("/graphql", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query, variables })
+    });
+    const result = await response.json();
+    if (result.errors && result.errors.length > 0) {
+      if (result.errors.length === 1) {
+        throw new Error(`GraphQL Error: ${result.errors[0].message}`);
+      }
+      const errorMessage = result.errors.map((e) => e.message).join("; ");
+      throw new Error(`GraphQL Errors: ${errorMessage}`);
+    }
+    return result.data;
+  }
+  async function fetchAllItems2(queryTemplate, variablesBase = {}, pageSize = 1e3) {
+    const allItems = [];
+    let currentPage = 1;
+    const baseFilter = variablesBase.filter || {};
+    while (true) {
+      const variables = {
+        ...variablesBase,
+        filter: Object.assign({}, baseFilter, {
+          per_page: pageSize,
+          page: currentPage
+        })
+      };
+      const result = await graphqlQuery(queryTemplate, variables);
+      const items = result.findPerformers?.performers || result.findImages?.images || result.findScenes?.scenes || [];
+      if (items.length === 0)
+        break;
+      allItems.push.apply(allItems, items);
+      if (items.length < pageSize)
+        break;
+      currentPage++;
+    }
+    return allItems;
+  }
+  async function fetchAllSceneMetadata(sceneFilter = null) {
+    const queryTemplate = `
+    query FindSceneMetadata($filter: FindFilterType, $scene_filter: SceneFilterType) {
+      findScenes(filter: $filter, scene_filter: $scene_filter) {
+        scenes { id rating100 custom_fields }
+      }
+    }
+  `;
+    const variables = {
+      filter: { sort: "rating100", direction: "DESC" }
+    };
+    if (sceneFilter)
+      variables.scene_filter = sceneFilter;
+    return await fetchAllItems2(queryTemplate, variables, 1e3);
+  }
+  async function fetchScenesByIds(ids) {
+    if (!ids || ids.length === 0)
+      return [];
+    const query = `
+    query FindScenesByIds($filter: FindFilterType) {
+      findScenes(filter: $filter) {
+        scenes { ${SCENE_FRAGMENT} }
+      }
+    }
+  `;
+    const result = await graphqlQuery(query, {
+      filter: { per_page: ids.length, ids }
+    });
+    return result?.findScenes?.scenes || [];
+  }
+  function sortPerformersByRating(performers) {
+    const performerStats = /* @__PURE__ */ new Map();
+    return performers.sort((a, b) => {
+      const ratingDiff = (b.rating100 ?? 1) - (a.rating100 ?? 1);
+      if (ratingDiff !== 0)
+        return ratingDiff;
+      if (!performerStats.has(a.id)) {
+        performerStats.set(a.id, parsePerformerEloData(a));
+      }
+      if (!performerStats.has(b.id)) {
+        performerStats.set(b.id, parsePerformerEloData(b));
+      }
+      const statsA = performerStats.get(a.id);
+      const statsB = performerStats.get(b.id);
+      const matchCountDiff = (statsB.total_matches || 0) - (statsA.total_matches || 0);
+      if (matchCountDiff !== 0)
+        return matchCountDiff;
+      if (a.name && b.name) {
+        return a.name.localeCompare(b.name);
+      }
+      const nameA = a.name || "";
+      const nameB = b.name || "";
+      return nameA.localeCompare(nameB);
+    });
+  }
+  async function fetchAllPerformersSorted(sortBy = "rating", direction = "DESC") {
+    const queryTemplate = `
+    query FindAllPerformers($filter: FindFilterType) {
+      findPerformers(filter: $filter) {
+        performers { ${FRAGMENTS.PERFORMER} }
+      }
+    }
+  `;
+    const performers = await fetchAllItems2(queryTemplate, {
+      filter: { sort: sortBy, direction }
+    });
+    return sortPerformersByRating(performers);
+  }
+  async function fetchAllPerformerStats() {
+    return await fetchAllPerformersSorted();
+  }
+  async function fetchGlobalPerformerRatings() {
+    const queryTemplate = `
+    query FindAllPerformers($filter: FindFilterType) {
+      findPerformers(filter: $filter) {
+        performers { id rating100 custom_fields }
+      }
+    }
+  `;
+    const performers = await fetchAllItems2(queryTemplate, {
+      filter: { sort: "rating", direction: "DESC" }
+    });
+    return performers.map((p) => {
+      let total_matches = 0;
+      let wins = 0;
+      let win_margin = 0;
+      const statsJson = p.custom_fields?.["hotornot_stats"];
+      if (statsJson) {
+        try {
+          const stats = typeof statsJson === "string" ? JSON.parse(statsJson) : statsJson;
+          total_matches = stats?.total_matches ?? 0;
+          wins = stats?.wins ?? 0;
+          win_margin = stats?.win_margin ?? 0;
+        } catch (e) {
+        }
+      }
+      return {
+        id: p.id,
+        rating100: p.rating100 ?? 1,
+        total_matches,
+        wins,
+        win_margin
+      };
+    });
+  }
+  async function getAllPerformersSorted() {
+    return await fetchAllPerformersSorted();
+  }
+  async function fetchRandomPerformers(count = 2) {
+    if (state.selectedGenders.length === 0) {
+      throw new Error("No genders selected.");
+    }
+    const battleGender = state.selectedGenders[Math.floor(Math.random() * state.selectedGenders.length)];
+    const performerFilter = getPerformerFilter(state.cachedUrlFilter, [battleGender]);
+    const totalPerformers = await fetchPerformerCount(performerFilter);
+    if (totalPerformers < 2) {
+      throw new Error("Not enough performers matching the selected gender.");
+    }
+    const performerQuery = `
+    query FindRandomPerformers($performer_filter: PerformerFilterType, $filter: FindFilterType) {
+      findPerformers(performer_filter: $performer_filter, filter: $filter) {
+        performers {
+          ${FRAGMENTS.PERFORMER}
+        }
+      }
+    }
+  `;
+    const result = await graphqlQuery(performerQuery, {
+      performer_filter: performerFilter,
+      filter: {
+        per_page: Math.min(100, totalPerformers),
+        sort: "random"
+      }
+    });
+    const allPerformers = result?.findPerformers?.performers || [];
+    if (allPerformers.length < 2) {
+      throw new Error("Not enough performers for comparison.");
+    }
+    const shuffled = [...allPerformers].sort(() => Math.random() - 0.5);
+    return shuffled.slice(0, 2);
+  }
+  async function fetchPerformerById(id) {
+    const result = await graphqlQuery(`query($id: ID!) { findPerformer(id: $id) { ${PERFORMER_FRAGMENT} } }`, { id });
+    return result.findPerformer;
+  }
+  async function fetchPerformerCount(filter = {}) {
+    const result = await graphqlQuery(`query($f: PerformerFilterType) { findPerformers(performer_filter: $f, filter: { per_page: 0 }) { count } }`, { f: filter });
+    return result.findPerformers.count;
+  }
+  async function fetchRandomImages(count = 2) {
+    const totalImages = await fetchImageCount();
+    if (totalImages < 2) {
+      throw new Error("Not enough images for comparison. You need at least 2 images.");
+    }
+    const imagesQuery = `
+    query FindRandomImages($filter: FindFilterType) {
+      findImages(filter: $filter) {
+        images {
+          ${IMAGE_FRAGMENT}
+        }
+      }
+    }
+  `;
+    const result = await graphqlQuery(imagesQuery, {
+      filter: {
+        per_page: Math.min(100, totalImages),
+        sort: "random"
+      }
+    });
+    const allImages = result.findImages.images || [];
+    if (allImages.length < 2) {
+      throw new Error("Not enough images returned from query.");
+    }
+    const shuffled = allImages.sort(() => Math.random() - 0.5);
+    return shuffled.slice(0, count);
+  }
+  function formatResultStatus(won, change) {
+    if (won === null || won === void 0)
+      return "UPDATE";
+    const pointChange = change !== null && !isNaN(change) ? (change / 10).toFixed(1) : "?";
+    const signed = change > 0 ? `+${pointChange}` : pointChange;
+    return won ? `WIN(${signed})` : `LOSS(${signed})`;
+  }
+  function getRecordKeyForBattleType(battleType) {
+    if (battleType === "performers")
+      return "performer_record";
+    if (battleType === "scenes")
+      return "scene_record";
+    return null;
+  }
+  function normalizeSceneRecordEntry(entry) {
+    if (!entry || typeof entry !== "object")
+      return null;
+    const normalized = {
+      date: entry.date || (/* @__PURE__ */ new Date()).toISOString(),
+      won: entry.won,
+      ratingAfter: entry.ratingAfter
+    };
+    if (entry.opponentId) {
+      normalized.opponentId = entry.opponentId.toString().replace(/\D/g, "") || "0";
+    } else if (entry.opponent && typeof entry.opponent === "string") {
+      normalized.opponentId = entry.opponent.split(":")[0] || "0";
+    } else {
+      normalized.opponentId = "0";
+    }
+    return normalized;
+  }
+  function getOldStatsSnapshot(itemObj, battleType) {
+    const recordKey = getRecordKeyForBattleType(battleType);
+    const stats = parsePerformerEloData(itemObj) || {};
+    if (!recordKey)
+      return stats;
+    let recordArray = [];
+    const rawRecord = itemObj?.custom_fields?.[recordKey];
+    if (rawRecord) {
+      try {
+        recordArray = typeof rawRecord === "string" ? JSON.parse(rawRecord) : rawRecord;
+        if (!Array.isArray(recordArray))
+          recordArray = [];
+      } catch (e) {
+        console.warn(`[Ascension] Failed to parse ${recordKey} for snapshot, starting fresh.`);
+        recordArray = [];
+      }
+    }
+    if (battleType === "scenes") {
+      recordArray = recordArray.map(normalizeSceneRecordEntry).filter(Boolean);
+    }
+    return {
+      ...stats,
+      [recordKey]: recordArray
+    };
+  }
+  async function handleComparison(winnerId, loserId, winnerCurrentRating, loserCurrentRating, loserRank = null, winnerObj = null, loserObj = null, isDraw = false) {
+    const startTime = performance.now();
+    console.log(`[Ascension Timing] handleComparison started for Winner ID: ${winnerId}, Loser ID: ${loserId}`);
+    let winnerRating = winnerCurrentRating || 1;
+    let loserRating = loserCurrentRating || 1;
+    let freshWinnerObj = null;
+    let freshLoserObj = null;
+    if (state.currentMode === "gauntlet" || state.currentMode === "champion") {
+      console.log(`[Ascension] ${state.currentMode} mode detected - fetching fresh performer data from DB`);
+      try {
+        [freshWinnerObj, freshLoserObj] = await Promise.all([
+          fetchPerformerById(winnerId),
+          fetchPerformerById(loserId)
+        ]);
+        console.log(`[Ascension] Fresh data fetched. Winner record has ${freshWinnerObj.custom_fields?.performer_record?.length || 0} matches, Loser has ${freshLoserObj.custom_fields?.performer_record?.length || 0} matches`);
+        if (freshWinnerObj && freshWinnerObj.rating100 > 0) {
+          winnerRating = freshWinnerObj.rating100;
+        }
+        if (freshLoserObj && freshLoserObj.rating100 > 0) {
+          loserRating = freshLoserObj.rating100;
+        }
+      } catch (fetchError) {
+        console.error(`[Ascension] Failed to fetch fresh data, falling back to provided objects:`, fetchError);
+        freshWinnerObj = winnerObj;
+        freshLoserObj = loserObj;
+      }
+    } else {
+      try {
+        const isWinnerValid = winnerObj && typeof winnerObj === "object" && winnerObj.id != void 0 && winnerObj.id == winnerId && winnerObj.custom_fields !== void 0;
+        const isLoserValid = loserObj && typeof loserObj === "object" && loserObj.id != void 0 && loserObj.id == loserId && loserObj.custom_fields !== void 0;
+        if (isWinnerValid && isLoserValid) {
+          freshWinnerObj = winnerObj;
+          freshLoserObj = loserObj;
+        } else {
+          throw new Error(`Provided objects failed validation`);
+        }
+      } catch (useProvidedError) {
+        console.log(`[Ascension] Falling back to fetching fresh scene data:`, useProvidedError.message);
+        [freshWinnerObj, freshLoserObj] = await Promise.all([
+          fetchSceneById(winnerId),
+          fetchSceneById(loserId)
+        ]);
+      }
+    }
+    let winnerMatchCount = 0;
+    let loserMatchCount = 0;
+    let winnerStats = {};
+    let loserStats = {};
+    winnerStats = parsePerformerEloData(freshWinnerObj) || {};
+    loserStats = parsePerformerEloData(freshLoserObj) || {};
+    winnerMatchCount = winnerStats.total_matches || 0;
+    loserMatchCount = loserStats.total_matches || 0;
+    const isPerformerBattle = state.battleType === "performers";
+    const globalPool = state.globalPerformerPool || [];
+    let winnerTier = null;
+    let loserTier = null;
+    let winnerEffectiveRating = null;
+    let loserEffectiveRating = null;
+    if (isPerformerBattle && globalPool.length > 0) {
+      if (freshWinnerObj) {
+        winnerTier = getRatingTier(freshWinnerObj, globalPool);
+        winnerEffectiveRating = calculateEffectiveEloRating(freshWinnerObj, globalPool);
+      }
+      if (freshLoserObj) {
+        loserTier = getRatingTier(freshLoserObj, globalPool);
+        loserEffectiveRating = calculateEffectiveEloRating(freshLoserObj, globalPool);
+      }
+    }
+    let winnerGain = 0;
+    let loserLoss = 0;
+    if (isDraw) {
+      const ratingDiff2 = (loserEffectiveRating ?? loserRating) - (winnerEffectiveRating ?? winnerRating);
+      const expectedWinner = 1 / (1 + Math.pow(10, ratingDiff2 / 400));
+      const winnerK = getProgressiveKFactor(winnerRating, null, winnerMatchCount, "swiss");
+      const loserK = getProgressiveKFactor(loserRating, null, loserMatchCount, "swiss");
+      winnerGain = Math.round(winnerK * (0.5 - expectedWinner));
+      loserLoss = Math.round(loserK * (1 - expectedWinner - 0.5));
+    } else {
+      const isChampionWinner = !!state.gauntletChampion && winnerId === state.gauntletChampion.id;
+      const isFallingWinner = state.gauntletFalling && !!state.gauntletFallingItem && winnerId === state.gauntletFallingItem.id;
+      const isChampionLoser = !!state.gauntletChampion && loserId === state.gauntletChampion.id;
+      const isFallingLoser = state.gauntletFalling && !!state.gauntletFallingItem && loserId === state.gauntletFallingItem.id;
+      if (state.battleType === "scenes") {
+        let sceneOutcome = calculateSceneMatchOutcome({
+          winnerRating,
+          loserRating,
+          winnerEffectiveRating,
+          loserEffectiveRating,
+          mode: state.currentMode,
+          winnerMatchCount,
+          loserMatchCount,
+          winnerStats,
+          loserStats,
+          isSpecialChallenge: state.currentPair?.isSpecialChallenge || false
+        });
+        winnerGain = sceneOutcome.winnerGain;
+        loserLoss = sceneOutcome.loserLoss;
+      } else {
+        ({ winnerGain, loserLoss } = calculateMatchOutcome({
+          winnerRating,
+          loserRating,
+          winnerEffectiveRating,
+          loserEffectiveRating,
+          winnerTier,
+          loserTier,
+          mode: state.currentMode,
+          winnerMatchCount,
+          loserMatchCount,
+          isChampionWinner,
+          isFallingWinner,
+          isChampionLoser,
+          isFallingLoser,
+          loserRank,
+          winnerStats,
+          loserStats,
+          isSpecialChallenge: state.currentPair?.isSpecialChallenge || false,
+          specialChallengeRules: state.currentPair?.specialChallengeRules || null
+        }));
+      }
+    }
+    const newWinnerRating = Math.min(100, Math.max(1, winnerRating + winnerGain));
+    const newLoserRating = Math.min(100, Math.max(1, loserRating - loserLoss));
+    const shouldTrackWinner = state.battleType === "performers" || state.battleType === "scenes";
+    const shouldTrackLoser = state.battleType === "performers" || state.battleType === "scenes";
+    const winnerStatus = isDraw ? null : true;
+    const loserStatus = isDraw ? null : false;
+    const winnerOldStats = shouldTrackWinner ? getOldStatsSnapshot(freshWinnerObj, state.battleType) : null;
+    const loserOldStats = shouldTrackLoser ? getOldStatsSnapshot(freshLoserObj, state.battleType) : null;
+    if (!state.matchHistory)
+      state.matchHistory = [];
+    state.matchHistory.push({
+      winnerId,
+      loserId,
+      winnerOldRating: winnerRating,
+      loserOldRating: loserRating,
+      winnerOldStats,
+      loserOldStats,
+      pairSnapshot: {
+        left: state.currentPair.left ? { ...state.currentPair.left } : null,
+        right: state.currentPair.right ? { ...state.currentPair.right } : null,
+        rankLeft: state.currentRanks.left,
+        rankRight: state.currentRanks.right
+      },
+      gauntletSnapshot: {
+        gauntletChampion: state.gauntletChampion ? { ...state.gauntletChampion } : null,
+        gauntletWins: state.gauntletWins,
+        gauntletDefeated: [...state.gauntletDefeated || []],
+        gauntletFalling: state.gauntletFalling,
+        gauntletFallingItem: state.gauntletFallingItem ? { ...state.gauntletFallingItem } : null
+      }
+    });
+    if (state.matchHistory.length > 10)
+      state.matchHistory.shift();
+    if (!winnerId || !loserId) {
+      console.error("[Ascension] Cannot update rating: One or both IDs are missing", { winnerId, loserId });
+      return { newWinnerRating, newLoserRating, winnerChange: winnerGain, loserChange: -loserLoss };
+    }
+    const updateStartTime = performance.now();
+    try {
+      const [winnerUpdateResult, loserUpdateResult] = await Promise.all([
+        updateItemRating(
+          winnerId,
+          newWinnerRating,
+          freshWinnerObj,
+          winnerStatus,
+          loserId,
+          winnerGain
+        ).catch((err) => {
+          console.error(`[Ascension] Error updating winner (${winnerId}):`, err);
+          throw new Error(`Failed to update winner: ${err.message}`);
+        }),
+        updateItemRating(
+          loserId,
+          newLoserRating,
+          freshLoserObj,
+          loserStatus,
+          winnerId,
+          -loserLoss
+        ).catch((err) => {
+          console.error(`[Ascension] Error updating loser (${loserId}):`, err);
+          throw new Error(`Failed to update loser: ${err.message}`);
+        })
+      ]);
+      const updateEndTime = performance.now();
+      console.log(`[Ascension Timing] Parallel updates completed in ${(updateEndTime - updateStartTime).toFixed(2)} ms.`);
+    } catch (updateError) {
+      const updateEndTime = performance.now();
+      console.error(`[Ascension] Timing] One or both updates failed after ${(updateEndTime - updateStartTime).toFixed(2)} ms:`, updateError);
+      throw updateError;
+    }
+    const endTime = performance.now();
+    console.log(`[Ascension Timing] handleComparison completed in ${(endTime - startTime).toFixed(2)} ms.`);
+    return {
+      newWinnerRating,
+      newLoserRating,
+      winnerChange: winnerGain,
+      loserChange: -loserLoss
+    };
+  }
+  async function updateItemRating(itemId, newRating, itemObj = null, won = null, opponentId = null, change = null) {
+    if (state.battleType === "performers") {
+      return await updatePerformerRating(itemId, newRating, itemObj, won, opponentId, change);
+    } else if (state.battleType === "images") {
+      return await updateImageRating(itemId, newRating);
+    } else if (state.battleType === "scenes") {
+      return await updateSceneRating(itemId, newRating, itemObj, won, opponentId, change);
+    } else {
+      console.warn(`[Ascension] Unknown battle type: ${state.battleType}`);
+      return null;
+    }
+  }
+  async function fetchImageCount() {
+    const countQuery = `
+      query FindImages {
+        findImages(filter: { per_page: 0 }) {
+          count
+        }
+      }
+    `;
+    const countResult = await graphqlQuery(countQuery);
+    return countResult.findImages.count;
+  }
+  async function updateSceneRating(id, rating, sceneObj = null, won = null, opponentId = null, change = null) {
+    if (!id) {
+      console.error("[Ascension] Cannot update scene: ID is missing");
+      return;
+    }
+    let sceneTitle = "Unknown Scene";
+    if (sceneObj?.title && sceneObj.title.trim() !== "") {
+      sceneTitle = sceneObj.title;
+    } else if (state.currentPair) {
+      if (state.currentPair.left?.id == id) {
+        sceneTitle = state.currentPair.left.title || extractTitleFromFile(state.currentPair.left);
+      } else if (state.currentPair.right?.id == id) {
+        sceneTitle = state.currentPair.right.title || extractTitleFromFile(state.currentPair.right);
+      }
+    } else if (sceneObj) {
+      sceneTitle = extractTitleFromFile(sceneObj);
+    }
+    let cleanRating = Math.round(Number(rating));
+    if (isNaN(cleanRating)) {
+      console.warn(`[Ascension] Invalid rating for scene ${id}, falling back to existing data.`);
+      cleanRating = sceneObj?.rating100 || 1;
+    }
+    if (change === null && sceneObj && !isNaN(sceneObj.rating100)) {
+      change = cleanRating - Math.round(Number(sceneObj.rating100));
+    }
+    const statusText = formatResultStatus(won, change);
+    const statusColor = won === true ? "#4CAF50" : won === false ? "#F44336" : "#9E9E9E";
+    const displayRating = (cleanRating / 10).toFixed(1);
+    console.log(
+      `%c[Ascension] %cUpdating: %c${sceneTitle || "???"} %c(ID: ${id})%c, %cNew Rating: %c${displayRating}%c, %cResult: %c${statusText}`,
+      "color: #1cb4d6; font-weight: bold;",
+      "color: #1cb4d6;",
+      "color: #1cb4d6; font-weight: bold;",
+      "color: #1cb4d6;",
+      "color: #888;",
+      "color: #FF69B4;",
+      "color: #FF69B4; font-weight: bold;",
+      "color: #888;",
+      "color: #1cb4d6;",
+      `color: ${statusColor}; font-weight: bold;`
+    );
+    const variables = {
+      id: id.toString(),
+      rating: cleanRating,
+      fields: {}
+    };
+    if (sceneObj) {
+      try {
+        const currentStats = parsePerformerEloData(sceneObj);
+        const updatedStats = updatePerformerStats(currentStats, won, change);
+        if (updatedStats) {
+          const statsToStore = { ...updatedStats };
+          delete statsToStore.performer_record;
+          variables.fields.hotornot_stats = JSON.stringify(statsToStore);
+        }
+      } catch (e) {
+        console.error(`[Ascension] Stats update failed for scene ${id}:`, e);
+      }
+      let matchHistory = [];
+      try {
+        const rawRecord = sceneObj.custom_fields?.scene_record;
+        if (rawRecord) {
+          matchHistory = typeof rawRecord === "string" ? JSON.parse(rawRecord) : rawRecord;
+          if (!Array.isArray(matchHistory))
+            matchHistory = [];
+        }
+      } catch (e) {
+        console.warn(`[Ascension] Failed to parse scene_record for ${id}, resetting history.`);
+        matchHistory = [];
+      }
+      matchHistory = matchHistory.map(normalizeSceneRecordEntry).filter(Boolean);
+      let opponentIdValue = "0";
+      if (opponentId) {
+        if (typeof opponentId === "string" && opponentId.includes(":")) {
+          opponentIdValue = opponentId.split(":")[0];
+        } else {
+          opponentIdValue = (typeof opponentId === "object" ? opponentId.id : opponentId).toString().replace(/\D/g, "");
+        }
+      }
+      matchHistory.push({
+        date: (/* @__PURE__ */ new Date()).toISOString(),
+        opponentId: opponentIdValue,
+        won,
+        ratingAfter: cleanRating
+      });
+      if (matchHistory.length > 30)
+        matchHistory = matchHistory.slice(-30);
+      variables.fields.scene_record = JSON.stringify(matchHistory);
+    }
+    variables.fields = variables.fields || {};
+    try {
+      return await graphqlQuery(`
+      mutation($id: ID!, $rating: Int!, $fields: Map) {
+        sceneUpdate(input: {
+          id: $id,
+          rating100: $rating,
+          custom_fields: { partial: $fields }
+        }) {
+          id
+        }
+      }`, variables);
+    } catch (err) {
+      console.error(`[Ascension] GraphQL Update Failed for scene ${id}:`, err);
+      throw err;
+    }
+  }
+  function extractTitleFromFile(sceneObj) {
+    if (!sceneObj || !sceneObj.files || sceneObj.files.length === 0) {
+      return "Unknown Scene";
+    }
+    const file = sceneObj.files[0];
+    if (!file.path) {
+      return "Unknown Scene";
+    }
+    let title = file.path.split(/[\/\\]/).pop();
+    if (title.includes(".")) {
+      title = title.substring(0, title.lastIndexOf("."));
+    }
+    return title || "Unknown Scene";
+  }
+  async function fetchSceneById(id) {
+    const SCENE_COMPLETE_FRAGMENT = `
+    id
+    title
+    rating100
+    custom_fields
+    files {
+      path
+    }
+  `;
+    const query = `query FindSceneComplete($id: ID!) { findScene(id: $id) { ${SCENE_COMPLETE_FRAGMENT} } }`;
+    try {
+      const result = await graphqlQuery(query, { id });
+      return result.findScene;
+    } catch (error) {
+      console.error(`[Ascension] Failed to fetch complete scene data for ID ${id}:`, error);
+      throw error;
+    }
+  }
+  async function updateImageRating(id, rating) {
+    await graphqlQuery(`mutation($i: ImageUpdateInput!) { imageUpdate(input: $i) { id } }`, {
+      i: { id, rating100: Math.max(1, Math.min(100, rating)) }
+    });
+  }
+  async function updatePerformerRating(id, rating, performerObj = null, won = null, opponentId = null, change = null) {
+    if (!id) {
+      console.error("[Ascension] Cannot update performer: ID is missing");
+      return;
+    }
+    let performerName = "Unknown";
+    if (performerObj?.name) {
+      performerName = performerObj.name;
+    } else if (state.currentPair) {
+      if (state.currentPair.left?.id == id)
+        performerName = state.currentPair.left.name;
+      else if (state.currentPair.right?.id == id)
+        performerName = state.currentPair.right.name;
+    }
+    let cleanRating = Math.round(Number(rating));
+    if (isNaN(cleanRating)) {
+      console.warn(`[Ascension] Invalid rating for ${id}, falling back to existing data.`);
+      cleanRating = performerObj?.rating100 || 1;
+    }
+    if (change === null && performerObj && !isNaN(performerObj.rating100)) {
+      change = cleanRating - Math.round(Number(performerObj.rating100));
+    }
+    let updatedPerformerObj = performerObj ? { ...performerObj, rating100: cleanRating } : null;
+    if (performerObj && updatedPerformerObj) {
+      try {
+        const currentStats = parsePerformerEloData(performerObj);
+        const updatedStats = updatePerformerStats(currentStats, won, change);
+        if (updatedStats) {
+          updatedPerformerObj.custom_fields = { ...performerObj.custom_fields };
+          updatedPerformerObj.custom_fields.hotornot_stats = JSON.stringify(updatedStats);
+        }
+      } catch (e) {
+        console.error(`[Ascension] Stats update failed for ${id}:`, e);
+      }
+    }
+    const newTier = getRatingTier(updatedPerformerObj, state.globalPerformerPool);
+    const newTierColor = getTierColor(newTier);
+    const newBattleScore = calculateBattleScore(updatedPerformerObj);
+    const newBattleScoreStr = Number.isFinite(newBattleScore) ? newBattleScore.toFixed(2) : (cleanRating / 10).toFixed(1);
+    const statusText = formatResultStatus(won, change);
+    const statusColor = won === true ? "#4CAF50" : won === false ? "#F44336" : "#9E9E9E";
+    console.log(
+      `%c[Ascension] %cUpdating: %c${performerName || "???"} %c(ID: ${id})%c, %cNew %c${newTier}%c Asc.Score: %c${newBattleScoreStr}%c, %cResult: %c${statusText}`,
+      "color: #1cb4d6; font-weight: bold;",
+      // [Ascension]
+      "color: #1cb4d6;",
+      // Updating:
+      "color: #1cb4d6; font-weight: bold;",
+      // performerName
+      "color: #1cb4d6;",
+      // (ID:
+      "color: #888;",
+      // )
+      `color: ${newTierColor}; font-weight: bold;`,
+      // New
+      `color: ${newTierColor}; font-weight: bold;`,
+      // tier
+      "color: #888;",
+      // Asc.Score:
+      `color: ${newTierColor}; font-weight: bold;`,
+      // score
+      "color: #888;",
+      // ,
+      "color: #1cb4d6;",
+      // Result:
+      `color: ${statusColor}; font-weight: bold;`
+      // WIN/LOSS
+    );
+    const variables = {
+      id: id.toString(),
+      rating: cleanRating,
+      fields: {}
+    };
+    if (performerObj) {
+      try {
+        const currentStats = parsePerformerEloData(performerObj);
+        const updatedStats = updatePerformerStats(currentStats, won, change);
+        if (updatedStats) {
+          const statsToStore = { ...updatedStats };
+          delete statsToStore.performer_record;
+          variables.fields.hotornot_stats = JSON.stringify(statsToStore);
+        }
+      } catch (e) {
+        console.error(`[Ascension] Stats update failed for ${id}:`, e);
+      }
+      let matchHistory = [];
+      try {
+        const rawRecord = performerObj.custom_fields?.performer_record;
+        if (rawRecord) {
+          matchHistory = typeof rawRecord === "string" ? JSON.parse(rawRecord) : rawRecord;
+        }
+      } catch (e) {
+        console.warn(`[Ascension] Failed to parse performer_record for ${id}, resetting history.`);
+        matchHistory = [];
+      }
+      let opponentData = "0:Unknown";
+      if (opponentId) {
+        if (typeof opponentId === "string" && opponentId.includes(":")) {
+          opponentData = opponentId;
+        } else {
+          const oppId = (typeof opponentId === "object" ? opponentId.id : opponentId).toString().replace(/\D/g, "");
+          let oppName = "Unknown";
+          if (opponentId.name) {
+            oppName = opponentId.name;
+          } else if (state.currentPair) {
+            if (state.currentPair.left?.id == oppId)
+              oppName = state.currentPair.left.name;
+            else if (state.currentPair.right?.id == oppId)
+              oppName = state.currentPair.right.name;
+          }
+          opponentData = `${oppId}:${oppName || "Unknown"}`;
+        }
+      }
+      const ascendedRatingAfter = Number.isFinite(newBattleScore) ? Math.round(newBattleScore * 100) / 100 : 0;
+      matchHistory.push({
+        date: (/* @__PURE__ */ new Date()).toISOString(),
+        opponent: opponentData,
+        won,
+        AscRatingAfter: ascendedRatingAfter
+      });
+      if (matchHistory.length > 30)
+        matchHistory = matchHistory.slice(-30);
+      variables.fields.performer_record = JSON.stringify(matchHistory);
+    }
+    variables.fields = variables.fields || {};
+    try {
+      return await graphqlQuery(`
+      mutation($id: ID!, $rating: Int!, $fields: Map) {
+        performerUpdate(input: {
+          id: $id,
+          rating100: $rating,
+          custom_fields: { partial: $fields }
+        }) {
+          id
+        }
+      }`, {
+        id: id.toString(),
+        rating: cleanRating,
+        fields: variables.fields
+      });
+    } catch (err) {
+      console.error(`[Ascension] GraphQL Update Failed for ${id}:`, err);
+      throw err;
+    }
+  }
+  async function undoLastMatch() {
+    if (!state.matchHistory || state.matchHistory.length === 0) {
+      console.log("[Ascension] No match history to undo");
+      return null;
+    }
+    const last = state.matchHistory.pop();
+    console.log("[Ascension] Undoing match:", last);
+    try {
+      await Promise.all([
+        updateItemRatingDirect(last.winnerId, last.winnerOldRating, last.winnerOldStats),
+        updateItemRatingDirect(last.loserId, last.loserOldRating, last.loserOldStats)
+      ]);
+      console.log("[Ascension] Successfully restored ratings and records");
+    } catch (error) {
+      state.matchHistory.push(last);
+      console.error("[Ascension] Failed to restore ratings:", error);
+      throw new Error(`Failed to undo match: ${error.message}`);
+    }
+    if (last.gauntletSnapshot) {
+      const snap = last.gauntletSnapshot;
+      state.gauntletChampion = snap.gauntletChampion;
+      state.gauntletWins = snap.gauntletWins;
+      state.gauntletDefeated = [...snap.gauntletDefeated];
+      state.gauntletFalling = snap.gauntletFalling;
+      state.gauntletFallingItem = snap.gauntletFallingItem ? { ...snap.gauntletFallingItem } : null;
+      console.log("[Ascension] Restored gauntlet state");
+    }
+    let restoredPairSnapshot = null;
+    if (last.pairSnapshot) {
+      const { left, right } = last.pairSnapshot;
+      state.currentPair = { left, right };
+      state.currentRanks = { left: last.pairSnapshot.rankLeft, right: last.pairSnapshot.rankRight };
+      restoredPairSnapshot = last.pairSnapshot;
+      console.log("[Ascension] Restored pair snapshot");
+    }
+    return restoredPairSnapshot || null;
+  }
+  async function updateItemRatingDirect(itemId, rating, statsObj) {
+    const recordKey = getRecordKeyForBattleType(state.battleType);
+    if (state.battleType === "performers" || state.battleType === "scenes") {
+      const fields = {};
+      if (statsObj) {
+        const statsToRestore = { ...statsObj };
+        if (recordKey)
+          delete statsToRestore[recordKey];
+        fields.hotornot_stats = JSON.stringify(statsToRestore);
+        if (recordKey && recordKey in statsObj) {
+          const recordData = statsObj[recordKey];
+          console.log(`[Ascension] Restoring ${recordKey} for ${itemId}:`, recordData);
+          if (recordData !== void 0 && recordData !== null) {
+            fields[recordKey] = Array.isArray(recordData) ? JSON.stringify(recordData) : recordData;
+          } else {
+            fields[recordKey] = "[]";
+          }
+        }
+      }
+      const mutationName = state.battleType === "performers" ? "performerUpdate" : "sceneUpdate";
+      console.log(`[Ascension] Restoring ${state.battleType} ${itemId} with fields:`, fields);
+      await graphqlQuery(`
+      mutation($id: ID!, $rating: Int!, $fields: Map) {
+        ${mutationName}(input: {
+          id: $id,
+          rating100: $rating,
+          custom_fields: { partial: $fields }
+        }) {
+          id
+        }
+      }`, {
+        id: itemId,
+        rating: Math.round(rating),
+        fields
+      });
+    } else if (state.battleType === "images") {
+      await updateImageRating(itemId, rating);
+    } else {
+      console.warn(`[Ascension] Unknown battle type for direct update: ${state.battleType}`);
+    }
+  }
+  async function getHotOrNotConfig() {
+    if (pluginConfigCache)
+      return pluginConfigCache;
+    const result = await graphqlQuery(`query { configuration { plugins } }`);
+    pluginConfigCache = (result.configuration.plugins || {})["HotOrNot"] || {};
+    return pluginConfigCache;
+  }
+  async function isBattleRankBadgeEnabled() {
+    const config = await getHotOrNotConfig();
+    return config.showBattleRankBadge !== false;
+  }
+  var FRAGMENTS, PERFORMER_FRAGMENT, IMAGE_FRAGMENT, SCENE_FRAGMENT, pluginConfigCache;
+  var init_api_client = __esm({
+    "api-client.js"() {
+      init_rating_utils();
+      init_parsers();
+      init_math_utils();
+      init_state();
+      init_scene_handler();
+      FRAGMENTS = {
+        PERFORMER: `id name image_path rating100 details custom_fields birthdate ethnicity country gender height_cm measurements fake_tits scene_count image_count gallery_count tags { name }`,
+        IMAGE: `id rating100 paths { thumbnail image }`,
+        SCENE: `id title date rating100 organized details director files { duration path } paths { screenshot preview } performers { id name image_path rating100 } studio { id name } tags { id name } play_count last_played_at play_duration o_counter custom_fields`
+      };
+      PERFORMER_FRAGMENT = FRAGMENTS.PERFORMER;
+      IMAGE_FRAGMENT = FRAGMENTS.IMAGE;
+      SCENE_FRAGMENT = FRAGMENTS.SCENE;
+      pluginConfigCache = null;
+    }
+  });
+
   // match-handler.js
   var match_handler_exports = {};
   __export(match_handler_exports, {
@@ -3650,6 +7504,16 @@ Match Stats:`;
     }
     const battleScore = calculateBattleScore(performer);
     return Math.round(battleScore * 10);
+  }
+  function updateUndoButtonVisibility() {
+    const btn = document.getElementById("hon-undo-btn");
+    if (!btn)
+      return;
+    if (state.matchHistory && state.matchHistory.length > 0) {
+      btn.classList.remove("hon-action-hidden");
+    } else {
+      btn.classList.add("hon-action-hidden");
+    }
   }
   async function handleChooseItem(event) {
     if (state.disableChoice)
@@ -3670,7 +7534,8 @@ Match Stats:`;
     const loserRank = isLeftWinner ? state.currentRanks.right : state.currentRanks.left;
     if (state.battleType === "images") {
       const outcome2 = await handleComparison(winnerId, loserId, winnerRating, loserRating, null, winnerItem, loserItem);
-      applyVisualFeedback(winnerCard, loserCard, winnerItem, loserItem, winnerDisplayRating, loserDisplayRating, outcome2);
+      await applyVisualFeedback(winnerCard, loserCard, winnerItem, loserItem, winnerDisplayRating, loserDisplayRating, outcome2);
+      updateUndoButtonVisibility();
       setTimeout(() => loadNewPair(), 800);
       return;
     }
@@ -3685,7 +7550,7 @@ Match Stats:`;
         loserItem,
         false
       );
-      applyVisualFeedback(winnerCard, loserCard, winnerItem, loserItem, winnerDisplayRating, loserDisplayRating, outcome2);
+      await applyVisualFeedback(winnerCard, loserCard, winnerItem, loserItem, winnerDisplayRating, loserDisplayRating, outcome2);
       return outcome2;
     };
     if (state.currentMode === "gauntlet") {
@@ -3693,6 +7558,7 @@ Match Stats:`;
         const outcome2 = await recordModeOutcome();
         winnerItem.rating100 = outcome2.newWinnerRating;
         loserItem.rating100 = outcome2.newLoserRating;
+        updateUndoButtonVisibility();
         if (winnerId === state.gauntletFallingItem.id) {
           const placedRank = isLeftWinner ? state.currentRanks.left : state.currentRanks.right;
           setTimeout(() => {
@@ -3711,6 +7577,7 @@ Match Stats:`;
         state.gauntletChampion = winnerItem;
         state.gauntletWins++;
         state.gauntletDefeated.push(loserId);
+        updateUndoButtonVisibility();
         if (state.gauntletWins >= state.totalItemsCount - 1) {
           setTimeout(() => {
             const victoryScreen = createVictoryScreen(state.gauntletChampion, state.battleType, state.gauntletWins, state.totalItemsCount);
@@ -3737,6 +7604,7 @@ Match Stats:`;
         state.gauntletDefeated = [];
         state.gauntletFalling = true;
         state.gauntletFallingItem = loserItem;
+        updateUndoButtonVisibility();
         setTimeout(() => loadNewPair(), 800);
         return;
       }
@@ -3758,6 +7626,7 @@ Match Stats:`;
         state.gauntletWins = 1;
         state.gauntletDefeated = [loserId];
       }
+      updateUndoButtonVisibility();
       setTimeout(() => loadNewPair(), 800);
       return;
     }
@@ -3771,7 +7640,8 @@ Match Stats:`;
       loserItem,
       false
     );
-    applyVisualFeedback(winnerCard, loserCard, winnerItem, loserItem, winnerDisplayRating, loserDisplayRating, outcome);
+    await applyVisualFeedback(winnerCard, loserCard, winnerItem, loserItem, winnerDisplayRating, loserDisplayRating, outcome);
+    updateUndoButtonVisibility();
     setTimeout(() => loadNewPair(), 800);
   }
   async function handleSkip(event) {
@@ -3799,8 +7669,9 @@ Match Stats:`;
       state.skippedIds = state.skippedIds.slice(-100);
     }
     loadNewPair();
+    updateUndoButtonVisibility();
   }
-  function applyVisualFeedback(winnerCard, loserCard, winnerItem, loserItem, winnerDisplayRating, loserDisplayRating, outcome) {
+  async function applyVisualFeedback(winnerCard, loserCard, winnerItem, loserItem, winnerDisplayRating, loserDisplayRating, outcome) {
     winnerCard.classList.add("hon-winner");
     if (loserCard)
       loserCard.classList.add("hon-loser");
@@ -3830,6 +7701,12 @@ Match Stats:`;
     const winnerDisplayChange = outcome.winnerChange;
     const loserNewDisplayRating = loserIsBattleScore ? loserDisplayRating + outcome.loserChange : outcome.newLoserRating;
     const loserDisplayChange = outcome.loserChange;
+    if (state.battleType === "performers") {
+      await checkAndShowTierChange(winnerCard, winnerItem.rating100, outcome.newWinnerRating, winnerItem);
+      if (loserCard) {
+        await checkAndShowTierChange(loserCard, loserItem.rating100, outcome.newLoserRating, loserItem);
+      }
+    }
     showRatingAnimation(winnerCard, winnerDisplayRating, winnerNewDisplayRating, winnerDisplayChange, true);
     if (loserCard) {
       showRatingAnimation(loserCard, loserDisplayRating, loserNewDisplayRating, loserDisplayChange, false);
@@ -3848,13 +7725,14 @@ Match Stats:`;
     const undoBtn = document.getElementById("hon-undo-btn");
     if (undoBtn) {
       undoBtn.disabled = true;
-      undoBtn.textContent = "\u{1F504}";
+      undoBtn.textContent = "\u21BA";
     }
     try {
-      console.log("[Ascension] Starting undo operation...");
       const pairSnapshot = await undoLastMatch();
+      if (pairSnapshot?.left?.name && pairSnapshot?.right?.name) {
+        console.log(`[Ascension] Undoing match: ${pairSnapshot.left.name} (ID: ${pairSnapshot.left.id}) vs ${pairSnapshot.right.name} (ID: ${pairSnapshot.right.id})`);
+      }
       if (pairSnapshot?.left && pairSnapshot?.right) {
-        console.log("[Ascension] Re-rendering previous pair from snapshot");
         const { renderCard: renderCard2 } = await Promise.resolve().then(() => (init_ui_manager(), ui_manager_exports));
         const { attachBattleListeners: attachBattleListeners2 } = await Promise.resolve().then(() => (init_battle_engine(), battle_engine_exports));
         const area = document.getElementById("hon-comparison-area");
@@ -3888,8 +7766,8 @@ Match Stats:`;
       const btn = document.getElementById("hon-undo-btn");
       if (btn) {
         btn.disabled = false;
-        btn.textContent = "\u21A9";
-        btn.style.display = state.matchHistory && state.matchHistory.length > 0 ? "inline-block" : "none";
+        btn.textContent = "Undo Match";
+        updateUndoButtonVisibility();
       }
     }
   }
@@ -3900,6 +7778,7 @@ Match Stats:`;
       init_ui_manager();
       init_battle_engine();
       init_rating_utils();
+      init_ui_badge();
     }
   });
 
@@ -3914,15 +7793,84 @@ Match Stats:`;
     fetchGauntletPairScenes: () => fetchGauntletPairScenes,
     fetchPair: () => fetchPair,
     fetchRandomScenes: () => fetchRandomScenes,
-    fetchSceneCount: () => fetchSceneCount,
     fetchSwissPairImages: () => fetchSwissPairImages,
     fetchSwissPairPerformers: () => fetchSwissPairPerformers,
     fetchSwissPairScenes: () => fetchSwissPairScenes,
     handleMatchmakingLogic: () => handleMatchmakingLogic,
-    loadNewPair: () => loadNewPair
+    loadNewPair: () => loadNewPair,
+    startSceneModeForCurrentPerformer: () => startSceneModeForCurrentPerformer
   });
   function isNonVotingClick(e) {
     return !!e.target.closest("a.hon-scene-link, a.hon-performer-link, .hon-tags-more, .hon-focus-btn");
+  }
+  function getSceneDuration(scene) {
+    if (!scene)
+      return 0;
+    if (typeof scene.duration === "number" && !isNaN(scene.duration))
+      return scene.duration;
+    if (scene.files && scene.files.length > 0) {
+      const f = scene.files[0];
+      if (typeof f.duration === "number" && !isNaN(f.duration))
+        return f.duration;
+    }
+    return 0;
+  }
+  function scenePassesMinDuration(scene) {
+    const minDuration = getSceneMinDuration();
+    if (!minDuration || minDuration <= 0)
+      return true;
+    return getSceneDuration(scene) >= minDuration;
+  }
+  function getEffectiveSceneFilter() {
+    const savedFilter = getSceneFilterOverrideEnabled() ? state.cachedSceneFilter : null;
+    const pagePerformerId = getCurrentPagePerformerId();
+    if (!pagePerformerId) {
+      return savedFilter;
+    }
+    const performerSceneFilter = {
+      performers: { value: [pagePerformerId], modifier: "INCLUDES" }
+    };
+    if (!savedFilter) {
+      return performerSceneFilter;
+    }
+    return {
+      AND: [savedFilter, performerSceneFilter]
+    };
+  }
+  function loadSceneCooldownState() {
+    try {
+      const recentRaw = localStorage.getItem(SCENE_RECENT_LS_KEY);
+      if (recentRaw) {
+        const parsed = JSON.parse(recentRaw);
+        if (Array.isArray(parsed)) {
+          state.recentlySelectedScenes = parsed.filter((entry) => {
+            const ts = entry?.timestamp || 0;
+            return Date.now() - ts < SCENE_RECENT_COOLDOWN_MS;
+          });
+        }
+      }
+    } catch (err) {
+      console.warn("[Ascension] Could not load persisted scene cooldown:", err);
+    }
+    try {
+      const sessionRaw = localStorage.getItem(SCENE_SESSION_LS_KEY);
+      if (sessionRaw) {
+        const parsed = JSON.parse(sessionRaw);
+        if (parsed && typeof parsed === "object") {
+          state.sessionSceneCounts = {};
+          const now = Date.now();
+          for (const [sceneId, data] of Object.entries(parsed)) {
+            if (!data || typeof data !== "object")
+              continue;
+            if (now - (data.lastSeenAt || 0) < SCENE_SESSION_COOLDOWN_MS) {
+              state.sessionSceneCounts[sceneId] = data;
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("[Ascension] Could not load persisted scene session counts:", err);
+    }
   }
   function attachBattleListeners(area) {
     if (area._battleCleanup) {
@@ -4038,11 +7986,11 @@ Match Stats:`;
               e.stopPropagation();
               handleChooseItem(e);
             };
-            const sceneBody = card.querySelector(".hon-scene-body");
-            if (sceneBody) {
-              sceneBody.addEventListener("click", clickHandler);
-              cleanupFunctions2.push(() => sceneBody.removeEventListener("click", clickHandler));
-            }
+            const winnerTargets = card.querySelectorAll("[data-winner]");
+            winnerTargets.forEach((target) => {
+              target.addEventListener("click", clickHandler);
+              cleanupFunctions2.push(() => target.removeEventListener("click", clickHandler));
+            });
             const focusBtn = card.querySelector(".hon-focus-btn");
             if (focusBtn) {
               const focusHandler2 = (e) => {
@@ -4069,15 +8017,15 @@ Match Stats:`;
         }
       }
     } else {
-      const sceneBodies = area.querySelectorAll(".hon-scene-body");
-      sceneBodies.forEach((body) => {
+      const winnerTargets = area.querySelectorAll("[data-winner]");
+      winnerTargets.forEach((target) => {
         const clickHandler = (e) => {
           if (isNonVotingClick(e))
             return;
           handleChooseItem(e);
         };
-        body.addEventListener("click", clickHandler);
-        cleanupFunctions2.push(() => body.removeEventListener("click", clickHandler));
+        target.addEventListener("click", clickHandler);
+        cleanupFunctions2.push(() => target.removeEventListener("click", clickHandler));
       });
       const cards = area.querySelectorAll(".hon-scene-card");
       cards.forEach((card) => {
@@ -4113,7 +8061,7 @@ Match Stats:`;
     const sceneCards = area.querySelectorAll(".hon-scene-card[data-scene-id]");
     sceneCards.forEach((card) => {
       const sceneImageContainer = card.querySelector(".hon-scene-image-container");
-      if (sceneImageContainer && sceneImageContainer.dataset.sceneUrl) {
+      if (sceneImageContainer && sceneImageContainer.dataset.sceneUrl && !card.classList.contains("hon-picture-only")) {
         const sceneUrl = sceneImageContainer.dataset.sceneUrl;
         const imageContainerClickHandler = (e) => {
           e.stopPropagation();
@@ -4199,11 +8147,30 @@ Match Stats:`;
     }
     return { items: await fetchRandomPerformers(2), ranks: [null, null], isVictory: false };
   }
+  async function startSceneModeForCurrentPerformer() {
+    const pagePerformerId = getCurrentPagePerformerId();
+    if (!pagePerformerId)
+      return;
+    state.battleType = "scenes";
+    state.scenePerformerId = pagePerformerId;
+    state.currentPair = null;
+    state.currentRanks = null;
+    const area = document.getElementById("hon-comparison-area");
+    if (area) {
+      if (area._battleCleanup)
+        area._battleCleanup();
+      area.innerHTML = "";
+    }
+    await loadNewPair();
+  }
   async function loadNewPair() {
     state.disableChoice = false;
     const area = document.getElementById("hon-comparison-area");
     if (!area)
       return;
+    if (state.battleType === "scenes" && getCurrentPagePerformerId()) {
+      state.scenePerformerId = getCurrentPagePerformerId();
+    }
     const undoBtn = document.getElementById("hon-undo-btn");
     if (undoBtn) {
       undoBtn.style.display = state.matchHistory && state.matchHistory.length > 0 ? "inline-block" : "none";
@@ -4211,6 +8178,13 @@ Match Stats:`;
       undoBtn.textContent = "\u21A9";
     }
     if ((state.currentMode === "gauntlet" || state.currentMode === "champion") && state.battleType === "performers" && !state.gauntletChampion && !state.gauntletFalling) {
+      const pagePerformerId = getCurrentPagePerformerId();
+      if (pagePerformerId) {
+        if (area._battleCleanup)
+          area._battleCleanup();
+        Promise.resolve().then(() => (init_gauntlet_selection(), gauntlet_selection_exports)).then((m) => m.startGauntletWithPerformerId(pagePerformerId));
+        return;
+      }
       if (area._battleCleanup)
         area._battleCleanup();
       showPerformerSelection();
@@ -4410,37 +8384,68 @@ Match Stats:`;
   }
   async function fetchRandomScenes(count = 2) {
     const sceneQuery = `
-    query FindRandomScenes($filter: FindFilterType) {
-      findScenes(filter: $filter) {
+    query FindRandomScenes($filter: FindFilterType, $scene_filter: SceneFilterType) {
+      findScenes(filter: $filter, scene_filter: $scene_filter) {
         scenes { ${SCENE_FRAGMENT} }
       }
     }
   `;
-    const result = await graphqlQuery(sceneQuery, {
+    const variables = {
       filter: {
-        per_page: 100,
+        per_page: 200,
         sort: "random"
       }
-    });
+    };
+    const sceneFilter = getEffectiveSceneFilter();
+    if (sceneFilter)
+      variables.scene_filter = sceneFilter;
+    const result = await graphqlQuery(sceneQuery, variables);
     const allScenes = result?.findScenes?.scenes || [];
-    if (allScenes.length < 2) {
-      throw new Error("Not enough scenes for comparison.");
+    const eligibleScenes = allScenes.filter(scenePassesMinDuration);
+    if (eligibleScenes.length < 2) {
+      throw new Error("Not enough scenes above the minimum duration for comparison.");
     }
-    const shuffled = [...allScenes].sort(() => Math.random() - 0.5);
-    return shuffled.slice(0, 2);
+    let pool = eligibleScenes.filter((scene) => !isSceneSessionBlocked(scene.id) && !isSceneRecentlySelected(scene.id));
+    if (pool.length < count) {
+      pool = eligibleScenes.filter((scene) => !isSceneSessionBlocked(scene.id));
+    }
+    if (pool.length < count) {
+      pool = eligibleScenes;
+    }
+    const shuffled = shuffleArray2(pool);
+    const selected = [shuffled[0], shuffled[1]];
+    const previousSceneId = state.currentPair?.left?.id || state.currentPair?.right?.id;
+    const previousScene = previousSceneId ? state.currentPair?.left?.id === previousSceneId ? state.currentPair?.left : state.currentPair?.right : null;
+    for (let i = 2; i < shuffled.length; i++) {
+      const first = selected[0];
+      const second = selected[1];
+      if (scenesSharePerformer(first, second) || previousScene && scenesSharePerformer(previousScene, second)) {
+        selected[1] = shuffled[i];
+      } else {
+        break;
+      }
+    }
+    selected.forEach((scene) => {
+      trackSceneSelection(scene.id);
+      addToRecentlySelectedScenes(scene.id, 200);
+    });
+    return selected.slice(0, count);
   }
   async function fetchAllScenesSorted() {
     const queryTemplate = `
-    query FindAllScenes($filter: FindFilterType) {
-      findScenes(filter: $filter) {
+    query FindAllScenes($filter: FindFilterType, $scene_filter: SceneFilterType) {
+      findScenes(filter: $filter, scene_filter: $scene_filter) {
         scenes { ${SCENE_FRAGMENT} }
       }
     }
   `;
-    const scenes = await fetchAllItems(queryTemplate, {
-      filter: { sort: "rating100", direction: "DESC" }
-    });
-    return scenes.sort((a, b) => {
+    const variablesBase = { filter: { sort: "rating100", direction: "DESC" } };
+    const sceneFilter = getEffectiveSceneFilter();
+    if (sceneFilter)
+      variablesBase.scene_filter = sceneFilter;
+    const scenes = await fetchAllItems(queryTemplate, variablesBase);
+    const eligible = scenes.filter(scenePassesMinDuration);
+    return eligible.sort((a, b) => {
       const ratingDiff = (b.rating100 ?? 1) - (a.rating100 ?? 1);
       if (ratingDiff !== 0)
         return ratingDiff;
@@ -4453,40 +8458,53 @@ Match Stats:`;
     });
   }
   async function fetchSwissPairScenes() {
+    const sceneFilter = getEffectiveSceneFilter();
     const totalScenes = await fetchSceneCount();
     const config = getSceneSelectionConfig(totalScenes);
     let sceneMetadata = state.sceneMetadataCache;
     state.sceneMetadataRefreshCounter = (state.sceneMetadataRefreshCounter || 0) + 1;
     if (!sceneMetadata || state.sceneMetadataRefreshCounter > config.metadataRefreshInterval) {
-      sceneMetadata = await fetchAllSceneMetadata();
+      sceneMetadata = await fetchAllSceneMetadata(sceneFilter);
       state.sceneMetadataCache = sceneMetadata;
       state.sceneMetadataRefreshCounter = 0;
     }
-    if (sceneMetadata.length < 2) {
+    const normalizedMetadata = sceneMetadata.map((scene) => ({
+      ...scene,
+      rating100: scene.rating100 ?? 1
+    }));
+    const eligibleMetadata = normalizedMetadata.filter(scenePassesMinDuration);
+    if (eligibleMetadata.length < 2) {
       return { items: await fetchRandomScenes(2), ranks: [null, null] };
     }
-    const avgMatches = calculateAverageMatches(sceneMetadata.map((scene) => parsePerformerEloData(scene)));
-    const weightedScenes = sceneMetadata.map((scene) => {
+    const sceneBands = computeSceneRatingBands(eligibleMetadata);
+    const avgMatches = calculateAverageMatches(
+      eligibleMetadata.map((scene) => parsePerformerEloData(scene))
+    );
+    const weightedScenes = eligibleMetadata.map((scene) => {
       const stats = parsePerformerEloData(scene);
       const rawMatches = stats.total_matches || 0;
       const cappedMatches = Math.min(rawMatches, config.lowMatchThreshold);
       const recencyWeight = getSceneRecencyWeight(scene);
       const baseWeight = Math.pow(recencyWeight, 3) + Math.random() * 0.01;
       const lowMatchBoost = getLowMatchBoost({ ...scene, total_matches: cappedMatches }, avgMatches);
-      const distributionBoost = getMatchCountDistributionBoost(scene, sceneMetadata);
-      const sessionPenalty = getSceneSessionPenalty(scene.id);
-      const finalWeight = baseWeight * lowMatchBoost * distributionBoost * sessionPenalty;
-      return {
-        scene,
-        weight: finalWeight,
-        rating: scene.rating100 || 1,
-        matches: rawMatches,
-        recencyWeight
-      };
+      const distributionBoost = getMatchCountDistributionBoost(scene, eligibleMetadata);
+      const finalWeight = baseWeight * lowMatchBoost * distributionBoost;
+      return { scene, weight: finalWeight, rating: scene.rating100 || 1, matches: rawMatches };
     });
     weightedScenes.sort((a, b) => b.weight - a.weight);
-    const seedWeights = weightedScenes.map((item) => item.weight);
-    const seedItem = weightedRandomSelect(weightedScenes, seedWeights) || weightedScenes[0];
+    const isSceneSelectable = (scene, allowHardRepeat = false) => {
+      if (isSceneOnCooldown(scene.id) || isSceneRecentlySelected(scene.id))
+        return false;
+      if (isSceneSessionBlocked(scene.id))
+        return false;
+      if (!allowHardRepeat && isSceneHardExcluded(scene))
+        return false;
+      return true;
+    };
+    const selectableWeightedScenes = weightedScenes.filter((item) => isSceneSelectable(item.scene));
+    const seedPool = selectableWeightedScenes.length >= 2 ? selectableWeightedScenes : weightedScenes;
+    const seedWeights = seedPool.map((item) => item.weight);
+    const seedItem = weightedRandomSelect(seedPool, seedWeights) || seedPool[0];
     const seedSceneMeta = seedItem.scene;
     const seedRating = seedSceneMeta.rating100 || 1;
     const seedMatches = parsePerformerEloData(seedSceneMeta).total_matches || 0;
@@ -4500,26 +8518,15 @@ Match Stats:`;
     } else {
       ratingWindow = config.ratingWindowMax;
     }
-    const isSceneHardExcluded = (scene) => {
-      const stats = parsePerformerEloData(scene);
-      if (!stats.last_match)
-        return false;
-      const lastMatch = new Date(stats.last_match).getTime();
-      if (isNaN(lastMatch))
-        return false;
-      const hoursSince = (Date.now() - lastMatch) / (1e3 * 60 * 60);
-      return hoursSince < config.hardRepeatWindowHours;
-    };
     function filterCandidates(pool, window2, allowHardRepeat = false) {
-      return pool.filter((item) => {
+      const base = pool.filter((item) => {
         if (item.scene.id === seedSceneMeta.id)
           return false;
-        if (isSceneOnCooldown(item.scene.id) || isSceneRecentlySelected(item.scene.id))
-          return false;
-        if (!allowHardRepeat && isSceneHardExcluded(item.scene))
+        if (!isSceneSelectable(item.scene, allowHardRepeat))
           return false;
         return Math.abs(seedRating - item.rating) <= window2;
       });
+      return widenBandWindowUntilMinimum(base, seedSceneMeta, sceneBands, totalScenes);
     }
     let candidates = filterCandidates(weightedScenes, ratingWindow);
     if (candidates.length < 10) {
@@ -4539,10 +8546,10 @@ Match Stats:`;
       state.recentlySelectedScenes = [];
       state.sessionSceneCounts = {};
       state.sceneMetadataRefreshCounter = config.metadataRefreshInterval + 1;
-      sceneMetadata = await fetchAllSceneMetadata();
+      sceneMetadata = await fetchAllSceneMetadata(sceneFilter);
       state.sceneMetadataCache = sceneMetadata;
       state.sceneMetadataRefreshCounter = 0;
-      const refreshedWeighted = sceneMetadata.map((scene) => {
+      const refreshedWeighted = sceneMetadata.filter(scenePassesMinDuration).map((scene) => {
         const stats = parsePerformerEloData(scene);
         const rawMatches = stats.total_matches || 0;
         const cappedMatches = Math.min(rawMatches, config.lowMatchThreshold);
@@ -4559,6 +8566,7 @@ Match Stats:`;
           return false;
         return Math.abs(seedRating - item.rating) <= ratingWindow * 3;
       });
+      candidates = widenBandWindowUntilMinimum(candidates, seedSceneMeta, sceneBands, totalScenes);
     }
     if (candidates.length === 0) {
       const fallback = weightedScenes.find((item) => item.scene.id !== seedSceneMeta.id);
@@ -4566,52 +8574,102 @@ Match Stats:`;
       console.warn("[Ascension] Scene opponent selection fell back to last-resort");
     }
     candidates.sort((a, b) => b.weight - a.weight);
-    const topCandidates = candidates.slice(0, 20);
+    const topCandidates = candidates.slice(0, Math.min(candidates.length, 60));
     const candidateIds = [seedSceneMeta.id, ...topCandidates.map((c) => c.scene.id)];
     const fullScenes = await fetchScenesByIds(candidateIds);
     const seedFull = fullScenes.find((s) => s.id === seedSceneMeta.id) || seedSceneMeta;
     const candidatesWithSimilarity = topCandidates.map((item) => {
       const full = fullScenes.find((s) => s.id === item.scene.id);
       if (!full)
-        return { ...item, similarity: 0 };
+        return { ...item, similarity: 1, isTooSimilar: true };
       const similarity = calculateSceneSimilarity(seedFull, full);
-      const similarityPenalty = Math.max(config.maxSimilarityPenalty, 1 - similarity * config.similarityPenalty);
+      let similarityPenalty;
+      if (similarity >= config.similarityHardThreshold) {
+        similarityPenalty = 0;
+      } else if (similarity >= config.similaritySoftThreshold) {
+        similarityPenalty = Math.max(0.05, 1 - similarity * 1.5);
+      } else {
+        similarityPenalty = Math.max(config.maxSimilarityPenalty, 1 - similarity * config.similarityPenalty);
+      }
       return {
         ...item,
         weight: item.weight * similarityPenalty,
-        similarity
+        similarity,
+        isTooSimilar: similarity >= config.similarityHardThreshold
       };
-    });
+    }).filter((c) => !c.isTooSimilar);
+    if (candidatesWithSimilarity.length === 0) {
+      const fallbackCandidates = topCandidates.map((item) => {
+        const full = fullScenes.find((s) => s.id === item.scene.id);
+        if (!full)
+          return { ...item, similarity: 1 };
+        const similarity = calculateSceneSimilarity(seedFull, full);
+        return { ...item, weight: item.weight, similarity };
+      }).sort((a, b) => (a.similarity ?? 1) - (b.similarity ?? 1)).slice(0, Math.max(1, Math.ceil(topCandidates.length / 2)));
+      candidatesWithSimilarity.push(...fallbackCandidates);
+    }
+    const previousSceneId = state.currentPair?.left?.id || state.currentPair?.right?.id;
+    const previousScene = previousSceneId ? fullScenes.find((s) => s.id === previousSceneId) || state.currentPair?.left || state.currentPair?.right : null;
+    if (previousScene) {
+      for (const candidate of candidatesWithSimilarity) {
+        const full = fullScenes.find((s) => s.id === candidate.scene.id) || candidate.scene;
+        if (scenesSharePerformer(previousScene, full)) {
+          candidate.weight *= 0.05;
+        }
+      }
+    }
     const opponentWeights = candidatesWithSimilarity.map((c) => c.weight);
     const opponentItem = weightedRandomSelect(candidatesWithSimilarity, opponentWeights);
     const opponentSceneMeta = opponentItem ? opponentItem.scene : candidatesWithSimilarity[0].scene;
     const seedScene = fullScenes.find((s) => s.id === seedSceneMeta.id) || seedSceneMeta;
     const opponentScene = fullScenes.find((s) => s.id === opponentSceneMeta.id) || opponentSceneMeta;
+    const finalSimilarity = calculateSceneSimilarity(seedScene, opponentScene);
+    if (finalSimilarity >= config.similarityHardThreshold && candidatesWithSimilarity.length > 1) {
+      const betterCandidate = candidatesWithSimilarity.filter((c) => c.scene.id !== opponentScene.id).sort((a, b) => (a.similarity ?? 1) - (b.similarity ?? 1))[0];
+      if (betterCandidate) {
+        const betterScene = fullScenes.find((s) => s.id === betterCandidate.scene.id) || betterCandidate.scene;
+        console.warn(`[Ascension] Final scene pair too similar (${finalSimilarity.toFixed(2)}); switching opponent to less similar scene`);
+        trackSceneSelection(betterScene.id);
+        addToRecentlySelectedScenes(betterScene.id, config.recentCooldownSize);
+        return { items: [seedScene, betterScene], ranks: [null, null] };
+      }
+    }
     trackSceneSelection(seedScene.id);
     trackSceneSelection(opponentScene.id);
     addToRecentlySelectedScenes(seedScene.id, config.recentCooldownSize);
     addToRecentlySelectedScenes(opponentScene.id, config.recentCooldownSize);
     return { items: [seedScene, opponentScene], ranks: [null, null] };
   }
-  async function fetchSceneCount() {
-    const result = await graphqlQuery(`query { findScenes(filter: { per_page: 0 }) { count } }`);
-    return result.findScenes.count;
-  }
   async function fetchGauntletPairScenes() {
-    const result = await graphqlQuery(`query FindScenesByRating($filter: FindFilterType) {
-    findScenes(filter: $filter) { scenes { ${SCENE_FRAGMENT} } }
-  }`, { filter: { per_page: -1, sort: "rating100", direction: "DESC" } });
-    const scenes = result.findScenes.scenes || [];
+    const sceneFilter = getEffectiveSceneFilter();
+    const variables = { filter: { per_page: -1, sort: "rating100", direction: "DESC" } };
+    if (sceneFilter)
+      variables.scene_filter = sceneFilter;
+    const queryResult = await graphqlQuery(`
+    query FindScenesByRating($filter: FindFilterType, $scene_filter: SceneFilterType) {
+      findScenes(filter: $filter, scene_filter: $scene_filter) { scenes { ${SCENE_FRAGMENT} } }
+    }
+  `, variables);
+    const allScenes = queryResult.findScenes.scenes || [];
+    const scenes = allScenes.filter(scenePassesMinDuration);
     state.totalItemsCount = scenes.length;
     if (scenes.length < 2)
       return { items: await fetchRandomScenes(2), ranks: [null, null], isVictory: false };
-    return handleMatchmakingLogic(scenes, "scenes");
+    const pairResult = handleMatchmakingLogic(scenes, "scenes");
+    return await postProcessSceneGauntletPair(pairResult, scenes);
   }
   async function fetchChampionPairScenes() {
-    const result = await graphqlQuery(`query FindScenesByRating($filter: FindFilterType) {
-    findScenes(filter: $filter) { scenes { ${SCENE_FRAGMENT} } }
-  }`, { filter: { per_page: -1, sort: "rating100", direction: "DESC" } });
-    const scenes = result.findScenes.scenes || [];
+    const sceneFilter = getEffectiveSceneFilter();
+    const variables = { filter: { per_page: -1, sort: "rating100", direction: "DESC" } };
+    if (sceneFilter)
+      variables.scene_filter = sceneFilter;
+    const queryResult = await graphqlQuery(`
+    query FindScenesByRating($filter: FindFilterType, $scene_filter: SceneFilterType) {
+      findScenes(filter: $filter, scene_filter: $scene_filter) { scenes { ${SCENE_FRAGMENT} } }
+    }
+  `, variables);
+    const allScenes = queryResult.findScenes.scenes || [];
+    const scenes = allScenes.filter(scenePassesMinDuration);
     state.totalItemsCount = scenes.length;
     if (scenes.length < 2)
       return { items: await fetchRandomScenes(2), ranks: [null, null] };
@@ -4619,7 +8677,8 @@ Match Stats:`;
       const shuffled = [...scenes].sort(() => Math.random() - 0.5);
       return { items: [shuffled[0], shuffled[1]], ranks: [null, null] };
     }
-    return handleMatchmakingLogic(scenes, "scenes");
+    const pairResult = handleMatchmakingLogic(scenes, "scenes");
+    return await postProcessSceneGauntletPair(pairResult, scenes);
   }
   function canBattleByTier(tier1, tier2) {
     const restrictedTiers = ["S-Tier", "A-Tier"];
@@ -4671,19 +8730,6 @@ Match Stats:`;
       state.recentlySelectedScenes.shift();
     }
   }
-  function getSceneSessionPenalty(sceneId) {
-    if (!state.sessionSceneCounts) {
-      state.sessionSceneCounts = {};
-    }
-    const count = state.sessionSceneCounts[sceneId] || 0;
-    if (count > 2)
-      return 0.1;
-    if (count > 1)
-      return 0.3;
-    if (count > 0)
-      return 0.6;
-    return 1;
-  }
   function trackSceneSelection(sceneId) {
     if (!state.sessionSceneCounts) {
       state.sessionSceneCounts = {};
@@ -4697,6 +8743,58 @@ Match Stats:`;
         delete state.sessionSceneCounts[sortedByCount[i]];
       }
     }
+  }
+  function scenesSharePerformer(sceneA, sceneB) {
+    const performersA = new Set((sceneA.performers || []).map((p) => p?.id).filter(Boolean));
+    const performersB = new Set((sceneB.performers || []).map((p) => p?.id).filter(Boolean));
+    if (performersA.size === 0 || performersB.size === 0)
+      return false;
+    for (const id of performersA) {
+      if (performersB.has(id))
+        return true;
+    }
+    return false;
+  }
+  function isSceneSessionBlocked(sceneId) {
+    if (!state.sessionSceneCounts)
+      return false;
+    const count = state.sessionSceneCounts[sceneId] || 0;
+    return count >= 3;
+  }
+  async function postProcessSceneGauntletPair(result, allScenes) {
+    if (!result.items || result.items.length !== 2 || result.isVictory || result.isPlacement) {
+      return result;
+    }
+    const [seedScene, opponentScene] = result.items;
+    const config = getSceneSelectionConfig(allScenes.length);
+    const initialSimilarity = calculateSceneSimilarity(seedScene, opponentScene);
+    if (initialSimilarity < config.similarityHardThreshold)
+      return result;
+    const fullScenes = await fetchScenesByIds([seedScene.id, opponentScene.id]);
+    const seedFull = fullScenes.find((s) => s.id === seedScene.id) || seedScene;
+    const opponentFull = fullScenes.find((s) => s.id === opponentScene.id) || opponentScene;
+    const fullSimilarity = calculateSceneSimilarity(seedFull, opponentFull);
+    if (fullSimilarity < config.similarityHardThreshold)
+      return result;
+    const candidateIds = allScenes.filter((s) => s.id !== seedScene.id && !state.gauntletDefeated.includes(s.id) && !state.skippedIds.includes(s.id)).slice(0, 40).map((s) => s.id);
+    if (candidateIds.length === 0)
+      return result;
+    const candidateFullScenes = await fetchScenesByIds(candidateIds);
+    const better = candidateFullScenes.map((full) => ({ full, sim: calculateSceneSimilarity(seedFull, full) })).filter(({ sim }) => sim < config.similarityHardThreshold).sort((a, b) => a.sim - b.sim)[0];
+    if (better) {
+      const seedRank = allScenes.findIndex((s) => s.id === seedScene.id) + 1;
+      const betterRank = allScenes.findIndex((s) => s.id === better.full.id) + 1;
+      return { items: [seedScene, better.full], ranks: [seedRank, betterRank], isVictory: false };
+    }
+    return result;
+  }
+  function shuffleArray2(array) {
+    const newArray = [...array];
+    for (let i = newArray.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [newArray[i], newArray[j]] = [newArray[j], newArray[i]];
+    }
+    return newArray;
   }
   function getTierFilteredPerformers(allPerformers, focusTier, tierPool) {
     if (focusTier === "any")
@@ -4785,6 +8883,110 @@ Match Stats:`;
       };
     });
   }
+  function createWeightedPool(performers, tierPool, focusTier) {
+    let tierFilteredPerformers = performers;
+    if (focusTier === "custom") {
+      tierFilteredPerformers = performers.filter((p) => performerMatchesSelectedTiers(p, tierPool));
+    } else if (focusTier !== "any") {
+      tierFilteredPerformers = getTierFilteredPerformers(performers, focusTier, tierPool);
+    }
+    const avgMatches = calculateAverageMatches(tierFilteredPerformers);
+    const weightMap = /* @__PURE__ */ new Map();
+    const eligiblePerformers = [];
+    const backupPerformers = [];
+    for (const p of tierFilteredPerformers) {
+      const cacheKey = `${p.id}-${p.last_match || "null"}`;
+      let weightData;
+      if (weightMap.has(cacheKey)) {
+        weightData = weightMap.get(cacheKey);
+      } else {
+        const stats2 = parsePerformerEloData(p);
+        const rawMatches = stats2.total_matches || 0;
+        const cappedMatches = Math.min(rawMatches, 10);
+        const baseWeight = Math.pow(getRecencyWeight(p), 3) + Math.random() * 0.01;
+        const lowMatchBoost = getLowMatchBoost({ ...p, total_matches: cappedMatches }, avgMatches);
+        const matchDistributionBoost = getMatchCountDistributionBoost(p, tierFilteredPerformers);
+        const sessionMatchPenalty = getSessionMatchPenalty(p.id);
+        const finalWeight = baseWeight * lowMatchBoost * matchDistributionBoost * sessionMatchPenalty;
+        weightData = {
+          p,
+          weight: finalWeight,
+          rating: p.rating100 || 1,
+          matches: rawMatches,
+          cappedMatches
+        };
+        weightMap.set(cacheKey, weightData);
+      }
+      const stats = parsePerformerEloData(weightData.p);
+      if (focusTier === "newcomers") {
+        if (weightData.matches < 6) {
+          if (!isPerformerOnCooldown(weightData.p.id) && !isPerformerRecentlySelected(weightData.p.id)) {
+            eligiblePerformers.push(weightData);
+          }
+        }
+        backupPerformers.push(weightData);
+      } else {
+        const isUnrated = stats.total_matches === 0;
+        const isHighWeight = weightData.weight > 1;
+        const isUndermatched = weightData.matches > 0 && weightData.matches < avgMatches * 0.2;
+        if (focusTier === "any" || focusTier === "custom") {
+          backupPerformers.push(weightData);
+        }
+        if (isUnrated || isHighWeight || isUndermatched) {
+          if (!isPerformerOnCooldown(weightData.p.id) && !isPerformerRecentlySelected(weightData.p.id)) {
+            eligiblePerformers.push(weightData);
+          }
+        }
+      }
+    }
+    if ((focusTier === "any" || focusTier === "custom") && eligiblePerformers.length < 2 && backupPerformers.length >= 2) {
+      const availablePerformers = backupPerformers.filter((item) => !isPerformerOnCooldown(item.p.id) && !isPerformerRecentlySelected(item.p.id)).sort((a, b) => b.weight - a.weight);
+      if (availablePerformers.length >= 2) {
+        eligiblePerformers.push(...availablePerformers.slice(0, Math.min(10, availablePerformers.length)));
+      }
+    }
+    if (focusTier === "newcomers" && eligiblePerformers.length < 2 && backupPerformers.length >= 2) {
+      const availablePerformers = backupPerformers.filter((item) => item.matches < 6 && !isPerformerOnCooldown(item.p.id) && !isPerformerRecentlySelected(item.p.id)).sort((a, b) => b.weight - a.weight);
+      if (availablePerformers.length >= 2) {
+        eligiblePerformers.push(...availablePerformers.slice(0, Math.min(10, availablePerformers.length)));
+      }
+    }
+    eligiblePerformers.sort((a, b) => b.weight - a.weight);
+    return { eligiblePerformers, backupPerformers };
+  }
+  function pickStrictPair(eligiblePerformers) {
+    if (eligiblePerformers.length < 2)
+      return null;
+    const weights = eligiblePerformers.map((item) => item.weight);
+    const seedItem = weightedRandomSelect(eligiblePerformers, weights) || eligiblePerformers[0];
+    if (seedItem && seedItem.p) {
+      trackPerformerSelection(seedItem.p.id);
+      addToRecentlySelected(seedItem.p.id);
+    }
+    const opponents = eligiblePerformers.filter(
+      (item) => item.p.id !== seedItem.p.id && !isPerformerOnCooldown(item.p.id) && !isPerformerRecentlySelected(item.p.id)
+    );
+    if (opponents.length === 0)
+      return null;
+    const opponentWeights = opponents.map((item) => item.weight);
+    const opponentItem = weightedRandomSelect(opponents, opponentWeights) || opponents[0];
+    return { seedItem, opponentItem };
+  }
+  function fetchStrictFilteredPair(performers, tierPool) {
+    if (!Array.isArray(performers) || performers.length < 2)
+      return null;
+    const { eligiblePerformers } = createWeightedPool(performers, tierPool, "custom");
+    const pair = pickStrictPair(eligiblePerformers);
+    if (!pair)
+      return null;
+    const { seedItem, opponentItem } = pair;
+    const rank1 = getPerformerRankInList(seedItem.p, performers);
+    const rank2 = getPerformerRankInList(opponentItem.p, performers);
+    return {
+      items: [seedItem.p, opponentItem.p],
+      ranks: [rank1, rank2]
+    };
+  }
   async function fetchSwissPairPerformers() {
     if (!state.sampleCounter)
       state.sampleCounter = 0;
@@ -4828,19 +9030,37 @@ Match Stats:`;
       }
     }
     const tierPool = state.globalPerformerPool && state.globalPerformerPool.length > 0 ? state.globalPerformerPool : performers;
+    if (getUserFilterOverrideEnabled()) {
+      const strictResult = fetchStrictFilteredPair(performers, tierPool);
+      if (strictResult) {
+        return strictResult;
+      }
+      throw new Error(`Not enough performers match the selected saved filter (${performers.length} found). Try a different filter or disable "Enable User Filter Override".`);
+    }
     const logMatch = (type, p1, p2, w1, w2, color) => {
-      const r1 = ((p1.rating100 || 0) / 10).toFixed(1);
-      const r2 = ((p2.rating100 || 0) / 10).toFixed(1);
+      const tierPool2 = state.globalPerformerPool && state.globalPerformerPool.length > 0 ? state.globalPerformerPool : performers;
+      const tier1 = getRatingTier(p1, tierPool2);
+      const tier2 = getRatingTier(p2, tierPool2);
+      const score1 = calculateBattleScore(p1);
+      const score2 = calculateBattleScore(p2);
+      const tierColor1 = getTierColor(tier1);
+      const tierColor2 = getTierColor(tier2);
       console.log(
-        `%c[Ascension] ${type}: %c${p1.name || "???"} %c(w:${w1.toFixed(2)})%c [${r1}] %cvs %c${p2.name || "???"} %c(w:${w2.toFixed(2)})%c [${r2}]`,
+        `%c[Ascension] ${type}: %c${p1.name || "???"} %c(ID: ${p1.id})%c (w:${w1.toFixed(2)}, %c${tier1} Asc.Score: ${score1.toFixed(2)}%c) %cvs %c${p2.name || "???"} %c(ID: ${p2.id})%c (w:${w2.toFixed(2)}, %c${tier2} Asc.Score: ${score2.toFixed(2)}%c)`,
         "color: #1cb4d6; font-weight: bold;",
         `color: ${color}; font-weight: bold;`,
-        "color: #FF69B4; font-weight: bold;",
         "color: #1cb4d6;",
         "color: #888;",
+        "color: #888;",
+        `color: ${tierColor1}; font-weight: bold;`,
+        "color: #888;",
+        "color: #888;",
         `color: ${color}; font-weight: bold;`,
-        "color: #FF69B4; font-weight: bold;",
-        "color: #1cb4d6;"
+        "color: #1cb4d6;",
+        "color: #888;",
+        "color: #888;",
+        `color: ${tierColor2}; font-weight: bold;`,
+        "color: #888;"
       );
     };
     async function performWeightedSelection(sampledPerformers, targetFocusTier) {
@@ -5410,7 +9630,7 @@ Match Stats:`;
     const pairKey = [id1, id2].sort().join("-");
     return state.seenPairs.has(pairKey);
   }
-  var MAX_SEEN_PAIRS, MAX_SKIPPED_IDS, MAX_SESSION_MATCH_COUNTS, MAX_SESSION_SCENE_COUNTS, TIER_ORDER, RECENT_PERFORMER_COOLDOWN;
+  var MAX_SEEN_PAIRS, MAX_SKIPPED_IDS, MAX_SESSION_MATCH_COUNTS, MAX_SESSION_SCENE_COUNTS, SCENE_RECENT_COOLDOWN_MS, SCENE_SESSION_COOLDOWN_MS, SCENE_RECENT_LS_KEY, SCENE_SESSION_LS_KEY, TIER_ORDER, RECENT_PERFORMER_COOLDOWN;
   var init_battle_engine = __esm({
     "battle-engine.js"() {
       init_api_client();
@@ -5422,1279 +9642,23 @@ Match Stats:`;
       init_match_handler();
       init_ui_swipe();
       init_rating_utils();
+      init_ui_sidebar();
+      init_scene_handler();
       MAX_SEEN_PAIRS = 500;
       MAX_SKIPPED_IDS = 100;
       MAX_SESSION_MATCH_COUNTS = 500;
       MAX_SESSION_SCENE_COUNTS = 1e3;
+      SCENE_RECENT_COOLDOWN_MS = 8 * 60 * 60 * 1e3;
+      SCENE_SESSION_COOLDOWN_MS = 8 * 60 * 60 * 1e3;
+      SCENE_RECENT_LS_KEY = "hon_recently_selected_scenes";
+      SCENE_SESSION_LS_KEY = "hon_session_scene_counts";
+      loadSceneCooldownState();
       TIER_ORDER = ["S-Tier", "A-Tier", "B-Tier", "C-Tier", "D-Tier", "F-Tier"];
       RECENT_PERFORMER_COOLDOWN = 50;
     }
   });
 
-  // ui-stats.js
-  var ui_stats_exports = {};
-  __export(ui_stats_exports, {
-    attachNameTooltips: () => attachNameTooltips,
-    createStatsModalContent: () => createStatsModalContent,
-    generateBarGroups: () => generateBarGroups,
-    generateStatTables: () => generateStatTables,
-    openStatsModal: () => openStatsModal,
-    preloadStatsModal: () => preloadStatsModal
-  });
-  function getFlagEmoji(countryCode) {
-    if (!countryCode)
-      return "";
-    return COUNTRY_FLAGS[countryCode.toUpperCase()] || "\u{1F3F3}\uFE0F";
-  }
-  function getGenderEmoji(gender) {
-    switch (gender?.toLowerCase()) {
-      case "male":
-        return "\u2642\uFE0F";
-      case "female":
-        return "\u2640\uFE0F";
-      case "non-binary":
-      case "other":
-        return "\u26A7\uFE0F";
-      default:
-        return "";
-    }
-  }
-  function formatWeight(weight) {
-    if (weight === void 0 || weight === null)
-      return "N/A\u2690";
-    return (weight / 10).toFixed(1);
-  }
-  function calculateTimeUntilFull(performer) {
-    if (!performer.last_match || performer.weight >= 1e3)
-      return 0;
-    const lastMatchDate = new Date(performer.last_match);
-    const msSince = Date.now() - lastMatchDate.getTime();
-    const hoursSince = msSince / (1e3 * 60 * 60);
-    const rechargeRatePerHour = 1e3 / 12;
-    const recovered = hoursSince * rechargeRatePerHour;
-    const currentWeight = Math.min(1e3, (performer.weight || 0) + recovered);
-    if (currentWeight >= 1e3)
-      return 0;
-    const remaining = 1e3 - currentWeight;
-    const hoursUntilFull = remaining / rechargeRatePerHour;
-    return Math.max(0, Math.ceil(hoursUntilFull * 3600));
-  }
-  function formatCountdown(seconds) {
-    if (seconds <= 0)
-      return "";
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor(seconds % 3600 / 60);
-    const secs = seconds % 60;
-    if (hours > 0) {
-      return `${hours}h ${minutes}m`;
-    } else {
-      return `${minutes}m ${secs}s`;
-    }
-  }
-  function fixImagePath(imagePath, currentOrigin) {
-    if (!imagePath)
-      return null;
-    let fixedImagePath = imagePath;
-    try {
-      const imageUrl = new URL(imagePath);
-      const currentUrl = new URL(currentOrigin);
-      imageUrl.protocol = currentUrl.protocol;
-      imageUrl.hostname = currentUrl.hostname;
-      imageUrl.port = currentUrl.port;
-      fixedImagePath = imageUrl.toString();
-    } catch (err) {
-      try {
-        const path = new URL(imagePath).pathname + new URL(imagePath).search;
-        fixedImagePath = currentOrigin + path;
-      } catch (err2) {
-        fixedImagePath = imagePath;
-      }
-    }
-    return fixedImagePath;
-  }
-  function removeExistingTooltips(container) {
-    const existing = (container || document).querySelectorAll(".opponent-tooltip, .hon-performer-tooltip");
-    existing.forEach((t) => t.remove());
-  }
-  function attachPerformerTooltip(element, performer, modalDialog) {
-    if (!performer)
-      return;
-    element.addEventListener("mouseenter", (e) => {
-      if (modalDialog) {
-        removeExistingTooltips(modalDialog);
-      } else {
-        removeExistingTooltips();
-      }
-      const currentOrigin = window.location.origin;
-      const tooltip = document.createElement("div");
-      tooltip.className = "opponent-tooltip";
-      tooltip.style.position = "fixed";
-      tooltip.style.zIndex = "10002";
-      tooltip.style.backgroundColor = "rgba(0, 0, 0, 0.9)";
-      tooltip.style.border = "1px solid #555";
-      tooltip.style.borderRadius = "8px";
-      tooltip.style.padding = "8px";
-      tooltip.style.minWidth = "120px";
-      tooltip.style.maxWidth = "200px";
-      tooltip.style.textAlign = "center";
-      tooltip.style.boxShadow = "0 4px 8px rgba(0,0,0,0.3)";
-      tooltip.style.pointerEvents = "none";
-      tooltip.style.color = "#fff";
-      if (performer.image_path) {
-        const fixedImagePath = fixImagePath(performer.image_path, currentOrigin);
-        const imageContainer = document.createElement("div");
-        imageContainer.style.width = "80px";
-        imageContainer.style.height = "80px";
-        imageContainer.style.borderRadius = "50%";
-        imageContainer.style.overflow = "hidden";
-        imageContainer.style.border = "2px solid #555";
-        imageContainer.style.margin = "0 auto 8px";
-        const img = document.createElement("img");
-        img.src = fixedImagePath;
-        img.alt = `${performer.name} profile image`;
-        img.style.width = "100%";
-        img.style.height = "100%";
-        img.style.objectFit = "cover";
-        img.style.display = "block";
-        img.style.objectPosition = "center 15%";
-        img.onerror = function() {
-          imageContainer.innerHTML = "";
-          const placeholderIcon = document.createElement("span");
-          placeholderIcon.innerText = "\u{1F464}";
-          placeholderIcon.style.fontSize = "2rem";
-          placeholderIcon.style.color = "#888";
-          placeholderIcon.style.display = "flex";
-          placeholderIcon.style.alignItems = "center";
-          placeholderIcon.style.justifyContent = "center";
-          placeholderIcon.style.height = "100%";
-          imageContainer.appendChild(placeholderIcon);
-        };
-        imageContainer.appendChild(img);
-        tooltip.appendChild(imageContainer);
-      }
-      const nameContainer = document.createElement("div");
-      nameContainer.style.display = "flex";
-      nameContainer.style.alignItems = "center";
-      nameContainer.style.justifyContent = "center";
-      nameContainer.style.gap = "0.3rem";
-      nameContainer.style.marginBottom = "4px";
-      const flag = getFlagEmoji(performer.countryCode);
-      if (flag) {
-        const flagSpan = document.createElement("span");
-        flagSpan.innerText = flag;
-        nameContainer.appendChild(flagSpan);
-      }
-      const nameElement = document.createElement("div");
-      nameElement.innerText = performer.name;
-      nameElement.style.color = "#fff";
-      nameElement.style.fontWeight = "bold";
-      nameContainer.appendChild(nameElement);
-      tooltip.appendChild(nameContainer);
-      const ascScoreDisplay = performer.ascScore && performer.ascScore !== "N/A" ? performer.ascScore : "N/A";
-      const scoreElement = document.createElement("div");
-      scoreElement.innerText = `Asc.Score: ${ascScoreDisplay}`;
-      scoreElement.style.fontSize = "0.8rem";
-      scoreElement.style.fontWeight = "bold";
-      scoreElement.style.color = performer.tierColor || "#ddd";
-      tooltip.appendChild(scoreElement);
-      (modalDialog || document.body).appendChild(tooltip);
-      const rect = element.getBoundingClientRect();
-      tooltip.style.left = `${rect.left + window.scrollX}px`;
-      tooltip.style.top = `${rect.bottom + window.scrollY + 8}px`;
-      const moveHandler = (ev) => {
-        tooltip.style.left = `${ev.clientX + 12}px`;
-        tooltip.style.top = `${ev.clientY + 18}px`;
-      };
-      element.addEventListener("mousemove", moveHandler);
-      element.addEventListener("mouseleave", () => {
-        element.removeEventListener("mousemove", moveHandler);
-        setTimeout(() => {
-          if (tooltip.parentNode) {
-            tooltip.remove();
-          }
-        }, 100);
-      }, { once: true });
-    });
-  }
-  function attachNameTooltips(container, performers) {
-    if (!container || !performers || !performers.length)
-      return;
-    const modalDialog = container.closest(".hon-stats-modal-dialog");
-    const performerMap = /* @__PURE__ */ new Map();
-    performers.forEach((p) => {
-      const rawRating = p.rating100 ?? 1;
-      const hasMatches = (p.wins || 0) + (p.losses || 0) + (p.draws || 0) > 0;
-      const isUnrated = rawRating === 1 && !hasMatches;
-      const ascScore = calculateBattleScore(p);
-      const tier = getRatingTier(p, performers);
-      performerMap.set(String(p.id), {
-        id: p.id,
-        name: p.name || `Performer #${p.id}`,
-        image_path: p.image_path || p.imagePath || "",
-        countryCode: p.country || "",
-        rating: isUnrated ? "Unrated" : (rawRating / 10).toFixed(1),
-        ascScore: ascScore ? ascScore.toFixed(2) : "N/A",
-        tierColor: getTierColor(tier)
-      });
-    });
-    const nameLinks = container.querySelectorAll(".hon-stats-name a");
-    nameLinks.forEach((link) => {
-      const match = link.getAttribute("href")?.match(/\/performers\/(\d+)/);
-      if (!match)
-        return;
-      const performer = performerMap.get(match[1]);
-      if (performer) {
-        attachPerformerTooltip(link, performer, modalDialog);
-      }
-    });
-  }
-  function getProcessedRecencyWeight(p) {
-    if (!p.last_match || p.total_matches === 0)
-      return 1;
-    const lastMatchDate = new Date(p.last_match);
-    const msSince = Date.now() - lastMatchDate.getTime();
-    const minutesSince = msSince / (1e3 * 60);
-    if (minutesSince < 30)
-      return 0;
-    const hoursSince = minutesSince / 60;
-    let freshness = Math.min(1, 0.1 + hoursSince * 0.075);
-    if (p.total_matches < 10) {
-      freshness = Math.min(1, freshness + 0.2);
-    }
-    return freshness;
-  }
-  function isUnratedPerformer(p) {
-    const rawRating = p.rawRating ?? p.rating100 ?? 1;
-    const totalMatches = p.total_matches ?? (p.wins || 0) + (p.losses || 0) + (p.draws || 0);
-    return rawRating === 1 && totalMatches === 0;
-  }
-  function calculateRankByAscScore(performers) {
-    const sorted = [...performers].sort((a, b) => {
-      const scoreA = a.ascScore || 0;
-      const scoreB = b.ascScore || 0;
-      if (scoreB !== scoreA)
-        return scoreB - scoreA;
-      return (b.wins || 0) - (a.wins || 0);
-    });
-    const rankMap = /* @__PURE__ */ new Map();
-    sorted.forEach((p, index) => {
-      rankMap.set(p.id, {
-        rank: index + 1,
-        total: sorted.length,
-        ascScore: p.ascScore
-      });
-    });
-    return rankMap;
-  }
-  async function preloadStatsModal() {
-    if (!cachedPerformers) {
-      try {
-        cachedPerformers = await fetchAllPerformerStats();
-        cachedModalContent = await createStatsModalContent(cachedPerformers);
-        cacheTimestamp = Date.now();
-      } catch (error) {
-        console.warn("[Ascension] Failed to preload stats:", error);
-      }
-    }
-  }
-  async function openStatsModal(forceRefresh = false) {
-    const existingStatsModal = document.getElementById("hon-stats-modal");
-    if (existingStatsModal)
-      existingStatsModal.remove();
-    const statsModal = document.createElement("div");
-    statsModal.id = "hon-stats-modal";
-    statsModal.className = "hon-stats-modal";
-    statsModal.innerHTML = `
-    <div class="hon-modal-backdrop"></div>
-    <div class="hon-stats-modal-dialog">
-      <button class="hon-modal-close">\u2715</button>
-      <div class="hon-stats-loading">Loading stats...</div>
-    </div>
-  `;
-    document.body.appendChild(statsModal);
-    const closeStats = () => {
-      if (weightCountdownInterval) {
-        clearInterval(weightCountdownInterval);
-        weightCountdownInterval = null;
-      }
-      statsModal.remove();
-    };
-    const dialogContainer = statsModal.querySelector(".hon-stats-modal-dialog");
-    dialogContainer.addEventListener("click", (e) => e.stopPropagation());
-    statsModal.querySelector(".hon-modal-backdrop").addEventListener("click", closeStats);
-    statsModal.querySelector(".hon-modal-close").addEventListener("click", closeStats);
-    try {
-      let performersToUse = cachedPerformers;
-      let usedCache = false;
-      try {
-        performersToUse = await fetchAllPerformerStats();
-        cachedPerformers = performersToUse;
-        cacheTimestamp = Date.now();
-        cachedModalContent = await createStatsModalContent(performersToUse);
-      } catch (fetchError) {
-        console.warn("[Ascension] Failed to fetch fresh stats:", fetchError);
-        if (cachedPerformers && cachedModalContent) {
-          performersToUse = cachedPerformers;
-          usedCache = true;
-          console.log("[Ascension] Using cached stats due to fetch failure");
-          if (cachedModalContent instanceof Promise) {
-            cachedModalContent = await cachedModalContent;
-          }
-        } else {
-          throw fetchError;
-        }
-      }
-      if (!cachedModalContent && performersToUse) {
-        cachedModalContent = await createStatsModalContent(performersToUse);
-      }
-      dialogContainer.innerHTML = `
-      <button class="hon-modal-close">\u2715</button>
-      ${cachedModalContent}
-      ${usedCache ? '<div class="hon-stats-cache-notice">Showing cached data</div>' : ""}
-    `;
-      dialogContainer.addEventListener("click", (e) => e.stopPropagation());
-      dialogContainer.querySelector(".hon-modal-close").addEventListener("click", closeStats);
-      const refreshBtn = dialogContainer.querySelector("#refresh-stats-btn");
-      if (refreshBtn) {
-        refreshBtn.addEventListener("click", async (e) => {
-          e.stopPropagation();
-          await openStatsModal(true);
-        });
-      }
-      attachNameTooltips(dialogContainer, performersToUse);
-      initStatsTabs(dialogContainer);
-      initStatsCollapsibles(dialogContainer);
-      initStatsSorting(dialogContainer);
-      initWeightCountdowns();
-      const activeDistributionTab = dialogContainer.querySelector('.hon-stats-tab[data-tab="distribution"].active');
-      if (activeDistributionTab) {
-        setTimeout(() => {
-          const bars = dialogContainer.querySelectorAll(".animated-bar:not(.animated)");
-          if (bars.length > 0) {
-            animateBars(bars);
-          }
-        }, 100);
-      }
-    } catch (error) {
-      console.error("[Ascension] Error loading stats:", error);
-      dialogContainer.innerHTML = `
-      <button class="hon-modal-close">\u2715</button>
-      <div class="hon-stats-error">Failed to load statistics.</div>
-    `;
-      dialogContainer.querySelector(".hon-modal-close").addEventListener("click", closeStats);
-    }
-  }
-  async function createStatsModalContent(performers) {
-    if (!performers || performers.length === 0) {
-      return '<div class="hon-stats-empty">No performer stats available</div>';
-    }
-    const processedPerformers = [];
-    performers.forEach((p) => {
-      const stats = parsePerformerEloData(p);
-      const rawRating = p.rating100 ?? 1;
-      const isUnrated = rawRating === 1 && stats.total_matches === 0;
-      const displayRating = isUnrated ? "Unrated" : (rawRating / 10).toFixed(1);
-      let currentWeight = 1e3;
-      if (stats.last_match) {
-        const lastMatchDate = new Date(stats.last_match);
-        const msSince = Date.now() - lastMatchDate.getTime();
-        const hoursSince = msSince / (1e3 * 60 * 60);
-        const rechargeRatePerHour = 1e3 / 12;
-        const recovered = hoursSince * rechargeRatePerHour;
-        currentWeight = Math.min(1e3, recovered);
-      }
-      const ascScore = calculateBattleScore(p);
-      const compositeScore = calculatePerformerCompositeScore(p);
-      const performerTier = getRatingTier(p, performers);
-      const ascScoreColor = getTierColor(performerTier);
-      processedPerformers.push({
-        ...stats,
-        id: p.id,
-        name: p.name || `Performer #${p.id}`,
-        rating: displayRating,
-        rawRating,
-        countryCode: p.country || "",
-        gender: p.gender || "",
-        weight: currentWeight,
-        last_match: stats.last_match || null,
-        ascScore,
-        compositeScore,
-        ascScoreColor,
-        image_path: p.image_path || ""
-      });
-    });
-    const rankMap = calculateRankByAscScore(processedPerformers);
-    processedPerformers.forEach((p) => {
-      const rankData = rankMap.get(p.id);
-      p.rank = rankData?.rank || processedPerformers.length + 1;
-      p.totalRanked = rankData?.total || processedPerformers.length;
-    });
-    const tierGroups = {};
-    const chargingCounts = {};
-    const unratedGroup = [];
-    processedPerformers.forEach((p) => {
-      if (isUnratedPerformer(p)) {
-        unratedGroup.push({ ...p });
-        return;
-      }
-      const tier = getRatingTier(p, performers);
-      if (!tierGroups[tier]) {
-        tierGroups[tier] = [];
-        chargingCounts[tier] = 0;
-      }
-      tierGroups[tier].push({ ...p });
-      if (p.weight < 1e3) {
-        chargingCounts[tier]++;
-      }
-    });
-    const sortedTiers = Object.keys(tierGroups).sort((a, b) => {
-      const tierValues = {
-        "S-Tier": 5,
-        "A-Tier": 4,
-        "B-Tier": 3,
-        "C-Tier": 2,
-        "D-Tier": 1,
-        "F-Tier": 0
-      };
-      return tierValues[b] - tierValues[a];
-    });
-    const allTiersSorted = [...processedPerformers].sort((a, b) => a.rank - b.rank);
-    const allTiersTotalCount = allTiersSorted.length;
-    const allTiersChargingCount = allTiersSorted.filter((p) => p.weight < 1e3).length;
-    const allTiersAvgRecencyWeight = allTiersTotalCount > 0 ? allTiersSorted.reduce((sum, p) => sum + getProcessedRecencyWeight(p), 0) / allTiersTotalCount : 0;
-    const allTiersRecencyStatus = allTiersAvgRecencyWeight >= 0.8 ? "\u2705" : "\u26A0\uFE0F";
-    const allTiersGroup = {
-      [`All Tier Performers (${allTiersTotalCount})|||(\u{1FAAB}: ${allTiersChargingCount}) (\u231B avg recency: ${allTiersAvgRecencyWeight.toFixed(2)} ${allTiersRecencyStatus})`]: allTiersSorted
-    };
-    const renamedTierGroups = {};
-    sortedTiers.forEach((tierName) => {
-      tierGroups[tierName].sort((a, b) => a.rank - b.rank);
-      const totalCount = tierGroups[tierName].length;
-      const chargingCount = chargingCounts[tierName] || 0;
-      const totalRecencyWeight = tierGroups[tierName].reduce(
-        (sum, p) => sum + getProcessedRecencyWeight(p),
-        0
-      );
-      const avgRecencyWeight = totalCount > 0 ? totalRecencyWeight / totalCount : 0;
-      const recencyStatus = avgRecencyWeight >= 0.8 ? "\u2705" : "\u26A0\uFE0F";
-      renamedTierGroups[`${tierName} Performers (${totalCount})|||(\u{1FAAB}: ${chargingCount}) (\u231B avg recency: ${avgRecencyWeight.toFixed(2)} ${recencyStatus})`] = tierGroups[tierName];
-    });
-    unratedGroup.sort((a, b) => a.rank - b.rank);
-    const unratedTotalCount = unratedGroup.length;
-    const unratedChargingCount = unratedGroup.filter((p) => p.weight < 1e3).length;
-    const unratedAvgRecencyWeight = unratedTotalCount > 0 ? unratedGroup.reduce((sum, p) => sum + getProcessedRecencyWeight(p), 0) / unratedTotalCount : 0;
-    const unratedRecencyStatus = unratedAvgRecencyWeight >= 0.8 ? "\u2705" : "\u26A0\uFE0F";
-    const unratedGroupName = `Unrated Performers (${unratedTotalCount})|||(\u{1FAAB}: ${unratedChargingCount}) (\u231B avg recency: ${unratedAvgRecencyWeight.toFixed(2)} ${unratedRecencyStatus})`;
-    const allGroups = {
-      ...allTiersGroup,
-      ...renamedTierGroups,
-      [unratedGroupName]: unratedGroup
-    };
-    const groupHTML = Object.keys(allGroups).map((groupName) => {
-      const performersInGroup = allGroups[groupName];
-      const isAllTiers = groupName.startsWith("All Tier Performers");
-      let groupColor;
-      if (isAllTiers) {
-        groupColor = "#ffffff";
-      } else if (groupName.startsWith("Unrated")) {
-        groupColor = "#888888";
-      } else {
-        groupColor = getTierColor(groupName.replace(" Performers", "").split(" ")[0]);
-      }
-      const [titlePart, chargingPart] = groupName.split("|||");
-      const displayGroupName = chargingPart ? `${titlePart}<br><span style="font-size: 0.8em; opacity: 0.8;">${chargingPart}</span>` : groupName;
-      const rows = performersInGroup.map((p) => {
-        const winRate = p.total_matches > 0 ? (p.wins / p.total_matches * 100).toFixed(1) : "0.0";
-        const streakDisplay = p.current_streak > 0 ? `<span class="hon-stats-positive">+${p.current_streak}</span>` : p.current_streak < 0 ? `<span class="hon-stats-negative">${p.current_streak}</span>` : "0";
-        const bestStreakDisplay = p.best_streak > 0 ? `<span class="hon-stats-positive">+${formatBestStreakDisplay(p.best_streak)}</span>` : p.best_streak < 0 ? `<span class="hon-stats-negative">${formatBestStreakDisplay(p.best_streak)}</span>` : formatBestStreakDisplay(p.best_streak);
-        const worstStreakDisplay = p.worst_streak < 0 ? `<span class="hon-stats-negative">${p.worst_streak}</span>` : p.worst_streak > 0 ? `<span class="hon-stats-positive">${p.worst_streak}</span>` : p.worst_streak || 0;
-        const flag = getFlagEmoji(p.countryCode);
-        const countryCodeDisplay = p.countryCode || "N/A";
-        const genderEmoji = getGenderEmoji(p.gender);
-        const maxWeight = 1e3;
-        const rechargeRate = 1e3 / 12;
-        let currentWeight = maxWeight;
-        if (p.last_match) {
-          const lastMatchDate = new Date(p.last_match);
-          const msSince = Date.now() - lastMatchDate.getTime();
-          const hoursSince = msSince / (1e3 * 60 * 60);
-          const recovered = hoursSince * rechargeRate;
-          currentWeight = Math.min(maxWeight, recovered);
-        }
-        const weightFormatted = formatWeight(currentWeight);
-        let weightStatus;
-        if (currentWeight >= maxWeight) {
-          weightStatus = "\u{1F50B}";
-        } else if (currentWeight <= 0) {
-          weightStatus = "\u{1FAAB}";
-        } else {
-          weightStatus = "\u{1FAAB}";
-        }
-        const timeUntilFull = calculateTimeUntilFull({
-          ...p,
-          weight: currentWeight,
-          maxWeight,
-          rechargeRate
-        });
-        const countdownFormatted = formatCountdown(timeUntilFull);
-        const weightDisplay = currentWeight >= maxWeight ? weightStatus : `${weightStatus}<br><small class="countdown" data-performer-id="${p.id}" data-last-match="${p.last_match || ""}" style="font-size: 0.7em;">${countdownFormatted || weightFormatted}</small>`;
-        const performerTier = getRatingTier(p, performers);
-        const ratingColor = getTierColor(performerTier);
-        const compositeDisplay = p.total_matches > 0 ? p.compositeScore?.toFixed(2) || "0.00" : "N/A";
-        const ascScoreDisplay = p.ascScore ? p.ascScore.toFixed(2) : "N/A";
-        return `
-        <tr data-rank="${p.rank}" 
-            data-ascscore="${p.ascScore || 0}"
-            data-rating="${p.rating}" 
-            data-raw-rating="${p.rawRating || 1}"
-            data-composite-score="${p.total_matches > 0 ? p.compositeScore || 0 : ""}"
-            data-matches="${p.total_matches}" 
-            data-wins="${p.wins}" 
-            data-losses="${p.losses}" 
-            data-draws="${p.draws || 0}" 
-            data-winrate="${winRate}" 
-            data-streak="${p.current_streak}" 
-            data-beststreak="${p.best_streak}" 
-            data-worststreak="${p.worst_streak}"
-            data-country="${countryCodeDisplay}"
-            data-gender="${p.gender}"
-            data-weight="${currentWeight}"
-            data-maxweight="${maxWeight}">
-          <td class="hon-stats-rank">#${p.rank}</td>
-          <td class="hon-stats-country">${flag} ${countryCodeDisplay}</td>
-          <td class="hon-stats-gender">${genderEmoji}</td>
-          <td class="hon-stats-name">
-            <a href="/performers/${p.id}" target="_blank">${escapeHtml(p.name)}</a>
-          </td>
-          <td class="hon-stats-ascscore" style="font-weight: bold; color: ${p.ascScoreColor};">${ascScoreDisplay}</td>
-          <td class="hon-stats-rating" style="color: ${ratingColor}; font-weight: bold;">
-            ${p.rating}
-          </td>
-          <td class="hon-stats-composite">${compositeDisplay}</td>
-          <td>${p.total_matches}</td>
-          <td><span class="hon-stats-positive">${p.wins}</span></td>
-          <td><span class="hon-stats-negative">${p.losses}</span></td>
-          <td>${p.draws || 0}</td>
-          <td>${winRate}%</td>
-          <td>${streakDisplay}</td>
-          <td>${bestStreakDisplay}</td>
-          <td>${worstStreakDisplay}</td>
-          <td class="hon-stats-weight">${weightDisplay}</td>
-        </tr>`;
-      }).join("");
-      return `
-      <div class="hon-rank-group">
-        <div class="hon-rank-group-header" data-group="${groupName.toLowerCase().replace(/\s+/g, "-")}" role="button">
-          <span class="hon-group-toggle">\u25B6</span>
-          <span class="hon-rank-group-title" style="color: ${groupColor}; font-weight: bold;">
-            ${displayGroupName}
-          </span>
-        </div>
-        <div class="hon-rank-group-content collapsed" data-group="${groupName.toLowerCase().replace(/\s+/g, "-")}">
-          <table class="hon-stats-table">
-            <thead>
-              <tr>
-                <th data-sort="rank">Rank</th>
-                <th data-sort="country">Country</th>
-                <th data-sort="gender">Gender</th>
-                <th data-sort="name">Name</th>
-                <th data-sort="ascscore">Asc.Score</th>
-                <th data-sort="rating">Rating</th>
-                <th data-sort="composite">Comp.Score</th>
-                <th data-sort="matches">Matches</th>
-                <th data-sort="wins">W</th>
-                <th data-sort="losses">L</th>
-                <th data-sort="draws">D</th>
-                <th data-sort="winrate">%</th>
-                <th data-sort="streak">Streak</th>
-                <th data-sort="beststreak">Best</th>
-                <th data-sort="worststreak">Worst</th>
-                <th data-sort="weight">\u231B</th>
-              </tr>
-            </thead>
-            <tbody>${rows}</tbody>
-          </table>
-        </div>
-      </div>`;
-    }).join("");
-    const tierCounts = {
-      "S-Tier": 0,
-      "A-Tier": 0,
-      "B-Tier": 0,
-      "C-Tier": 0,
-      "D-Tier": 0,
-      "F-Tier": 0
-    };
-    processedPerformers.forEach((p) => {
-      if (isUnratedPerformer(p))
-        return;
-      const tier = getRatingTier(p, performers);
-      tierCounts[tier] = (tierCounts[tier] || 0) + 1;
-    });
-    return `
-    <div class="hon-stats-header">
-      <h2>\u{1F4CA} Performer Statistics</h2>
-      <div class="hon-stats-tabs">
-        <button class="hon-stats-tab active" data-tab="leaderboard">Leaderboard</button>
-        <button class="hon-stats-tab" data-tab="distribution">Tier Distribution</button>
-      </div>
-    </div>
-    <div class="hon-stats-content">
-      <div class="hon-stats-tab-panel active" data-panel="leaderboard">
-        ${groupHTML}
-      </div>
-      <div class="hon-stats-tab-panel" data-panel="distribution">
-        <div class="hon-bar-graph">
-          ${generateBarGroups(tierCounts)}
-        </div>
-      </div>
-    </div>
-  `;
-  }
-  function generateStatTables(processedPerformers, allPerformers = null) {
-    const tierGroups = {};
-    const unratedGroup = [];
-    const tierPool = allPerformers || processedPerformers;
-    processedPerformers.forEach((p) => {
-      if (isUnratedPerformer(p)) {
-        unratedGroup.push({ ...p });
-        return;
-      }
-      const tier = getRatingTier(p, tierPool);
-      if (!tierGroups[tier]) {
-        tierGroups[tier] = [];
-      }
-      tierGroups[tier].push({ ...p });
-    });
-    const sortedTiers = Object.keys(tierGroups).sort((a, b) => {
-      const tierValues = {
-        "S-Tier": 5,
-        "A-Tier": 4,
-        "B-Tier": 3,
-        "C-Tier": 2,
-        "D-Tier": 1,
-        "F-Tier": 0
-      };
-      return tierValues[b] - tierValues[a];
-    });
-    const allTiersGroup = {
-      [`All Tier Performers (${processedPerformers.length})`]: processedPerformers
-    };
-    const renamedTierGroups = {};
-    sortedTiers.forEach((tierName) => {
-      renamedTierGroups[`${tierName} Performers (${tierGroups[tierName].length})`] = tierGroups[tierName];
-    });
-    const allGroups = {
-      ...allTiersGroup,
-      ...renamedTierGroups
-    };
-    if (unratedGroup.length > 0) {
-      allGroups[`Unrated Performers (${unratedGroup.length})`] = unratedGroup;
-    }
-    const groupHTML = Object.keys(allGroups).map((groupName) => {
-      const performersInGroup = allGroups[groupName];
-      const isAllTiers = groupName.startsWith("All Tier Performers");
-      let groupColor;
-      if (isAllTiers) {
-        groupColor = "#ffffff";
-      } else if (groupName.startsWith("Unrated")) {
-        groupColor = "#888888";
-      } else {
-        groupColor = getTierColor(groupName.replace(" Performers", "").split(" ")[0]);
-      }
-      const rows = performersInGroup.map((p) => {
-        const winRate = p.total_matches > 0 ? (p.wins / p.total_matches * 100).toFixed(1) : "0.0";
-        const streakDisplay = p.current_streak > 0 ? `<span class="hon-stats-positive">+${p.current_streak}</span>` : p.current_streak < 0 ? `<span class="hon-stats-negative">${p.current_streak}</span>` : "0";
-        const bestStreakDisplay = p.best_streak > 0 ? `<span class="hon-stats-positive">+${formatBestStreakDisplay(p.best_streak)}</span>` : p.best_streak < 0 ? `<span class="hon-stats-negative">${formatBestStreakDisplay(p.best_streak)}</span>` : formatBestStreakDisplay(p.best_streak);
-        const worstStreakDisplay = p.worst_streak < 0 ? `<span class="hon-stats-negative">${p.worst_streak}</span>` : p.worst_streak > 0 ? `<span class="hon-stats-positive">${p.worst_streak}</span>` : p.worst_streak || 0;
-        const flag = getFlagEmoji(p.countryCode);
-        const countryCodeDisplay = p.countryCode || "N/A";
-        const genderEmoji = getGenderEmoji(p.gender);
-        const maxWeight = 1e3;
-        const rechargeRate = 1e3 / 12;
-        let currentWeight = maxWeight;
-        if (p.last_match) {
-          const lastMatchDate = new Date(p.last_match);
-          const msSince = Date.now() - lastMatchDate.getTime();
-          const hoursSince = msSince / (1e3 * 60 * 60);
-          const recovered = hoursSince * rechargeRate;
-          currentWeight = Math.min(maxWeight, recovered);
-        }
-        const weightFormatted = formatWeight(currentWeight);
-        let weightStatus;
-        if (currentWeight >= maxWeight) {
-          weightStatus = "\u{1F50B}";
-        } else if (currentWeight <= 0) {
-          weightStatus = "\u{1FAAB}";
-        } else {
-          weightStatus = "\u{1FAAB}";
-        }
-        const timeUntilFull = calculateTimeUntilFull({
-          ...p,
-          weight: currentWeight,
-          maxWeight,
-          rechargeRate
-        });
-        const countdownFormatted = formatCountdown(timeUntilFull);
-        const weightDisplay = currentWeight >= maxWeight ? weightStatus : `${weightStatus}<br><small class="countdown" data-performer-id="${p.id}" data-last-match="${p.last_match || ""}" style="font-size: 0.7em;">${countdownFormatted || weightFormatted}</small>`;
-        const performerTier = getRatingTier(p, tierPool);
-        const ratingColor = getTierColor(performerTier);
-        const ascScoreColor = p.ascScoreColor || ratingColor;
-        const compositeDisplay = p.total_matches > 0 ? p.compositeScore?.toFixed(1) || "0.0" : "N/A";
-        const ascScoreDisplay = p.ascScore ? p.ascScore.toFixed(2) : "N/A";
-        return `
-        <tr data-rank="${p.rank}" 
-            data-ascscore="${p.ascScore || 0}"
-            data-rating="${p.rating}" 
-            data-raw-rating="${p.rawRating || 1}"
-            data-composite-score="${p.total_matches > 0 ? p.compositeScore || 0 : ""}"
-            data-matches="${p.total_matches}" 
-            data-wins="${p.wins}" 
-            data-losses="${p.losses}" 
-            data-draws="${p.draws || 0}" 
-            data-winrate="${winRate}" 
-            data-streak="${p.current_streak}" 
-            data-beststreak="${p.best_streak}" 
-            data-worststreak="${p.worst_streak}"
-            data-country="${countryCodeDisplay}"
-            data-gender="${p.gender}"
-            data-weight="${currentWeight}"
-            data-maxweight="${maxWeight}">
-          <td class="hon-stats-rank">#${p.rank}</td>
-          <td class="hon-stats-country">${flag} ${countryCodeDisplay}</td>
-          <td class="hon-stats-gender">${genderEmoji}</td>
-          <td class="hon-stats-name">
-            <a href="/performers/${p.id}" target="_blank">${escapeHtml(p.name)}</a>
-          </td>
-          <td class="hon-stats-ascscore" style="font-weight: bold; color: ${ascScoreColor};">${ascScoreDisplay}</td>
-          <td class="hon-stats-rating" style="color: ${ratingColor}; font-weight: bold;">
-            ${p.rating}
-          </td>
-          <td class="hon-stats-composite">${compositeDisplay}</td>
-          <td>${p.total_matches}</td>
-          <td><span class="hon-stats-positive">${p.wins}</span></td>
-          <td><span class="hon-stats-negative">${p.losses}</span></td>
-          <td>${p.draws || 0}</td>
-          <td>${winRate}%</td>
-          <td>${streakDisplay}</td>
-          <td>${bestStreakDisplay}</td>
-          <td>${worstStreakDisplay}</td>
-          <td class="hon-stats-weight">${weightDisplay}</td>
-        </tr>`;
-      }).join("");
-      return `
-      <div class="hon-rank-group">
-        <div class="hon-rank-group-header" data-group="${groupName.toLowerCase().replace(/\s+/g, "-")}" role="button">
-          <span class="hon-group-toggle">\u25B6</span>
-          <span class="hon-rank-group-title" style="color: ${groupColor}; font-weight: bold;">
-            ${groupName}
-          </span>
-        </div>
-        <div class="hon-rank-group-content collapsed" data-group="${groupName.toLowerCase().replace(/\s+/g, "-")}">
-          <table class="hon-stats-table">
-            <thead>
-              <tr>
-                <th data-sort="rank">Rank</th>
-                <th data-sort="country">Country</th>
-                <th data-sort="gender">Gender</th>
-                <th data-sort="name">Name</th>
-                <th data-sort="ascscore">Asc.Score</th>
-                <th data-sort="rating">Rating</th>
-                <th data-sort="composite">Comp.Score</th>
-                <th data-sort="matches">Matches</th>
-                <th data-sort="wins">W</th>
-                <th data-sort="losses">L</th>
-                <th data-sort="draws">D</th>
-                <th data-sort="winrate">%</th>
-                <th data-sort="streak">Streak</th>
-                <th data-sort="beststreak">Best</th>
-                <th data-sort="worststreak">Worst</th>
-                <th data-sort="weight">\u231B</th>
-              </tr>
-            </thead>
-            <tbody>${rows}</tbody>
-          </table>
-        </div>
-      </div>`;
-    }).join("");
-    return groupHTML;
-  }
-  function initStatsSorting(dialog) {
-    const headers = dialog.querySelectorAll(".hon-stats-table th[data-sort]");
-    headers.forEach((header) => {
-      header.addEventListener("click", () => {
-        const table = header.closest("table");
-        const tbody = table.querySelector("tbody");
-        const sortType = header.dataset.sort;
-        const isAscending = header.classList.toggle("ascending");
-        headers.forEach((h) => {
-          if (h !== header) {
-            h.classList.remove("ascending", "descending", "sort-active");
-          }
-        });
-        header.classList.toggle("descending", !isAscending);
-        header.classList.add("sort-active");
-        table.className = table.className.replace(/sorted-by-\w+/g, "");
-        table.classList.add(`sorted-by-${sortType}`);
-        const rows = Array.from(tbody.querySelectorAll("tr"));
-        rows.sort((a, b) => {
-          let aValue = a.dataset[sortType];
-          let bValue = b.dataset[sortType];
-          if (sortType === "rating") {
-            const aIsUnrated = aValue === "Unrated";
-            const bIsUnrated = bValue === "Unrated";
-            if (aIsUnrated && bIsUnrated)
-              return 0;
-            if (aIsUnrated)
-              return isAscending ? 1 : -1;
-            if (bIsUnrated)
-              return isAscending ? -1 : 1;
-            aValue = parseFloat(a.dataset.rawRating || 1);
-            bValue = parseFloat(b.dataset.rawRating || 1);
-          } else if (sortType === "composite") {
-            const aHasMatches = parseInt(a.dataset.matches) > 0;
-            const bHasMatches = parseInt(b.dataset.matches) > 0;
-            if (!aHasMatches && !bHasMatches)
-              return 0;
-            if (!aHasMatches)
-              return isAscending ? 1 : -1;
-            if (!bHasMatches)
-              return isAscending ? -1 : 1;
-            aValue = parseFloat(a.dataset.compositeScore || 0);
-            bValue = parseFloat(b.dataset.compositeScore || 0);
-          } else if (sortType === "ascscore") {
-            aValue = parseFloat(a.dataset.ascscore || 0);
-            bValue = parseFloat(b.dataset.ascscore || 0);
-          } else if (sortType === "name" || sortType === "country" || sortType === "gender") {
-            aValue = aValue.toLowerCase();
-            bValue = bValue.toLowerCase();
-          } else if (sortType !== "name") {
-            aValue = parseFloat(aValue);
-            bValue = parseFloat(bValue);
-          }
-          if (aValue < bValue)
-            return isAscending ? -1 : 1;
-          if (aValue > bValue)
-            return isAscending ? 1 : -1;
-          return 0;
-        });
-        rows.forEach((row) => tbody.appendChild(row));
-      });
-    });
-  }
-  function initWeightCountdowns() {
-    if (weightCountdownInterval) {
-      clearInterval(weightCountdownInterval);
-    }
-    weightCountdownInterval = setInterval(() => {
-      const countdownElements = document.querySelectorAll(".countdown");
-      countdownElements.forEach((element) => {
-        const lastMatchStr = element.dataset.lastMatch;
-        if (!lastMatchStr) {
-          const parentCell = element.parentElement;
-          if (parentCell) {
-            parentCell.innerHTML = "\u{1F50B}";
-          }
-          return;
-        }
-        const lastMatchDate = new Date(lastMatchStr);
-        const msSince = Date.now() - lastMatchDate.getTime();
-        const hoursSince = msSince / (1e3 * 60 * 60);
-        const rechargeRatePerHour = 1e3 / 12;
-        const recovered = hoursSince * rechargeRatePerHour;
-        const currentWeight = Math.min(1e3, recovered);
-        if (currentWeight >= 1e3) {
-          element.parentElement.innerHTML = "\u{1F50B}";
-          return;
-        }
-        const remaining = 1e3 - currentWeight;
-        const hoursUntilFull = remaining / rechargeRatePerHour;
-        const secondsUntilFull = Math.max(0, Math.ceil(hoursUntilFull * 3600));
-        if (secondsUntilFull <= 0) {
-          element.parentElement.innerHTML = "\u{1F50B}";
-        } else {
-          element.textContent = formatCountdown(secondsUntilFull);
-        }
-      });
-    }, 1e3);
-  }
-  function generateBarGroups(tierCounts) {
-    const tiers = [
-      { label: "S-Tier", color: "#eb9834" },
-      { label: "A-Tier", color: "#e014aa" },
-      { label: "B-Tier", color: "#7f1e82" },
-      { label: "C-Tier", color: "#14bbe0" },
-      { label: "D-Tier", color: "#92e014" },
-      { label: "F-Tier", color: "#808080" }
-    ];
-    const nonZeroTiers = tiers.filter((tier) => (tierCounts[tier.label] || 0) > 0);
-    if (nonZeroTiers.length === 0)
-      return "";
-    const counts = nonZeroTiers.map((t) => tierCounts[t.label]);
-    const maxCount = Math.max(...counts, 1);
-    const minCount = Math.min(...counts);
-    return nonZeroTiers.map((tier) => {
-      const count = tierCounts[tier.label];
-      const logMax = Math.log(maxCount + 1);
-      const logMin = Math.log(minCount + 1);
-      const logCurrent = Math.log(count + 1);
-      let percentage;
-      if (logMax === logMin) {
-        percentage = 100;
-      } else {
-        percentage = 5 + (logCurrent - logMin) / (logMax - logMin) * 95;
-      }
-      return `
-      <div class="hon-bar-container" title="${tier.label}: ${count} performers">
-        <div class="hon-bar-label-wrapper">
-          <span class="hon-bar-label">${tier.label}</span>
-        </div>
-        <div class="hon-bar-wrapper">
-          <div class="hon-bar animated-bar" 
-               data-target-width="${percentage}" 
-               data-final-count="${count}"
-               data-actual-count="${count}"
-               style="background-color: ${tier.color}; width: 0%;">
-            <span class="hon-bar-count" style="opacity: 0;">${count}</span>
-          </div>
-        </div>
-      </div>`;
-    }).join("");
-  }
-  function initStatsTabs(dialog) {
-    const buttons = dialog.querySelectorAll(".hon-stats-tab");
-    const panels = dialog.querySelectorAll(".hon-stats-tab-panel");
-    buttons.forEach((btn) => {
-      btn.onclick = (e) => {
-        e.stopPropagation();
-        const target = btn.dataset.tab;
-        buttons.forEach((b) => b.classList.toggle("active", b === btn));
-        panels.forEach((p) => p.classList.toggle("active", p.dataset.panel === target));
-        if (target === "distribution") {
-          setTimeout(() => {
-            const bars = dialog.querySelectorAll(".animated-bar:not(.animated)");
-            animateBars(bars);
-          }, 100);
-        }
-      };
-    });
-  }
-  function initStatsCollapsibles(dialog) {
-    const headers = dialog.querySelectorAll(".hon-rank-group-header, .hon-bar-group-header");
-    headers.forEach((header) => {
-      header.onclick = (e) => {
-        e.stopPropagation();
-        const groupType = header.classList.contains("hon-rank-group-header") ? ".hon-rank-group-content" : ".hon-bar-group-content";
-        const content = dialog.querySelector(`${groupType}[data-group="${header.dataset.group}"]`);
-        const isCollapsed = content.classList.toggle("collapsed");
-        header.setAttribute("aria-expanded", !isCollapsed);
-        header.querySelector(".hon-group-toggle").textContent = isCollapsed ? "\u25B6" : "\u25BC";
-      };
-    });
-  }
-  function animateBars(bars) {
-    bars.forEach((bar, index) => {
-      bar.classList.add("animated");
-      setTimeout(() => {
-        const targetWidth = parseFloat(bar.dataset.targetWidth);
-        const finalCount = parseInt(bar.dataset.finalCount);
-        const countElement = bar.querySelector(".hon-bar-count");
-        bar.style.width = `${targetWidth}%`;
-        let currentCount = 0;
-        const duration = 1e3;
-        const steps = 30;
-        const increment = finalCount / steps;
-        const stepTime = duration / steps;
-        const timer = setInterval(() => {
-          currentCount += increment;
-          if (currentCount >= finalCount) {
-            currentCount = finalCount;
-            clearInterval(timer);
-          }
-          countElement.textContent = Math.floor(currentCount);
-        }, stepTime);
-        setTimeout(() => {
-          countElement.style.opacity = "1";
-        }, 300);
-      }, index * 100);
-    });
-  }
-  var COUNTRY_FLAGS, CACHE_TTL2, cachedPerformers, cachedModalContent, cacheTimestamp, weightCountdownInterval;
-  var init_ui_stats = __esm({
-    "ui-stats.js"() {
-      init_api_client();
-      init_math_utils();
-      init_formatters();
-      init_rating_utils();
-      init_constants();
-      COUNTRY_FLAGS = {
-        "AD": "\u{1F1E6}\u{1F1E9}",
-        "AE": "\u{1F1E6}\u{1F1EA}",
-        "AF": "\u{1F1E6}\u{1F1EB}",
-        "AG": "\u{1F1E6}\u{1F1EC}",
-        "AI": "\u{1F1E6}\u{1F1EE}",
-        "AL": "\u{1F1E6}\u{1F1F1}",
-        "AM": "\u{1F1E6}\u{1F1F2}",
-        "AO": "\u{1F1E6}\u{1F1F4}",
-        "AQ": "\u{1F1E6}\u{1F1F6}",
-        "AR": "\u{1F1E6}\u{1F1F7}",
-        "AS": "\u{1F1E6}\u{1F1F8}",
-        "AT": "\u{1F1E6}\u{1F1F9}",
-        "AU": "\u{1F1E6}\u{1F1FA}",
-        "AW": "\u{1F1E6}\u{1F1FC}",
-        "AX": "\u{1F1E6}\u{1F1FD}",
-        "AZ": "\u{1F1E6}\u{1F1FF}",
-        "BA": "\u{1F1E7}\u{1F1E6}",
-        "BB": "\u{1F1E7}\u{1F1E7}",
-        "BD": "\u{1F1E7}\u{1F1E9}",
-        "BE": "\u{1F1E7}\u{1F1EA}",
-        "BF": "\u{1F1E7}\u{1F1EB}",
-        "BG": "\u{1F1E7}\u{1F1EC}",
-        "BH": "\u{1F1E7}\u{1F1ED}",
-        "BI": "\u{1F1E7}\u{1F1EE}",
-        "BJ": "\u{1F1E7}\u{1F1EF}",
-        "BL": "\u{1F1E7}\u{1F1F1}",
-        "BM": "\u{1F1E7}\u{1F1F2}",
-        "BN": "\u{1F1E7}\u{1F1F3}",
-        "BO": "\u{1F1E7}\u{1F1F4}",
-        "BQ": "\u{1F1E7}\u{1F1F6}",
-        "BR": "\u{1F1E7}\u{1F1F7}",
-        "BS": "\u{1F1E7}\u{1F1F8}",
-        "BT": "\u{1F1E7}\u{1F1F9}",
-        "BV": "\u{1F1E7}\u{1F1FB}",
-        "BW": "\u{1F1E7}\u{1F1FC}",
-        "BY": "\u{1F1E7}\u{1F1FE}",
-        "BZ": "\u{1F1E7}\u{1F1FF}",
-        "CA": "\u{1F1E8}\u{1F1E6}",
-        "CC": "\u{1F1E8}\u{1F1E8}",
-        "CD": "\u{1F1E8}\u{1F1E9}",
-        "CF": "\u{1F1E8}\u{1F1EB}",
-        "CG": "\u{1F1E8}\u{1F1EC}",
-        "CH": "\u{1F1E8}\u{1F1ED}",
-        "CI": "\u{1F1E8}\u{1F1EE}",
-        "CK": "\u{1F1E8}\u{1F1F0}",
-        "CL": "\u{1F1E8}\u{1F1F1}",
-        "CM": "\u{1F1E8}\u{1F1F2}",
-        "CN": "\u{1F1E8}\u{1F1F3}",
-        "CO": "\u{1F1E8}\u{1F1F4}",
-        "CR": "\u{1F1E8}\u{1F1F7}",
-        "CU": "\u{1F1E8}\u{1F1FA}",
-        "CV": "\u{1F1E8}\u{1F1FB}",
-        "CW": "\u{1F1E8}\u{1F1FC}",
-        "CX": "\u{1F1E8}\u{1F1FD}",
-        "CY": "\u{1F1E8}\u{1F1FE}",
-        "CZ": "\u{1F1E8}\u{1F1FF}",
-        "DE": "\u{1F1E9}\u{1F1EA}",
-        "DJ": "\u{1F1E9}\u{1F1EF}",
-        "DK": "\u{1F1E9}\u{1F1F0}",
-        "DM": "\u{1F1E9}\u{1F1F2}",
-        "DO": "\u{1F1E9}\u{1F1F4}",
-        "DZ": "\u{1F1E9}\u{1F1FF}",
-        "EC": "\u{1F1EA}\u{1F1E8}",
-        "EE": "\u{1F1EA}\u{1F1EA}",
-        "EG": "\u{1F1EA}\u{1F1EC}",
-        "EH": "\u{1F1EA}\u{1F1ED}",
-        "ER": "\u{1F1EA}\u{1F1F7}",
-        "ES": "\u{1F1EA}\u{1F1F8}",
-        "ET": "\u{1F1EA}\u{1F1F9}",
-        "FI": "\u{1F1EB}\u{1F1EE}",
-        "FJ": "\u{1F1EB}\u{1F1EF}",
-        "FK": "\u{1F1EB}\u{1F1F0}",
-        "FM": "\u{1F1EB}\u{1F1F2}",
-        "FO": "\u{1F1EB}\u{1F1F4}",
-        "FR": "\u{1F1EB}\u{1F1F7}",
-        "GA": "\u{1F1EC}\u{1F1E6}",
-        "GB": "\u{1F1EC}\u{1F1E7}",
-        "GD": "\u{1F1EC}\u{1F1E9}",
-        "GE": "\u{1F1EC}\u{1F1EA}",
-        "GF": "\u{1F1EC}\u{1F1EB}",
-        "GG": "\u{1F1EC}\u{1F1EC}",
-        "GH": "\u{1F1EC}\u{1F1ED}",
-        "GI": "\u{1F1EC}\u{1F1EE}",
-        "GL": "\u{1F1EC}\u{1F1F1}",
-        "GM": "\u{1F1EC}\u{1F1F2}",
-        "GN": "\u{1F1EC}\u{1F1F3}",
-        "GP": "\u{1F1EC}\u{1F1F5}",
-        "GQ": "\u{1F1EC}\u{1F1F6}",
-        "GR": "\u{1F1EC}\u{1F1F7}",
-        "GS": "\u{1F1EC}\u{1F1F8}",
-        "GT": "\u{1F1EC}\u{1F1F9}",
-        "GU": "\u{1F1EC}\u{1F1FA}",
-        "GW": "\u{1F1EC}\u{1F1FC}",
-        "GY": "\u{1F1EC}\u{1F1FE}",
-        "HK": "\u{1F1ED}\u{1F1F0}",
-        "HM": "\u{1F1ED}\u{1F1F2}",
-        "HN": "\u{1F1ED}\u{1F1F3}",
-        "HR": "\u{1F1ED}\u{1F1F7}",
-        "HT": "\u{1F1ED}\u{1F1F9}",
-        "HU": "\u{1F1ED}\u{1F1FA}",
-        "ID": "\u{1F1EE}\u{1F1E9}",
-        "IE": "\u{1F1EE}\u{1F1EA}",
-        "IL": "\u{1F1EE}\u{1F1F1}",
-        "IM": "\u{1F1EE}\u{1F1F2}",
-        "IN": "\u{1F1EE}\u{1F1F3}",
-        "IO": "\u{1F1EE}\u{1F1F4}",
-        "IQ": "\u{1F1EE}\u{1F1F6}",
-        "IR": "\u{1F1EE}\u{1F1F7}",
-        "IS": "\u{1F1EE}\u{1F1F8}",
-        "IT": "\u{1F1EE}\u{1F1F9}",
-        "JE": "\u{1F1EF}\u{1F1EA}",
-        "JM": "\u{1F1EF}\u{1F1F2}",
-        "JO": "\u{1F1EF}\u{1F1F4}",
-        "JP": "\u{1F1EF}\u{1F1F5}",
-        "KE": "\u{1F1F0}\u{1F1EA}",
-        "KG": "\u{1F1F0}\u{1F1EC}",
-        "KH": "\u{1F1F0}\u{1F1ED}",
-        "KI": "\u{1F1F0}\u{1F1EE}",
-        "KM": "\u{1F1F0}\u{1F1F2}",
-        "KN": "\u{1F1F0}\u{1F1F3}",
-        "KP": "\u{1F1F0}\u{1F1F5}",
-        "KR": "\u{1F1F0}\u{1F1F7}",
-        "KW": "\u{1F1F0}\u{1F1FC}",
-        "KY": "\u{1F1F0}\u{1F1FE}",
-        "KZ": "\u{1F1F0}\u{1F1FF}",
-        "LA": "\u{1F1F1}\u{1F1E6}",
-        "LB": "\u{1F1F1}\u{1F1E7}",
-        "LC": "\u{1F1F1}\u{1F1E8}",
-        "LI": "\u{1F1F1}\u{1F1EE}",
-        "LK": "\u{1F1F1}\u{1F1F0}",
-        "LR": "\u{1F1F1}\u{1F1F7}",
-        "LS": "\u{1F1F1}\u{1F1F8}",
-        "LT": "\u{1F1F1}\u{1F1F9}",
-        "LU": "\u{1F1F1}\u{1F1FA}",
-        "LV": "\u{1F1F1}\u{1F1FB}",
-        "LY": "\u{1F1F1}\u{1F1FE}",
-        "MA": "\u{1F1F2}\u{1F1E6}",
-        "MC": "\u{1F1F2}\u{1F1E8}",
-        "MD": "\u{1F1F2}\u{1F1E9}",
-        "ME": "\u{1F1F2}\u{1F1EA}",
-        "MF": "\u{1F1F2}\u{1F1EB}",
-        "MG": "\u{1F1F2}\u{1F1EC}",
-        "MH": "\u{1F1F2}\u{1F1ED}",
-        "MK": "\u{1F1F2}\u{1F1F0}",
-        "ML": "\u{1F1F2}\u{1F1F1}",
-        "MM": "\u{1F1F2}\u{1F1F2}",
-        "MN": "\u{1F1F2}\u{1F1F3}",
-        "MO": "\u{1F1F2}\u{1F1F4}",
-        "MP": "\u{1F1F2}\u{1F1F5}",
-        "MQ": "\u{1F1F2}\u{1F1F6}",
-        "MR": "\u{1F1F2}\u{1F1F7}",
-        "MS": "\u{1F1F2}\u{1F1F8}",
-        "MT": "\u{1F1F2}\u{1F1F9}",
-        "MU": "\u{1F1F2}\u{1F1FA}",
-        "MV": "\u{1F1F2}\u{1F1FB}",
-        "MW": "\u{1F1F2}\u{1F1FC}",
-        "MX": "\u{1F1F2}\u{1F1FD}",
-        "MY": "\u{1F1F2}\u{1F1FE}",
-        "MZ": "\u{1F1F2}\u{1F1FF}",
-        "NA": "\u{1F1F3}\u{1F1E6}",
-        "NC": "\u{1F1F3}\u{1F1E8}",
-        "NE": "\u{1F1F3}\u{1F1EA}",
-        "NF": "\u{1F1F3}\u{1F1EB}",
-        "NG": "\u{1F1F3}\u{1F1EC}",
-        "NI": "\u{1F1F3}\u{1F1EE}",
-        "NL": "\u{1F1F3}\u{1F1F1}",
-        "NO": "\u{1F1F3}\u{1F1F4}",
-        "NP": "\u{1F1F3}\u{1F1F5}",
-        "NR": "\u{1F1F3}\u{1F1F7}",
-        "NU": "\u{1F1F3}\u{1F1FA}",
-        "NZ": "\u{1F1F3}\u{1F1FF}",
-        "OM": "\u{1F1F4}\u{1F1F2}",
-        "PA": "\u{1F1F5}\u{1F1E6}",
-        "PE": "\u{1F1F5}\u{1F1EA}",
-        "PF": "\u{1F1F5}\u{1F1EB}",
-        "PG": "\u{1F1F5}\u{1F1EC}",
-        "PH": "\u{1F1F5}\u{1F1ED}",
-        "PK": "\u{1F1F5}\u{1F1F0}",
-        "PL": "\u{1F1F5}\u{1F1F1}",
-        "PM": "\u{1F1F5}\u{1F1F2}",
-        "PN": "\u{1F1F5}\u{1F1F3}",
-        "PR": "\u{1F1F5}\u{1F1F7}",
-        "PS": "\u{1F1F5}\u{1F1F8}",
-        "PT": "\u{1F1F5}\u{1F1F9}",
-        "PW": "\u{1F1F5}\u{1F1FC}",
-        "PY": "\u{1F1F5}\u{1F1FE}",
-        "QA": "\u{1F1F6}\u{1F1E6}",
-        "RE": "\u{1F1F7}\u{1F1EA}",
-        "RO": "\u{1F1F7}\u{1F1F4}",
-        "RS": "\u{1F1F7}\u{1F1F8}",
-        "RU": "\u{1F1F7}\u{1F1FA}",
-        "RW": "\u{1F1F7}\u{1F1FC}",
-        "SA": "\u{1F1F8}\u{1F1E6}",
-        "SB": "\u{1F1F8}\u{1F1E7}",
-        "SC": "\u{1F1F8}\u{1F1E8}",
-        "SD": "\u{1F1F8}\u{1F1E9}",
-        "SE": "\u{1F1F8}\u{1F1EA}",
-        "SG": "\u{1F1F8}\u{1F1EC}",
-        "SH": "\u{1F1F8}\u{1F1ED}",
-        "SI": "\u{1F1F8}\u{1F1EE}",
-        "SJ": "\u{1F1F8}\u{1F1EF}",
-        "SK": "\u{1F1F8}\u{1F1F0}",
-        "SL": "\u{1F1F8}\u{1F1F1}",
-        "SM": "\u{1F1F8}\u{1F1F2}",
-        "SN": "\u{1F1F8}\u{1F1F3}",
-        "SO": "\u{1F1F8}\u{1F1F4}",
-        "SR": "\u{1F1F8}\u{1F1F7}",
-        "SS": "\u{1F1F8}\u{1F1F8}",
-        "ST": "\u{1F1F8}\u{1F1F9}",
-        "SV": "\u{1F1F8}\u{1F1FB}",
-        "SX": "\u{1F1F8}\u{1F1FD}",
-        "SY": "\u{1F1F8}\u{1F1FE}",
-        "SZ": "\u{1F1F8}\u{1F1FF}",
-        "TC": "\u{1F1F9}\u{1F1E8}",
-        "TD": "\u{1F1F9}\u{1F1E9}",
-        "TF": "\u{1F1F9}\u{1F1EB}",
-        "TG": "\u{1F1F9}\u{1F1EC}",
-        "TH": "\u{1F1F9}\u{1F1ED}",
-        "TJ": "\u{1F1F9}\u{1F1EF}",
-        "TK": "\u{1F1F9}\u{1F1F0}",
-        "TL": "\u{1F1F9}\u{1F1F1}",
-        "TM": "\u{1F1F9}\u{1F1F2}",
-        "TN": "\u{1F1F9}\u{1F1F3}",
-        "TO": "\u{1F1F9}\u{1F1F4}",
-        "TR": "\u{1F1F9}\u{1F1F7}",
-        "TT": "\u{1F1F9}\u{1F1F9}",
-        "TV": "\u{1F1F9}\u{1F1FB}",
-        "TW": "\u{1F1F9}\u{1F1FC}",
-        "TZ": "\u{1F1F9}\u{1F1FF}",
-        "UA": "\u{1F1FA}\u{1F1E6}",
-        "UG": "\u{1F1FA}\u{1F1EC}",
-        "UM": "\u{1F1FA}\u{1F1F2}",
-        "US": "\u{1F1FA}\u{1F1F8}",
-        "UY": "\u{1F1FA}\u{1F1FE}",
-        "UZ": "\u{1F1FA}\u{1F1FF}",
-        "VA": "\u{1F1FB}\u{1F1E6}",
-        "VC": "\u{1F1FB}\u{1F1E8}",
-        "VE": "\u{1F1FB}\u{1F1EA}",
-        "VG": "\u{1F1FB}\u{1F1EC}",
-        "VI": "\u{1F1FB}\u{1F1EE}",
-        "VN": "\u{1F1FB}\u{1F1F3}",
-        "VU": "\u{1F1FB}\u{1F1FA}",
-        "WF": "\u{1F1FC}\u{1F1EB}",
-        "WS": "\u{1F1FC}\u{1F1F8}",
-        "YE": "\u{1F1FE}\u{1F1EA}",
-        "YT": "\u{1F1FE}\u{1F1F9}",
-        "ZA": "\u{1F1FF}\u{1F1E6}",
-        "ZM": "\u{1F1FF}\u{1F1F2}",
-        "ZW": "\u{1F1FF}\u{1F1FC}"
-      };
-      CACHE_TTL2 = 30 * 1e3;
-      cachedPerformers = null;
-      cachedModalContent = null;
-      cacheTimestamp = 0;
-      weightCountdownInterval = null;
-    }
-  });
-
   // ui-dashboard.js
-  var ui_dashboard_exports = {};
-  __export(ui_dashboard_exports, {
-    attachEventListeners: () => attachEventListeners,
-    createMainUI: () => createMainUI,
-    handleGenderToggle: () => handleGenderToggle,
-    setMode: () => setMode,
-    updateSkipButtonVisibility: () => updateSkipButtonVisibility
-  });
   function createSkeletonHTML(count, extraClass = "") {
     const cards = Array.from({ length: count }, () => `
     <div class="hon-skeleton-card">
@@ -6707,25 +9671,11 @@ Match Stats:`;
   }
   function createMainUI() {
     const isPerformers = state.battleType === "performers";
-    const genderFilterHTML = isPerformers ? `
-    <div class="hon-gender-filter">
-      <div class="hon-gender-btns">
-        ${ALL_GENDERS.map((g) => `
-          <button
-            class="hon-gender-btn ${state.selectedGenders.includes(g.value) ? "active" : ""}"
-            data-gender="${g.value}"
-          >
-            ${g.label}
-          </button>`).join("")}
-      </div>
-    </div>` : "";
     return `
     <div id="hotornot-container" class="hon-container">
       <div class="hon-header">
         <h1 class="hon-title">Ascension</h1>
-
-        ${genderFilterHTML}
-        ${isPerformers ? `<button id="hon-stats-btn" class="btn btn-primary">\u{1F4CA} View All Stats</button>` : ""}
+        ${isPerformers ? `<button id="hon-stats-btn" class="btn btn-primary">\u{1F4CA} Performer Statistics</button>` : ""}
       </div>
       <div id="hon-performer-selection" style="display: none;">
         <div id="hon-performer-list">${createSkeletonHTML(6)}</div>
@@ -6734,8 +9684,8 @@ Match Stats:`;
         <div id="hon-comparison-area">${createSkeletonHTML(2, "hon-comparison-skeleton")}</div>
         <div class="hon-actions">
           <div class="hon-action-buttons">
-            <button id="hon-skip-btn" class="hon-action-btn" title="Skip">\u23ED\uFE0F</button>
-            <button id="hon-undo-btn" class="hon-action-btn" title="">\u21A9</button>
+            <button id="hon-skip-btn" class="hon-action-btn" title="Skip Match">Skip Match</button>
+            <button id="hon-undo-btn" class="hon-action-btn" title="Undo Match">Undo Match</button>
           </div>
         </div>
         <div class="hon-keyboard-hints">
@@ -6753,7 +9703,50 @@ Match Stats:`;
     if (!skipBtn)
       return;
     const isSkippableMode = state.currentMode === "swiss" || state.currentMode === "scenes" || state.currentMode === "gauntlet" || state.currentMode === "champion";
-    skipBtn.style.display = isSkippableMode ? "inline-block" : "none";
+    skipBtn.style.display = isSkippableMode ? "" : "none";
+  }
+  function crossfadePanels(showSelection, onEnter = null) {
+    const selectionContainer = document.getElementById("hon-performer-selection");
+    const comparisonArea = document.getElementById("hon-comparison-area");
+    const actionsEl = document.querySelector(".hon-actions");
+    if (!selectionContainer || !comparisonArea)
+      return;
+    const selectionVisible = selectionContainer.style.display !== "none";
+    if (selectionVisible === showSelection) {
+      selectionContainer.style.display = showSelection ? "block" : "none";
+      comparisonArea.style.display = showSelection ? "none" : "";
+      if (actionsEl)
+        actionsEl.style.display = showSelection ? "none" : "";
+      if (onEnter)
+        onEnter();
+      return;
+    }
+    const leaving = showSelection ? comparisonArea : selectionContainer;
+    const entering = showSelection ? selectionContainer : comparisonArea;
+    leaving.classList.add("hon-panel-fading-out");
+    if (actionsEl)
+      actionsEl.classList.add("hon-panel-fading-out");
+    setTimeout(() => {
+      leaving.classList.remove("hon-panel-fading-out");
+      if (actionsEl)
+        actionsEl.classList.remove("hon-panel-fading-out");
+      leaving.style.display = "none";
+      entering.style.display = showSelection ? "block" : "";
+      if (actionsEl)
+        actionsEl.style.display = showSelection ? "none" : "";
+      entering.classList.add("hon-panel-fading-in");
+      if (actionsEl && !showSelection)
+        actionsEl.classList.add("hon-panel-fading-in");
+      requestAnimationFrame(() => {
+        setTimeout(() => {
+          entering.classList.remove("hon-panel-fading-in");
+          if (actionsEl)
+            actionsEl.classList.remove("hon-panel-fading-in");
+        }, 220);
+      });
+      if (onEnter)
+        onEnter();
+    }, 180);
   }
   function attachEventListeners(parent = document) {
     if (!attachedElements.has(parent)) {
@@ -6762,9 +9755,7 @@ Match Stats:`;
     const attachedSet = attachedElements.get(parent);
     const statsBtn = parent.querySelector("#hon-stats-btn");
     if (statsBtn && !attachedSet.has("statsBtn")) {
-      const handler = () => {
-        Promise.resolve().then(() => (init_ui_stats(), ui_stats_exports)).then((m) => m.openStatsModal());
-      };
+      const handler = () => Promise.resolve().then(() => (init_ui_stats(), ui_stats_exports)).then((m) => m.openStatsModal());
       statsBtn.addEventListener("click", handler);
       attachedSet.add("statsBtn");
     }
@@ -6780,13 +9771,12 @@ Match Stats:`;
     const skipBtn = parent.querySelector("#hon-skip-btn");
     if (skipBtn && !attachedSet.has("skipBtn")) {
       updateSkipButtonVisibility();
-      const handler = async (e) => {
+      const handler = (e) => {
         e.preventDefault();
         e.stopPropagation();
         const isSkippableMode = state.currentMode === "swiss" || state.currentMode === "scenes" || state.currentMode === "gauntlet" || state.currentMode === "champion";
         if (isSkippableMode) {
-          const { handleSkip: handleSkip2 } = await Promise.resolve().then(() => (init_match_handler(), match_handler_exports));
-          handleSkip2();
+          handleSkip();
         }
       };
       skipBtn.addEventListener("click", handler);
@@ -6794,20 +9784,21 @@ Match Stats:`;
     }
     const undoBtn = parent.querySelector("#hon-undo-btn");
     if (undoBtn && !attachedSet.has("undoBtn")) {
-      const handler = () => handleUndo();
+      const handler = async () => {
+        undoBtn.classList.add("hon-action-loading");
+        const originalText = undoBtn.textContent;
+        undoBtn.textContent = "Undoing...";
+        try {
+          await handleUndo();
+        } finally {
+          undoBtn.classList.remove("hon-action-loading");
+          undoBtn.textContent = originalText;
+        }
+      };
       undoBtn.onclick = handler;
-      undoBtn.style.display = state.matchHistory && state.matchHistory.length > 0 ? "inline-block" : "none";
+      undoBtn.style.display = state.matchHistory && state.matchHistory.length > 0 ? "" : "none";
       attachedSet.add("undoBtn");
     }
-    const genderButtons = parent.querySelectorAll(".hon-gender-btn");
-    genderButtons.forEach((btn, index) => {
-      const key = `gender-${index}`;
-      if (!attachedSet.has(key)) {
-        const handler = () => handleGenderToggle(btn.dataset.gender);
-        btn.addEventListener("click", handler);
-        attachedSet.add(key);
-      }
-    });
     const modeButtons = parent.querySelectorAll(".hon-mode-btn");
     modeButtons.forEach((btn, index) => {
       const key = `mode-${index}`;
@@ -6829,25 +9820,10 @@ Match Stats:`;
             modal.classList.remove("hon-mode-champion", "hon-mode-swiss", "hon-mode-gauntlet", "hon-mode-placement");
             modal.classList.add(`hon-mode-${rawMode}`);
           }
-          const selectionContainer = document.getElementById("hon-performer-selection");
-          const comparisonArea = document.getElementById("hon-comparison-area");
-          const actionsEl = document.querySelector(".hon-actions");
           if (newMode === "swiss") {
-            if (selectionContainer)
-              selectionContainer.style.display = "none";
-            if (comparisonArea)
-              comparisonArea.style.display = "";
-            if (actionsEl)
-              actionsEl.style.display = "";
-            loadNewPair();
+            crossfadePanels(false, () => loadNewPair());
           } else if (newMode === "gauntlet" || newMode === "champion") {
-            if (selectionContainer)
-              selectionContainer.style.display = "block";
-            if (comparisonArea)
-              comparisonArea.style.display = "none";
-            if (actionsEl)
-              actionsEl.style.display = "none";
-            Promise.resolve().then(() => (init_gauntlet_selection(), gauntlet_selection_exports)).then((m) => m.loadPerformerSelection());
+            crossfadePanels(true, () => Promise.resolve().then(() => (init_gauntlet_selection(), gauntlet_selection_exports)).then((m) => m.loadPerformerSelection()));
           }
           updateSkipButtonVisibility();
         };
@@ -6856,25 +9832,6 @@ Match Stats:`;
       }
     });
   }
-  function handleGenderToggle(gender) {
-    const isSelected = state.selectedGenders.includes(gender);
-    if (isSelected) {
-      state.selectedGenders = state.selectedGenders.filter((g) => g !== gender);
-    } else {
-      state.selectedGenders.push(gender);
-    }
-    try {
-      localStorage.setItem("hotornot_selected_genders", JSON.stringify(state.selectedGenders));
-    } catch (e) {
-      console.warn("[Ascension] Could not save gender selection to localStorage:", e);
-    }
-    console.log(`[Ascension] Gender Filter Updated: ${state.selectedGenders.join(", ")}`);
-    const genderBtns = document.querySelectorAll(`.hon-gender-btn[data-gender="${gender}"]`);
-    genderBtns.forEach((btn) => {
-      btn.classList.toggle("active", !isSelected);
-    });
-    loadNewPair();
-  }
   function setMode(mode) {
     const rawMode = mode;
     const normalizedMode = rawMode === "placement" ? "gauntlet" : rawMode;
@@ -6882,19 +9839,18 @@ Match Stats:`;
       resetBattleState();
     }
     state.currentMode = normalizedMode;
-    const selEl = document.getElementById("hon-performer-selection");
-    const compEl = document.getElementById("hon-comparison-area");
-    if (selEl)
-      selEl.style.display = "none";
-    if (compEl)
-      compEl.style.display = "none";
     const modal = document.getElementById("hon-modal");
     if (modal) {
       modal.classList.remove("hon-mode-champion", "hon-mode-swiss", "hon-mode-gauntlet", "hon-mode-placement");
       modal.classList.add(`hon-mode-${rawMode}`);
     }
     if (normalizedMode === "gauntlet" || normalizedMode === "champion") {
-      Promise.resolve().then(() => (init_gauntlet_selection(), gauntlet_selection_exports)).then((m) => m.loadPerformerSelection());
+      crossfadePanels(true, () => Promise.resolve().then(() => (init_gauntlet_selection(), gauntlet_selection_exports)).then((m) => m.loadPerformerSelection()));
+    } else {
+      crossfadePanels(false, () => {
+        if (normalizedMode === "swiss")
+          loadNewPair();
+      });
     }
     updateSkipButtonVisibility();
   }
@@ -6902,938 +9858,22 @@ Match Stats:`;
   var init_ui_dashboard = __esm({
     "ui-dashboard.js"() {
       init_state();
-      init_dom_utils();
-      init_constants();
       init_battle_engine();
       init_match_handler();
       attachedElements = /* @__PURE__ */ new WeakMap();
     }
   });
 
-  // ui-event-log.js
-  function initEventLog() {
-    console.log = function(...args) {
-      originalConsoleLog.apply(console, args);
-      captureLogEntry("log", args);
-    };
-    console.warn = function(...args) {
-      originalConsoleWarn.apply(console, args);
-      captureLogEntry("warn", args);
-    };
-    console.error = function(...args) {
-      originalConsoleError.apply(console, args);
-      captureLogEntry("error", args);
-    };
-    createEventLogUI();
+  // dom-utils.js
+  function clearDOMCache() {
+    elementCollectionCache.clear();
+    commonElementsCache.clear();
   }
-  function captureLogEntry(level, args) {
-    const fullMessage = args.map((arg) => {
-      if (typeof arg === "object" && arg !== null) {
-        try {
-          return JSON.stringify(arg);
-        } catch (e) {
-          return String(arg);
-        }
-      }
-      return String(arg);
-    }).join(" ");
-    if (!fullMessage.includes("[Ascension]") && !fullMessage.includes("[HotOrNot]")) {
-      return;
-    }
-    const readableMessage = extractReadableContent(args);
-    let tierInfo = null;
-    if (readableMessage.includes("Tier Selection:")) {
-      const tierMatch = readableMessage.match(/Tier Selection: ([\w\-]+)/);
-      if (tierMatch && tierMatch[1]) {
-        tierInfo = tierMatch[1];
-      }
-    }
-    let tierFilterTiers = null;
-    if (readableMessage.includes("Tier Filter active:")) {
-      const tierFilterMatch = readableMessage.match(/Tier Filter active: ([\w\-,\s]+)/);
-      if (tierFilterMatch && tierFilterMatch[1]) {
-        tierFilterTiers = tierFilterMatch[1].split(",").map((t) => t.trim()).filter(Boolean);
-      }
-    }
-    const entry = {
-      id: Date.now() + Math.random(),
-      timestamp: /* @__PURE__ */ new Date(),
-      level,
-      message: readableMessage,
-      formattedMessage: readableMessage,
-      tierInfo,
-      tierFilterTiers,
-      battleType: state.battleType
-      // Store mode at capture time for accurate export labels
-    };
-    eventLogEntries.push(entry);
-    if (eventLogEntries.length > MAX_LOG_ENTRIES) {
-      eventLogEntries.splice(0, eventLogEntries.length - MAX_LOG_ENTRIES);
-    }
-    updateEventLogDisplay();
-  }
-  function saveEventLogState(state2) {
-    try {
-      localStorage.setItem(EVENT_LOG_STORAGE_KEY, JSON.stringify(state2));
-    } catch (e) {
-      console.warn("[Ascension] Failed to save event log state:", e);
-    }
-  }
-  function loadEventLogState() {
-    try {
-      const data = localStorage.getItem(EVENT_LOG_STORAGE_KEY);
-      return data ? JSON.parse(data) : {};
-    } catch (e) {
-      console.warn("[Ascension] Failed to load event log state:", e);
-      return {};
-    }
-  }
-  function extractReadableContent(args) {
-    let cleanParts = [];
-    for (let i = 0; i < args.length; i++) {
-      const arg = args[i];
-      if (arg === "%c" || typeof arg === "string" && (arg.startsWith("color:") || arg.startsWith("font-weight:") || arg.startsWith("background:"))) {
-        continue;
-      }
-      if (typeof arg === "object" && arg !== null) {
-        try {
-          cleanParts.push(JSON.stringify(arg));
-        } catch (e) {
-          cleanParts.push(String(arg));
-        }
-      } else {
-        cleanParts.push(String(arg));
-      }
-    }
-    let result = cleanParts.join(" ").replace(/%c/g, "").replace(/\s+/g, " ").trim();
-    return result;
-  }
-  function createEventLogUI() {
-    if (document.getElementById("hon-event-log")) {
-      return;
-    }
-    const logContainer = document.createElement("div");
-    logContainer.id = "hon-event-log";
-    logContainer.className = "hon-event-log-container";
-    logContainer.innerHTML = `
-    <div class="hon-event-log-header">
-      <span class="hon-event-log-title">\u{1F4D1} Log</span>
-      <div class="hon-event-log-controls">
-        <button id="hon-event-log-export" class="hon-event-log-btn" title="Export Log">\u{1F4BE}</button>
-        <button id="hon-event-log-clear" class="hon-event-log-btn" title="Clear Log">\u{1F5D1}\uFE0F</button>
-        <button id="hon-event-log-toggle" class="hon-event-log-btn" title="Toggle Visibility">\u{1F441}\uFE0F</button>
-        <button id="hon-event-log-close" class="hon-event-log-btn" title="Close Log">\u2715</button>
-      </div>
-    </div>
-    <div class="hon-event-log-content" id="hon-event-log-content"></div>
-    <div class="hon-event-log-resize-handle" id="hon-event-log-resize"></div>
-    <div class="hon-event-log-resize-handle-horizontal" id="hon-event-log-resize-horizontal"></div>
-  `;
-    const savedState = loadEventLogState();
-    if (savedState.height) {
-      logContainer.style.height = savedState.height;
-    }
-    if (savedState.width) {
-      logContainer.style.width = savedState.width;
-    }
-    waitForModalAndInject(logContainer);
-  }
-  function waitForModalAndInject(logContainer) {
-    const checkInterval = setInterval(() => {
-      const pluginLayout = document.querySelector(".hon-plugin-layout");
-      if (pluginLayout) {
-        const isMobileView = window.innerWidth <= 768;
-        if (isMobileView) {
-          pluginLayout.appendChild(logContainer);
-        } else {
-          pluginLayout.appendChild(logContainer);
-        }
-        setupEventLogEventListeners();
-        updateEventLogDisplay();
-        clearInterval(checkInterval);
-        if (!isMobileView) {
-          setupLayoutConstraints(pluginLayout, logContainer);
-        }
-      }
-    }, 100);
-    setTimeout(() => clearInterval(checkInterval), 5e3);
-  }
-  function setupLayoutConstraints(pluginLayout, logContainer) {
-    if (layoutObserver) {
-      layoutObserver.disconnect();
-    }
-    layoutObserver = new ResizeObserver(() => {
-      constrainEventLogPosition(pluginLayout, logContainer);
-    });
-    layoutObserver.observe(pluginLayout);
-    constrainEventLogPosition(pluginLayout, logContainer);
-  }
-  function constrainEventLogPosition(pluginLayout, logContainer) {
-    if (!pluginLayout || !logContainer)
-      return;
-    const rect = pluginLayout.getBoundingClientRect();
-    const logRect = logContainer.getBoundingClientRect();
-    const sidebar = pluginLayout.querySelector(".hon-sidebar");
-    const mainContent = pluginLayout.querySelector(".hon-main-plugin-content");
-    if (sidebar && mainContent) {
-      const sidebarRect = sidebar.getBoundingClientRect();
-      const mainRect = mainContent.getBoundingClientRect();
-      const maxWidth = mainRect.left - rect.left - 20;
-      if (maxWidth > 100) {
-        logContainer.style.maxWidth = `${maxWidth}px`;
-      }
-    }
-  }
-  function setupEventLogEventListeners() {
-    const exportBtn = document.getElementById("hon-event-log-export");
-    const clearBtn = document.getElementById("hon-event-log-clear");
-    const toggleBtn = document.getElementById("hon-event-log-toggle");
-    const closeBtn = document.getElementById("hon-event-log-close");
-    const resizeHandle = document.getElementById("hon-event-log-resize");
-    const horizontalResizeHandle = document.getElementById("hon-event-log-resize-horizontal");
-    if (exportBtn) {
-      exportBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        exportLogEntries();
-      });
-    }
-    if (clearBtn) {
-      clearBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        eventLogEntries = [];
-        updateEventLogDisplay();
-      });
-    }
-    if (toggleBtn) {
-      toggleBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const content = document.querySelector(".hon-event-log-content");
-        const isVisible = content.style.display !== "none";
-        content.style.display = isVisible ? "none" : "block";
-        toggleBtn.textContent = isVisible ? "\u{1F441}\uFE0F" : "\u{1F6AB}";
-        toggleBtn.title = isVisible ? "Show Log" : "Hide Log";
-        saveEventLogState({ closed: !isVisible });
-      });
-    }
-    if (closeBtn) {
-      closeBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const logContainer = document.getElementById("hon-event-log");
-        if (logContainer) {
-          logContainer.style.display = "none";
-        }
-      });
-    }
-    if (resizeHandle) {
-      setupResizeHandler(resizeHandle);
-    }
-    if (horizontalResizeHandle) {
-      setupResizeHandler(horizontalResizeHandle);
-    }
-  }
-  function setupResizeHandler(resizeHandle) {
-    let isResizing = false;
-    resizeHandle.addEventListener("mousedown", (e) => {
-      isResizing = true;
-      e.preventDefault();
-      e.stopPropagation();
-      const logContainer = document.getElementById("hon-event-log");
-      const startX = e.clientX;
-      const startY = e.clientY;
-      const startWidth = parseInt(document.defaultView.getComputedStyle(logContainer).width, 10);
-      const startHeight = parseInt(document.defaultView.getComputedStyle(logContainer).height, 10);
-      const isHorizontalResize = e.target.classList.contains("hon-event-log-resize-handle-horizontal");
-      const doDrag = (e2) => {
-        if (!isResizing)
-          return;
-        e2.preventDefault();
-        if (isHorizontalResize) {
-          const newWidth = startWidth + (e2.clientX - startX);
-          const clampedWidth = Math.max(200, Math.min(800, newWidth));
-          logContainer.style.width = clampedWidth + "px";
-        } else {
-          const newHeight = startHeight - (e2.clientY - startY);
-          const clampedHeight = Math.max(100, Math.min(500, newHeight));
-          logContainer.style.height = clampedHeight + "px";
-        }
-      };
-      const stopDrag = () => {
-        isResizing = false;
-        document.removeEventListener("mousemove", doDrag);
-        document.removeEventListener("mouseup", stopDrag);
-        const logContainer2 = document.getElementById("hon-event-log");
-        if (logContainer2) {
-          saveEventLogState({
-            height: logContainer2.style.height,
-            width: logContainer2.style.width
-          });
-        }
-      };
-      document.addEventListener("mousemove", doDrag);
-      document.addEventListener("mouseup", stopDrag);
-    });
-  }
-  function exportLogEntries() {
-    if (eventLogEntries.length === 0) {
-      alert("No log entries to export");
-      return;
-    }
-    const logText = eventLogEntries.map((entry) => {
-      const timeString = entry.timestamp.toLocaleString();
-      const level = entry.level.toUpperCase();
-      const itemLabel = entry.battleType === "scenes" ? "Scene" : "Performer";
-      let message = entry.message;
-      message = message.replace(
-        /(\[Ascension\] (?:Match|CROSS-TIER|Custom Cross-Tier): )([^(]+)(\s+\([^)]+\))/g,
-        "$1PerformerA$3"
-      );
-      message = message.replace(
-        /(vs\s+)([^(]+)(\s+\([^)]+\))/g,
-        "$1PerformerB$3"
-      );
-      message = message.replace(
-        /(\[Ascension\] Updating: )(.+?)\s*\(ID: (\d+)\)/g,
-        `$1${itemLabel} (ID: $3)`
-      );
-      message = message.replace(
-        /(\[Ascension\] Champion Selected: )([^(]+)(\s+\([^)]+\))/g,
-        "$1PerformerA$3"
-      );
-      return `[${timeString}] ${level}: ${message}`;
-    }).join("\n");
-    const blob = new Blob([logText], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const fileName = `battle-log-${(/* @__PURE__ */ new Date()).toISOString().slice(0, 19).replace(/:/g, "-")}.txt`;
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = fileName;
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => {
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    }, 100);
-    addEventLog(`Log exported to file: ${fileName}`, "log");
-  }
-  function updateEventLogDisplay() {
-    const content = document.getElementById("hon-event-log-content");
-    if (!content)
-      return;
-    const isScrolledToBottom = content.scrollHeight - content.clientHeight <= content.scrollTop + 1;
-    const existingEntriesCount = content.querySelectorAll(".hon-log-entry").length;
-    const newEntriesCount = eventLogEntries.length;
-    const tierColors = {
-      "any": "#00ff00",
-      "newcomers": "#00ff00",
-      "S-Tier": "#eb9834",
-      "A-Tier": "#e014aa",
-      "B-Tier": "#7f1e82",
-      "C-Tier": "#14bbe0",
-      "D-Tier": "#92e014",
-      "F-Tier": "#808080"
-    };
-    const allEntriesHTML = eventLogEntries.map((entry, index) => {
-      const timeString = entry.timestamp.toLocaleTimeString();
-      const levelClass = `hon-log-${entry.level}`;
-      const isNewEntry = index >= existingEntriesCount;
-      const animationClass = isNewEntry ? "new-entry" : "";
-      let messageText = entry.formattedMessage.replace(/%c/g, "").trim();
-      let messageHtml = messageText;
-      messageHtml = messageHtml.replace(
-        /\[Ascension\]/g,
-        '[<span style="color: #1cb4d6; font-weight: bold;">Ascension</span>]'
-      );
-      messageHtml = messageHtml.replace(/\bWIN\b/g, '<span style="color: #4CAF50; font-weight: bold;">WIN</span>').replace(/\bLOSS\b/g, '<span style="color: #F44336; font-weight: bold;">LOSS</span>').replace(/\bDRAW\b/g, '<span style="color: #9E9E9E; font-weight: bold;">DRAW</span>');
-      const placeholders = [];
-      function addPlaceholder(html) {
-        const key = `__HON_FMT_${placeholders.length}__`;
-        placeholders.push({ key, html });
-        return key;
-      }
-      messageHtml = messageHtml.replace(/\(\+(\d+(?:\.\d+)?)\)/g, (_, num) => addPlaceholder(`(<span style="color: #4CAF50; font-weight: bold;">+${num}</span>)`)).replace(/\(-(\d+(?:\.\d+)?)\)/g, (_, num) => addPlaceholder(`(<span style="color: #F44336; font-weight: bold;">-${num}</span>)`));
-      messageHtml = messageHtml.replace(
-        /Ascended:\s*(\d+(?:\.\d+)?)/g,
-        (_, num) => addPlaceholder(`Ascended: <span style="color: #eb9834; font-weight: bold;">${num}</span>`)
-      );
-      messageHtml = messageHtml.replace(
-        /\(\s*ID\s*:\s*(\d+)\s*\)/g,
-        '(<span style="color: #1cb4d6;">ID: $1</span>)'
-      );
-      messageHtml = messageHtml.replace(
-        /\(\s*w\s*:\s*([\d\.]+)\s*\)/g,
-        '(w: <span style="color: #FF69B4; font-weight: bold;">$1</span>)'
-      );
-      messageHtml = messageHtml.replace(
-        /\[([\d\.]+)\]/g,
-        '[<span style="color: #1cb4d6;">$1</span>]'
-      );
-      messageHtml = messageHtml.replace(
-        /\bvs\b/g,
-        '<span style="color: #888;">vs</span>'
-      );
-      messageHtml = messageHtml.replace(
-        /Weight\s*:/g,
-        '<span style="color: #888;">Weight:</span>'
-      );
-      messageHtml = messageHtml.replace(
-        /Total Match Count\s*:/g,
-        '<span style="color: #888;">Total Match Count:</span>'
-      );
-      messageHtml = messageHtml.replace(
-        /\b(\d+\.\d+)\b/g,
-        '<span style="color: #FF69B4; font-weight: bold;">$1</span>'
-      );
-      messageHtml = messageHtml.replace(
-        /(CROSS-TIER:)/g,
-        '<span style="color: #E91E63; font-weight: bold;">$1</span>'
-      );
-      messageHtml = messageHtml.replace(
-        /(Custom Cross-Tier:)/g,
-        '<span style="color: #E91E63; font-weight: bold;">$1</span>'
-      );
-      placeholders.forEach(({ key, html }) => {
-        messageHtml = messageHtml.replace(key, html);
-      });
-      if (entry.tierInfo) {
-        let tierColor = tierColors[entry.tierInfo] || "#00ff00";
-        const tierRegex = new RegExp(`(Tier Selection:)\\\\s+(${entry.tierInfo})`);
-        messageHtml = messageHtml.replace(
-          tierRegex,
-          `$1 <span style="color: ${tierColor}; font-weight: bold;">$2</span>`
-        );
-      }
-      if (entry.tierFilterTiers && entry.tierFilterTiers.length > 0) {
-        const tierListHtml = entry.tierFilterTiers.map((tier) => {
-          const color = tierColors[tier] || "#00ff00";
-          return `<span style="color: ${color}; font-weight: bold;">${tier}</span>`;
-        }).join('<span style="color: #888;">, </span>');
-        messageHtml = messageHtml.replace(
-          /(Tier Filter active:)\s+([\w\-,\s]+)/,
-          `$1 ${tierListHtml}`
-        );
-      }
-      return `
-      <div class="hon-log-entry ${levelClass} ${animationClass}" data-entry-id="${entry.id}">
-        <span class="hon-log-timestamp">${timeString}</span>
-        <span class="hon-log-message">${messageHtml}</span>
-      </div>
-    `;
-    }).join("");
-    content.innerHTML = allEntriesHTML;
-    if (isScrolledToBottom) {
-      content.scrollTop = content.scrollHeight;
-    }
-    setTimeout(() => {
-      const newEntries = content.querySelectorAll(".new-entry");
-      newEntries.forEach((entry) => {
-        entry.classList.remove("new-entry");
-      });
-    }, 400);
-  }
-  function addEventLog(message, level = "log") {
-    const entry = {
-      id: Date.now() + Math.random(),
-      timestamp: /* @__PURE__ */ new Date(),
-      level,
-      message: `[Ascension] ${message}`,
-      formattedMessage: message,
-      battleType: state.battleType
-    };
-    eventLogEntries.push(entry);
-    if (eventLogEntries.length > MAX_LOG_ENTRIES) {
-      eventLogEntries.splice(0, eventLogEntries.length - MAX_LOG_ENTRIES);
-    }
-    updateEventLogDisplay();
-  }
-  function destroyEventLog() {
-    console.log = originalConsoleLog;
-    console.warn = originalConsoleWarn;
-    console.error = originalConsoleError;
-    const logContainer = document.getElementById("hon-event-log");
-    if (logContainer) {
-      logContainer.remove();
-    }
-    eventLogEntries = [];
-    if (layoutObserver) {
-      layoutObserver.disconnect();
-      layoutObserver = null;
-    }
-    try {
-      localStorage.removeItem(EVENT_LOG_STORAGE_KEY);
-    } catch (e) {
-      console.warn("[Ascension] Failed to clear event log state:", e);
-    }
-  }
-  var eventLogEntries, MAX_LOG_ENTRIES, originalConsoleLog, originalConsoleWarn, originalConsoleError, layoutObserver, EVENT_LOG_STORAGE_KEY;
-  var init_ui_event_log = __esm({
-    "ui-event-log.js"() {
-      init_state();
-      eventLogEntries = [];
-      MAX_LOG_ENTRIES = 100;
-      originalConsoleLog = console.log;
-      originalConsoleWarn = console.warn;
-      originalConsoleError = console.error;
-      layoutObserver = null;
-      EVENT_LOG_STORAGE_KEY = "hon-event-log-state";
-    }
-  });
-
-  // ui-sidebar.js
-  var ui_sidebar_exports = {};
-  __export(ui_sidebar_exports, {
-    attachSidebarEventListeners: () => attachSidebarEventListeners,
-    autoShowOptionsIfNoGenders: () => autoShowOptionsIfNoGenders,
-    createSidebar: () => createSidebar,
-    openOptionsPanel: () => openOptionsPanel,
-    toggleGender: () => toggleGender,
-    toggleTier: () => toggleTier
-  });
-  function createSidebar() {
-    const savedMode = localStorage.getItem("hotornot_selected_mode");
-    if (savedMode) {
-      state.currentMode = savedMode;
-    }
-    const swissActive = state.currentMode === "swiss" ? "active" : "";
-    const gauntletActive = state.currentMode === "gauntlet" ? "active" : "";
-    const championActive = state.currentMode === "champion" ? "active" : "";
-    const mobileClass = isMobile() ? "mobile" : "";
-    return `
-    <div id="hon-sidebar" class="hon-sidebar ${mobileClass}">
-      <div class="hon-sidebar-content">
-        <!-- Main Performer Matchmaking Section -->
-        <div class="hon-sidebar-section">
-          <!-- Flattened Mode Options -->
-          <div class="hon-sidebar-row ${swissActive}" data-mode="swiss">
-            <span class="hon-sidebar-row-text"><span class="hon-mode-icon">\u{1F94A}</span> Head to Head</span>
-          </div>
-          <div class="hon-sidebar-row ${gauntletActive}" data-mode="gauntlet">
-            <span class="hon-sidebar-row-text"><span class="hon-mode-icon">\u269C\uFE0F</span> Placement Mode</span>
-          </div>
-          <div class="hon-sidebar-row ${championActive}" data-mode="champion">
-            <span class="hon-sidebar-row-text"><span class="hon-mode-icon">\u{1F3C6}</span> Champion Mode</span>
-          </div>
-          <div class="hon-sidebar-row" data-mode="scenes">
-            <span class="hon-sidebar-row-text"><span class="hon-mode-icon">\u{1F3AC}</span> Scene Mode</span>
-          </div>
-
-          <!-- View All Stats Row -->
-          <div class="hon-sidebar-row" data-action="view-stats">
-            <span class="hon-sidebar-row-text"><span class="hon-mode-icon">\u{1F4CA}</span> View All Stats</span>
-          </div>
-
-          <!-- Options Row -->
-          <div class="hon-sidebar-row" data-action="open-options">
-            <span class="hon-sidebar-row-text"><span class="hon-mode-icon">\u2699\uFE0F</span> Options</span>
-          </div>
-        </div>
-      </div>
-    </div>
-  `;
-  }
-  function attachSidebarEventListeners(container) {
-    const expandableRows = container.querySelectorAll(".hon-sidebar-expandable");
-    expandableRows.forEach((row) => {
-      row.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const targetId = row.dataset.target;
-        const content = container.querySelector(`#${targetId}`);
-        const icon = row.querySelector(".hon-sidebar-expand-icon");
-        if (content && icon) {
-          const isExpanded = content.style.display === "block";
-          content.style.display = isExpanded ? "none" : "block";
-          icon.textContent = isExpanded ? "\u25B6" : "\u{1F53D}";
-          row.classList.toggle("expanded", !isExpanded);
-        }
-      });
-    });
-    const modeRows = container.querySelectorAll(".hon-sidebar-row[data-mode]");
-    modeRows.forEach((row) => {
-      row.addEventListener("click", async (e) => {
-        e.stopPropagation();
-        const mode = row.dataset.mode;
-        const previousMode = state.currentMode;
-        if (optionsRestoreState.optionsOpen) {
-          closeOptionsPanel();
-        }
-        const modeNames = {
-          "swiss": "Head to Head",
-          "gauntlet": "Placement Mode",
-          "champion": "Champion Mode",
-          "scenes": "Scene Mode"
-        };
-        addEventLog(`User changed mode to: ${modeNames[mode] || mode}`, "log");
-        if (mode === "gauntlet" || mode === "champion" || previousMode === "gauntlet" || previousMode === "champion") {
-          resetBattleState();
-        }
-        state.currentMode = mode;
-        try {
-          localStorage.setItem("hotornot_selected_mode", mode);
-        } catch (err) {
-          console.warn("[Ascension] Could not save mode selection to localStorage:", err);
-        }
-        modeRows.forEach((r) => r.classList.remove("active"));
-        row.classList.add("active");
-        const selectionContainer = document.getElementById("hon-performer-selection");
-        const comparisonArea = document.getElementById("hon-comparison-area");
-        const actionsEl = document.querySelector(".hon-actions");
-        const modal = document.getElementById("hon-modal");
-        if (modal) {
-          modal.classList.remove("hon-mode-champion", "hon-mode-swiss", "hon-mode-gauntlet", "hon-mode-scenes", "hon-mode-placement");
-          modal.classList.add(`hon-mode-${mode}`);
-        }
-        if (mode === "scenes") {
-          state.battleType = "scenes";
-        } else {
-          state.battleType = "performers";
-        }
-        if (mode === "swiss") {
-          if (selectionContainer)
-            selectionContainer.style.display = "none";
-          if (comparisonArea)
-            comparisonArea.style.display = "";
-          if (actionsEl)
-            actionsEl.style.display = "";
-          const { loadNewPair: loadNewPair2 } = await Promise.resolve().then(() => (init_battle_engine(), battle_engine_exports));
-          loadNewPair2();
-        } else if (mode === "gauntlet" || mode === "champion") {
-          if (selectionContainer)
-            selectionContainer.style.display = "block";
-          if (comparisonArea)
-            comparisonArea.style.display = "none";
-          if (actionsEl)
-            actionsEl.style.display = "none";
-          Promise.resolve().then(() => (init_gauntlet_selection(), gauntlet_selection_exports)).then((m) => m.loadPerformerSelection());
-        } else if (mode === "scenes") {
-          if (selectionContainer)
-            selectionContainer.style.display = "none";
-          if (comparisonArea)
-            comparisonArea.style.display = "";
-          if (actionsEl)
-            actionsEl.style.display = "";
-          const { loadNewPair: loadNewPair2 } = await Promise.resolve().then(() => (init_battle_engine(), battle_engine_exports));
-          loadNewPair2();
-        }
-        updateSkipButtonVisibility();
-      });
-    });
-    const actionRows = container.querySelectorAll(".hon-sidebar-row[data-action]");
-    actionRows.forEach((row) => {
-      row.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const action = row.dataset.action;
-        if (action === "view-stats") {
-          if (optionsRestoreState.optionsOpen) {
-            closeOptionsPanel();
-          }
-          Promise.resolve().then(() => (init_ui_stats(), ui_stats_exports)).then((m) => m.openStatsModal());
-        }
-        if (action === "open-options") {
-          if (optionsRestoreState.optionsOpen) {
-            restoreVsContainer();
-          } else {
-            openOptionsPanel();
-          }
-        }
-      });
-    });
-    autoShowOptionsIfNoGenders();
-  }
-  async function toggleGender(gender, { skipReload = false } = {}) {
-    if (state.selectedGenders.includes(gender)) {
-      state.selectedGenders = state.selectedGenders.filter((g) => g !== gender);
-    } else {
-      state.selectedGenders.push(gender);
-    }
-    try {
-      localStorage.setItem("hotornot_selected_genders", JSON.stringify(state.selectedGenders));
-    } catch (err) {
-      console.warn("[Ascension] Could not save gender selection to localStorage:", err);
-    }
-    document.querySelectorAll(".hon-options-checkbox[data-gender]").forEach((label) => {
-      const genderValue = label.dataset.gender;
-      const checkbox = label.querySelector('input[type="checkbox"]');
-      const isSelected = state.selectedGenders.includes(genderValue);
-      label.classList.toggle("active", isSelected);
-      if (checkbox)
-        checkbox.checked = isSelected;
-    });
-    if (!skipReload && state.battleType === "performers") {
-      const { loadNewPair: loadNewPair2 } = await Promise.resolve().then(() => (init_battle_engine(), battle_engine_exports));
-      loadNewPair2();
-    }
-  }
-  async function toggleTier(tier, { skipReload = false } = {}) {
-    let tiers = [...state.selectedTiers];
-    if (tier === "any") {
-      tiers = ["any"];
-    } else {
-      tiers = tiers.filter((t) => t !== "any");
-      if (tiers.includes(tier)) {
-        tiers = tiers.filter((t) => t !== tier);
-      } else {
-        tiers.push(tier);
-      }
-      if (tiers.length === 0) {
-        tiers = ["any"];
-      }
-    }
-    state.selectedTiers = tiers;
-    try {
-      localStorage.setItem("hotornot_selected_tiers", JSON.stringify(tiers));
-    } catch (err) {
-      console.warn("[Ascension] Could not save tier selection to localStorage:", err);
-    }
-    syncTierCheckboxUI();
-    const warningSlot = document.getElementById("hon-tier-warning-slot");
-    if (warningSlot) {
-      warningSlot.innerHTML = getTierGapWarningHTML(tiers);
-    }
-    if (!skipReload && state.battleType === "performers" && state.currentMode === "swiss") {
-      const { loadNewPair: loadNewPair2 } = await Promise.resolve().then(() => (init_battle_engine(), battle_engine_exports));
-      loadNewPair2();
-    }
-  }
-  function openOptionsPanel() {
-    if (optionsRestoreState.optionsOpen)
-      return;
-    const selectionContainer = document.getElementById("hon-performer-selection");
-    const comparisonArea = document.getElementById("hon-comparison-area");
-    optionsRestoreState.wasSelectionVisible = selectionContainer && selectionContainer.style.display !== "none";
-    optionsRestoreState.wasComparisonVisible = comparisonArea && comparisonArea.style.display !== "none";
-    const actionsEl = document.querySelector(".hon-actions");
-    if (actionsEl)
-      actionsEl.style.display = "none";
-    if (selectionContainer)
-      selectionContainer.style.display = "none";
-    if (comparisonArea) {
-      comparisonArea.style.display = "";
-      comparisonArea.innerHTML = '<div class="hon-vs-container"></div>';
-    }
-    const vsContainer = comparisonArea ? comparisonArea.querySelector(".hon-vs-container") : null;
-    if (!vsContainer) {
-      console.warn("[Ascension] Could not find or create container to render options panel.");
-      return;
-    }
-    vsContainer.innerHTML = renderOptionsPanel();
-    attachOptionsPanelEventListeners(vsContainer);
-    syncTierCheckboxUI();
-    if (isMobile()) {
-      const sidebar = document.getElementById("hon-sidebar");
-      if (sidebar) {
-        optionsRestoreState.sidebarWasCollapsed = sidebar.classList.contains("collapsed");
-        sidebar.classList.add("collapsed");
-      }
-    }
-    optionsRestoreState.optionsOpen = true;
-  }
-  function closeOptionsPanel() {
-    const comparisonArea = document.getElementById("hon-comparison-area");
-    if (comparisonArea)
-      comparisonArea.innerHTML = "";
-    if (isMobile()) {
-      const sidebar = document.getElementById("hon-sidebar");
-      if (sidebar && !optionsRestoreState.sidebarWasCollapsed) {
-        sidebar.classList.remove("collapsed");
-      }
-    }
-    optionsRestoreState.optionsOpen = false;
-  }
-  function autoShowOptionsIfNoGenders() {
-    if (state.selectedGenders.length === 0) {
-      openOptionsPanel();
-      return true;
-    }
-    return false;
-  }
-  function getTierGapWarningHTML(selectedTiers) {
-    const warning = getTierGapWarning(selectedTiers);
-    if (!warning)
-      return "";
-    return `<p class="hon-options-hint hon-options-warning hon-tier-gap-warning" style="color:#ff4444;">${warning}</p>`;
-  }
-  function getTierGapWarning(selectedTiers) {
-    if (!selectedTiers || selectedTiers.includes("any"))
-      return "";
-    const letters = selectedTiers.filter((t) => t !== "newcomers");
-    const indices = letters.map((t) => TIER_ORDER_FOR_GAP.indexOf(t)).filter((i) => i >= 0);
-    if (indices.length < 2)
-      return "";
-    const minIdx = Math.min(...indices);
-    const maxIdx = Math.max(...indices);
-    const gap = maxIdx - minIdx;
-    if (gap >= 2) {
-      const top = TIER_ORDER_FOR_GAP[minIdx];
-      const bottom = TIER_ORDER_FOR_GAP[maxIdx];
-      return `\u26A0\uFE0F Large tier gap selected (${top} vs ${bottom}). Cross-tier matches will use a wider opponent search window. Competitive protection still applies.`;
-    }
-    return "";
-  }
-  function syncTierCheckboxUI() {
-    document.querySelectorAll(".hon-options-checkbox[data-tier]").forEach((label) => {
-      const tier = label.dataset.tier;
-      const checkbox = label.querySelector('input[type="checkbox"]');
-      const isSelected = state.selectedTiers.includes(tier);
-      label.classList.toggle("active", isSelected);
-      if (checkbox)
-        checkbox.checked = isSelected;
-      const tierDef = ALL_TIERS.find((t) => t.value === tier);
-      const tierColor = tierDef?.color || getTierColor(tier);
-      if (isSelected) {
-        label.style.borderColor = tierColor;
-        label.style.backgroundColor = `${tierColor}22`;
-        label.style.color = tierColor;
-      } else {
-        label.style.borderColor = "";
-        label.style.backgroundColor = "";
-        label.style.color = "";
-      }
-    });
-  }
-  function renderOptionsPanel() {
-    const noGenderWarning = state.selectedGenders.length === 0 ? '<p class="hon-options-hint hon-options-warning">Please select at least one gender to continue.</p>' : '<p class="hon-options-hint">Select which genders to include in matchups.</p>';
-    const tierWarningHTML = getTierGapWarningHTML(state.selectedTiers);
-    return `
-    <div class="hon-options-panel ${isMobile() ? "mobile" : ""}">
-      <h2 class="hon-options-title">\u2699\uFE0F Options</h2>
-
-      <div class="hon-options-section">
-        <h3 class="hon-options-section-title">Gender Filter</h3>
-        ${noGenderWarning}
-        <div class="hon-options-gender-grid">
-          ${ALL_GENDERS2.map((gender) => `
-            <label class="hon-options-checkbox ${state.selectedGenders.includes(gender.value) ? "active" : ""}" data-gender="${gender.value}">
-              <input type="checkbox" value="${gender.value}" ${state.selectedGenders.includes(gender.value) ? "checked" : ""}>
-              <span class="hon-options-checkmark">\u2713</span>
-              <span class="hon-options-label-text">${gender.label}</span>
-            </label>
-          `).join("")}
-        </div>
-      </div>
-
-      <div class="hon-options-section">
-        <h3 class="hon-options-section-title">Tier Filter</h3>
-        <div id="hon-tier-warning-slot">${tierWarningHTML}</div>
-        <p class="hon-options-hint">Select which tiers to include in Head to Head matchups. "All Tiers" restores the normal rotation.</p>
-        <div class="hon-options-gender-grid">
-          ${ALL_TIERS.map((tier) => {
-      const isSelected = state.selectedTiers.includes(tier.value);
-      const tierColor = tier.color || getTierColor(tier.value);
-      const activeStyle = isSelected ? `style="border-color:${tierColor}; background-color:${tierColor}22; color:${tierColor};"` : "";
-      return `
-              <label class="hon-options-checkbox ${isSelected ? "active" : ""}" data-tier="${tier.value}" ${activeStyle}>
-                <input type="checkbox" value="${tier.value}" ${isSelected ? "checked" : ""}>
-                <span class="hon-options-checkmark">\u2713</span>
-                <span class="hon-options-label-text">${tier.label}</span>
-              </label>
-            `;
-    }).join("")}
-        </div>
-      </div>
-
-      <div class="hon-options-actions">
-        <button class="hon-options-close-btn" data-action="close-options">Close Options</button>
-      </div>
-    </div>
-  `;
-  }
-  function attachOptionsPanelEventListeners(vsContainer) {
-    const checkboxes = vsContainer.querySelectorAll('.hon-options-checkbox[data-gender] input[type="checkbox"]');
-    checkboxes.forEach((checkbox) => {
-      checkbox.addEventListener("change", async (e) => {
-        const gender = e.target.value;
-        await toggleGender(gender, { skipReload: true });
-        if (state.selectedGenders.length > 0) {
-          const hint = vsContainer.querySelector(".hon-options-hint");
-          if (hint) {
-            hint.classList.remove("hon-options-warning");
-            hint.textContent = "Select which genders to include in matchups.";
-          }
-        }
-      });
-    });
-    const tierCheckboxes = vsContainer.querySelectorAll('.hon-options-checkbox[data-tier] input[type="checkbox"]');
-    tierCheckboxes.forEach((checkbox) => {
-      checkbox.addEventListener("change", async (e) => {
-        const tier = e.target.value;
-        await toggleTier(tier, { skipReload: true });
-      });
-    });
-    const closeBtn = vsContainer.querySelector('[data-action="close-options"]');
-    if (closeBtn) {
-      closeBtn.addEventListener("click", () => {
-        if (state.selectedGenders.length === 0) {
-          const hint = vsContainer.querySelector(".hon-options-hint");
-          if (hint) {
-            hint.classList.add("hon-options-warning");
-            hint.textContent = "Please select at least one gender before closing.";
-          }
-          return;
-        }
-        restoreVsContainer();
-      });
-    }
-  }
-  async function restoreVsContainer() {
-    closeOptionsPanel();
-    const mode = state.currentMode;
-    const actionsEl = document.querySelector(".hon-actions");
-    const selectionContainer = document.getElementById("hon-performer-selection");
-    const comparisonArea = document.getElementById("hon-comparison-area");
-    updateSkipButtonVisibility();
-    if (mode === "gauntlet" || mode === "champion") {
-      if (optionsRestoreState.wasSelectionVisible) {
-        if (selectionContainer)
-          selectionContainer.style.display = "block";
-        if (comparisonArea)
-          comparisonArea.style.display = "none";
-        if (actionsEl)
-          actionsEl.style.display = "none";
-        Promise.resolve().then(() => (init_gauntlet_selection(), gauntlet_selection_exports)).then((m) => m.loadPerformerSelection());
-      } else {
-        if (selectionContainer)
-          selectionContainer.style.display = "none";
-        if (comparisonArea)
-          comparisonArea.style.display = "";
-        if (actionsEl)
-          actionsEl.style.display = "";
-        const { loadNewPair: loadNewPair2 } = await Promise.resolve().then(() => (init_battle_engine(), battle_engine_exports));
-        loadNewPair2();
-      }
-    } else if (mode === "swiss" || mode === "scenes") {
-      if (selectionContainer)
-        selectionContainer.style.display = "none";
-      if (comparisonArea)
-        comparisonArea.style.display = "";
-      if (actionsEl)
-        actionsEl.style.display = "";
-      const { loadNewPair: loadNewPair2 } = await Promise.resolve().then(() => (init_battle_engine(), battle_engine_exports));
-      loadNewPair2();
-    }
-  }
-  var ALL_GENDERS2, TIER_ORDER_FOR_GAP, optionsRestoreState;
-  var init_ui_sidebar = __esm({
-    "ui-sidebar.js"() {
-      init_state();
-      init_ui_dashboard();
-      init_ui_swipe();
-      init_ui_event_log();
-      init_rating_utils();
-      init_constants();
-      ALL_GENDERS2 = [
-        { value: "FEMALE", label: "Female" },
-        { value: "MALE", label: "Male" },
-        { value: "TRANSGENDER_MALE", label: "Trans Male" },
-        { value: "TRANSGENDER_FEMALE", label: "Trans Female" },
-        { value: "INTERSEX", label: "Intersex" },
-        { value: "NON_BINARY", label: "Non-Binary" }
-      ];
-      TIER_ORDER_FOR_GAP = ["S-Tier", "A-Tier", "B-Tier", "C-Tier", "D-Tier", "F-Tier"];
-      optionsRestoreState = {
-        wasSelectionVisible: false,
-        wasComparisonVisible: false,
-        sidebarWasCollapsed: false,
-        optionsOpen: false
-      };
+  var elementCollectionCache, commonElementsCache;
+  var init_dom_utils = __esm({
+    "dom-utils.js"() {
+      elementCollectionCache = /* @__PURE__ */ new Map();
+      commonElementsCache = /* @__PURE__ */ new Map();
     }
   });
 
@@ -7894,17 +9934,49 @@ Match Stats:`;
       buttonObserver = null;
     }
   }
-  function closeRankingModal() {
+  function finishModalClose() {
     const gameModal = document.getElementById("hon-modal");
     const statsModal = document.getElementById("hon-stats-modal");
-    if (gameModal)
+    if (gameModal && gameModal.classList.contains("hon-modal-opening")) {
+      gameModal.classList.remove("hon-modal-closing");
+      closeAnimationInProgress = false;
+      return;
+    }
+    if (gameModal) {
       gameModal.style.display = "none";
+      gameModal.classList.remove("hon-modal-opening", "hon-modal-closing");
+    }
     if (statsModal)
       statsModal.style.display = "none";
     handleGlobalKeys.deactivate();
     cleanupButtonObserver();
     destroyEventLog();
     clearDOMCache();
+    closeAnimationInProgress = false;
+  }
+  function closeRankingModal() {
+    const gameModal = document.getElementById("hon-modal");
+    const statsModal = document.getElementById("hon-stats-modal");
+    if (statsModal)
+      statsModal.style.display = "none";
+    if (!gameModal || gameModal.style.display === "none" || closeAnimationInProgress) {
+      finishModalClose();
+      return;
+    }
+    closeAnimationInProgress = true;
+    gameModal.classList.remove("hon-modal-opening");
+    gameModal.classList.add("hon-modal-closing");
+    const onAnimationEnd = (e) => {
+      if (!e.target.classList.contains("hon-modal-content"))
+        return;
+      finishModalClose();
+      gameModal.removeEventListener("animationend", onAnimationEnd);
+    };
+    gameModal.addEventListener("animationend", onAnimationEnd);
+    setTimeout(() => {
+      if (closeAnimationInProgress)
+        finishModalClose();
+    }, 400);
   }
   async function _buildAndOpenModal() {
     try {
@@ -7914,13 +9986,12 @@ Match Stats:`;
         modal = document.createElement("div");
         modal.id = "hon-modal";
         modal.className = "hon-modal";
-        const { createSidebar: createSidebar2, attachSidebarEventListeners: attachSidebarEventListeners2 } = await Promise.resolve().then(() => (init_ui_sidebar(), ui_sidebar_exports));
         const { isMobile: isMobile3 } = await Promise.resolve().then(() => (init_ui_swipe(), ui_swipe_exports));
         const mobileCheck = isMobile3();
         const mainUI = `
         <div id="hotornot-container" class="hon-container">
           <div class="hon-plugin-layout ${mobileCheck ? "mobile" : ""}">
-            ${createSidebar2()}
+            ${createSidebar()}
             <div class="hon-main-plugin-content">
               <div class="hon-header"></div>
               <div id="hon-performer-selection" style="display: none;">
@@ -7932,8 +10003,8 @@ Match Stats:`;
                 </div>
                 <div class="hon-actions">
                   <div class="hon-action-buttons">
-                    <button id="hon-skip-btn" class="hon-action-btn" title="Skip">\u23ED\uFE0F</button>
-                    <button id="hon-undo-btn" class="hon-action-btn" title="">\u21A9</button>
+                    <button id="hon-skip-btn" class="hon-action-btn" title="Skip Match">Skip Match</button>
+                    <button id="hon-undo-btn" class="hon-action-btn" title="Undo Match">Undo Match</button>
                   </div>
                 </div>
                 <div class="hon-keyboard-hints">
@@ -7961,7 +10032,6 @@ Match Stats:`;
             flex-direction: column;
             height: 100%;
           }
-          
           .hon-sidebar.mobile {
             order: 2;
             width: 100%;
@@ -7969,31 +10039,23 @@ Match Stats:`;
             overflow-y: auto;
             border-top: 1px solid #444;
           }
-          
           .hon-sidebar.mobile .hon-sidebar-content {
             padding: 10px;
           }
-          
           .hon-sidebar.mobile .hon-sidebar-section {
             margin-bottom: 5px;
           }
-          
           .hon-sidebar.mobile .hon-sidebar-subsection {
             padding: 5px 0;
           }
-          
           .hon-main-plugin-content {
             order: 1;
             flex: 1;
             overflow-y: auto;
           }
-          
-          /* Event log should appear last */
           .hon-event-log-container {
             order: 3;
           }
-          
-          /* Transparent background for mobile modal */
           .hon-modal-content.mobile {
             background: transparent;
             box-shadow: none;
@@ -8004,19 +10066,23 @@ Match Stats:`;
         document.body.appendChild(modal);
         const sidebarContainer = modal.querySelector("#hon-sidebar");
         if (sidebarContainer) {
-          attachSidebarEventListeners2(modal);
+          attachSidebarEventListeners(modal);
         }
-        const { attachEventListeners: attachEventListeners2 } = await Promise.resolve().then(() => (init_ui_dashboard(), ui_dashboard_exports));
-        attachEventListeners2(modal);
+        if (!mobileCheck) {
+          const actionsEl = modal.querySelector(".hon-actions");
+          if (sidebarContainer && actionsEl) {
+            sidebarContainer.appendChild(actionsEl);
+          }
+        }
+        attachEventListeners(modal);
         const closeModalBtn = modal.querySelector(".hon-modal-close");
-        if (closeModalBtn) {
+        if (closeModalBtn)
           closeModalBtn.onclick = () => closeRankingModal();
-        }
         const modalBackdrop = modal.querySelector(".hon-modal-backdrop");
-        if (modalBackdrop) {
+        if (modalBackdrop)
           modalBackdrop.onclick = () => closeRankingModal();
-        }
       }
+      modal.classList.remove("hon-modal-closing");
       modal.style.display = "flex";
       modal.style.alignItems = "center";
       modal.style.justifyContent = "center";
@@ -8025,6 +10091,14 @@ Match Stats:`;
       modal.style.left = "0";
       modal.style.width = "100%";
       modal.style.height = "100%";
+      if (wasModalHidden) {
+        modal.classList.remove("hon-modal-opening");
+        void modal.offsetHeight;
+        modal.classList.add("hon-modal-opening");
+        setTimeout(() => {
+          modal.classList.remove("hon-modal-opening");
+        }, 450);
+      }
       initEventLog();
       state.battleType = state.currentMode === "scenes" ? "scenes" : "performers";
       const modalElement = document.getElementById("hon-modal");
@@ -8033,7 +10107,6 @@ Match Stats:`;
         modalElement.classList.add(`hon-mode-${state.currentMode}`);
       }
       if (wasModalHidden) {
-        const { loadNewPair: loadNewPair2 } = await Promise.resolve().then(() => (init_battle_engine(), battle_engine_exports));
         if (state.currentMode === "gauntlet") {
           if (state.gauntletChampion) {
             const selEl = document.getElementById("hon-performer-selection");
@@ -8045,7 +10118,7 @@ Match Stats:`;
               compEl.style.display = "";
             if (actEl)
               actEl.style.display = "";
-            loadNewPair2();
+            loadNewPair();
           } else {
             window.showPerformerSelection();
           }
@@ -8059,7 +10132,7 @@ Match Stats:`;
             compEl.style.display = "";
           if (actEl)
             actEl.style.display = "";
-          loadNewPair2();
+          loadNewPair();
         }
       }
       handleGlobalKeys.activate();
@@ -8112,7 +10185,7 @@ Match Stats:`;
       console.error("CRASH in openRankingModal:", err);
     }
   }
-  var buttonObserver, handleGlobalKeys;
+  var buttonObserver, closeAnimationInProgress, handleGlobalKeys;
   var init_ui_modal = __esm({
     "ui-modal.js"() {
       init_state();
@@ -8123,6 +10196,7 @@ Match Stats:`;
       init_ui_event_log();
       buttonObserver = null;
       window._honCleanupButtonObserver = cleanupButtonObserver;
+      closeAnimationInProgress = false;
       watchForNavigation();
       ["popstate"].forEach(
         (event) => window.addEventListener(event, () => {
@@ -8159,19 +10233,16 @@ Match Stats:`;
             e.stopImmediatePropagation();
             if (e.key === "ArrowLeft") {
               const leftCard = activeModal.querySelector('.hon-scene-card[data-side="left"] .hon-scene-body');
-              if (leftCard) {
+              if (leftCard)
                 leftCard.click();
-              }
             } else if (e.key === "ArrowRight") {
               const rightCard = activeModal.querySelector('.hon-scene-card[data-side="right"] .hon-scene-body');
-              if (rightCard) {
+              if (rightCard)
                 rightCard.click();
-              }
             } else if (isSpace) {
               const skipBtn = document.getElementById("hon-skip-btn");
-              if (skipBtn) {
+              if (skipBtn)
                 skipBtn.click();
-              }
             }
           }
         }
@@ -8210,7 +10281,6 @@ Match Stats:`;
     createVictoryScreen: () => createVictoryScreen,
     generateBarGroups: () => generateBarGroups,
     generateStatTables: () => generateStatTables,
-    handleGenderToggle: () => handleGenderToggle,
     injectBattleRankBadge: () => injectBattleRankBadge,
     isOnSinglePerformerPage: () => isOnSinglePerformerPage,
     openRankingModal: () => openRankingModal,
@@ -9050,6 +11120,100 @@ Match Stats:`;
       return "#92e014";
     return "#808080";
   }
+  function getTopRatedScene(performer, scenes) {
+    const performerSceneIds = new Set(performer?.scenes || []);
+    const performerScenes = (scenes || []).filter((s) => performerSceneIds.has(s.id));
+    let top = null;
+    performerScenes.forEach((scene) => {
+      if (scene.rating === null || scene.rating === void 0 || isNaN(scene.rating))
+        return;
+      if (!top || scene.rating > top.rating) {
+        top = { id: scene.id, rating: scene.rating };
+      }
+    });
+    return top;
+  }
+  function formatTopSceneLink(scene) {
+    if (!scene || scene.id == null)
+      return "N/A";
+    const origin = window.location.origin;
+    return `<a href="${origin}/scenes/${scene.id}" target="_blank" rel="noopener noreferrer" class="top-scene-link" data-scene-id="${scene.id}" style="color:#14bbe0; text-decoration:underline;">Scene ${scene.id}</a>`;
+  }
+  var scenePreviewTooltip = null;
+  function getScenePreviewTooltip() {
+    if (!scenePreviewTooltip) {
+      scenePreviewTooltip = document.createElement("div");
+      scenePreviewTooltip.className = "scene-preview-tooltip";
+      scenePreviewTooltip.style.position = "fixed";
+      scenePreviewTooltip.style.zIndex = "9999";
+      scenePreviewTooltip.style.width = isMobile2() ? "240px" : "480px";
+      scenePreviewTooltip.style.height = isMobile2() ? "135px" : "270px";
+      scenePreviewTooltip.style.backgroundColor = "#000";
+      scenePreviewTooltip.style.border = "1px solid #555";
+      scenePreviewTooltip.style.borderRadius = "6px";
+      scenePreviewTooltip.style.overflow = "hidden";
+      scenePreviewTooltip.style.display = "none";
+      scenePreviewTooltip.style.pointerEvents = "none";
+      scenePreviewTooltip.style.boxShadow = "0 4px 12px rgba(0,0,0,0.5)";
+      const video = document.createElement("video");
+      video.className = "scene-preview-tooltip-video";
+      video.setAttribute("disableremoteplayback", "");
+      video.setAttribute("playsinline", "");
+      video.autoplay = true;
+      video.muted = true;
+      video.loop = true;
+      video.preload = "none";
+      video.style.width = "100%";
+      video.style.height = "100%";
+      video.style.objectFit = "cover";
+      scenePreviewTooltip.appendChild(video);
+      document.body.appendChild(scenePreviewTooltip);
+    }
+    return scenePreviewTooltip;
+  }
+  function showScenePreview(sceneId, x, y) {
+    const tooltip = getScenePreviewTooltip();
+    const video = tooltip.querySelector("video");
+    const origin = window.location.origin;
+    const tooltipWidth = isMobile2() ? 240 : 480;
+    const tooltipHeight = isMobile2() ? 135 : 270;
+    tooltip.style.width = `${tooltipWidth}px`;
+    tooltip.style.height = `${tooltipHeight}px`;
+    video.src = `${origin}/scene/${sceneId}/preview`;
+    video.load();
+    video.play().catch(() => {
+    });
+    tooltip.style.display = "block";
+    tooltip.style.left = `${Math.min(x + 15, window.innerWidth - tooltipWidth - 15)}px`;
+    tooltip.style.top = `${Math.max(y - tooltipHeight - 15, 10)}px`;
+  }
+  function hideScenePreview() {
+    const tooltip = getScenePreviewTooltip();
+    const video = tooltip.querySelector("video");
+    video.pause();
+    video.src = "";
+    tooltip.style.display = "none";
+  }
+  function updateScenePreviewPosition(x, y) {
+    const tooltip = getScenePreviewTooltip();
+    if (tooltip.style.display === "block") {
+      const tooltipWidth = isMobile2() ? 240 : 480;
+      const tooltipHeight = isMobile2() ? 135 : 270;
+      tooltip.style.left = `${Math.min(x + 15, window.innerWidth - tooltipWidth - 15)}px`;
+      tooltip.style.top = `${Math.max(y - tooltipHeight - 15, 10)}px`;
+    }
+  }
+  function attachScenePreviewHover(container) {
+    container.querySelectorAll(".top-scene-link").forEach((link) => {
+      link.addEventListener("mouseenter", (e) => {
+        showScenePreview(link.dataset.sceneId, e.clientX, e.clientY);
+      });
+      link.addEventListener("mousemove", (e) => {
+        updateScenePreviewPosition(e.clientX, e.clientY);
+      });
+      link.addEventListener("mouseleave", hideScenePreview);
+    });
+  }
   function createPerformerProfile(container, performer, allPerformers, onShowProfile, scenes) {
     const profileContainer = document.createElement("div");
     profileContainer.style.marginTop = "2rem";
@@ -9213,6 +11377,7 @@ Match Stats:`;
     const ascScoreColor = ascScore !== null ? getTierColor2(getRatingTier2(performer, allPerformers)) : "#fff";
     const winRate = getWinRate(performer);
     const winRateColor = parseFloat(winRate) >= 50 ? "#4caf50" : "#f44336";
+    const topScene = getTopRatedScene(performer, scenes || []);
     const statCards = [
       {
         title: ascScoreTitle(performer),
@@ -9254,6 +11419,12 @@ Match Stats:`;
         heading: "Avg Scene Rating",
         tooltip: "Average scene rating (display scale)",
         color: getSceneRatingColor(sceneStats.avgSceneRating)
+      },
+      {
+        title: formatTopSceneLink(topScene),
+        heading: "Top Rated Scene",
+        tooltip: topScene ? `Highest rated scene: ${(topScene.rating / 10).toFixed(1)}` : "No rated scenes available",
+        isHtml: true
       }
     ];
     statCards.forEach((card) => {
@@ -9272,7 +11443,11 @@ Match Stats:`;
       statTitle.style.overflow = "hidden";
       statTitle.style.textOverflow = "ellipsis";
       statTitle.style.whiteSpace = "nowrap";
-      statTitle.innerText = card.title;
+      if (card.isHtml) {
+        statTitle.innerHTML = card.title;
+      } else {
+        statTitle.innerText = card.title;
+      }
       statEl.appendChild(statTitle);
       const statHeading = document.createElement("p");
       statHeading.classList.add("heading");
@@ -9291,6 +11466,7 @@ Match Stats:`;
       statsGrid.appendChild(statEl);
     });
     profileContainer.appendChild(statsGrid);
+    attachScenePreviewHover(statsGrid);
     const record = parsePerformerRecord(performer) || [];
     const matchHistoryContainer = document.createElement("div");
     matchHistoryContainer.style.marginTop = "2rem";
@@ -10104,6 +12280,8 @@ Match Stats:`;
     const avgSceneRatingText = sceneStats.avgSceneRating !== null ? (sceneStats.avgSceneRating / 10).toFixed(1) : "N/A";
     const comparisonSceneStats = comparisonPerformer ? getCachedPerformerSceneStats(comparisonPerformer, scenes || []) : null;
     const comparisonAvgSceneRatingText = comparisonSceneStats ? comparisonSceneStats.avgSceneRating !== null ? (comparisonSceneStats.avgSceneRating / 10).toFixed(1) : "N/A" : null;
+    const topScene = getTopRatedScene(performer, scenes || []);
+    const comparisonTopScene = comparisonPerformer ? getTopRatedScene(comparisonPerformer, scenes || []) : null;
     const statCards = [
       {
         title: ascScoreTitle(performer),
@@ -10184,6 +12362,14 @@ Match Stats:`;
         tooltip: "Average scene rating (display scale)",
         color: getSceneRatingColor(sceneStats.avgSceneRating),
         comparisonValue: comparisonAvgSceneRatingText
+      },
+      {
+        title: formatTopSceneLink(topScene),
+        heading: "Top Rated Scene",
+        tooltip: topScene ? `Highest rated scene: ${(topScene.rating / 10).toFixed(1)}` : "No rated scenes available",
+        isHtml: true,
+        skipDiff: true,
+        comparisonValue: comparisonPerformer ? formatTopSceneLink(comparisonTopScene) : null
       }
     ];
     statCards.forEach((cardData) => {
@@ -10198,7 +12384,7 @@ Match Stats:`;
       statTitle.style.marginBottom = "0.25rem";
       statTitle.style.color = cardData.color || "#fff";
       statTitle.style.fontWeight = cardData.color ? "bold" : "normal";
-      if (cardData.comparisonValue !== null && cardData.comparisonValue !== void 0) {
+      if (!cardData.skipDiff && cardData.comparisonValue !== null && cardData.comparisonValue !== void 0) {
         const currentValue = cardData.title;
         const comparisonValue = cardData.comparisonValue;
         if (!isNaN(currentValue) && !isNaN(comparisonValue) && currentValue !== "N/A" && comparisonValue !== "N/A") {
@@ -10219,7 +12405,11 @@ Match Stats:`;
           statTitle.innerText = currentValue;
         }
       } else {
-        statTitle.innerText = cardData.title;
+        if (cardData.isHtml) {
+          statTitle.innerHTML = cardData.title;
+        } else {
+          statTitle.innerText = cardData.title;
+        }
       }
       statEl.appendChild(statTitle);
       const statHeading = document.createElement("p");
@@ -10235,6 +12425,7 @@ Match Stats:`;
       statsGrid.appendChild(statEl);
     });
     card.appendChild(statsGrid);
+    attachScenePreviewHover(statsGrid);
     const viewProfileButton = document.createElement("button");
     viewProfileButton.innerText = "View Full Profile";
     viewProfileButton.style.padding = "0.5rem 1rem";
@@ -11089,8 +13280,8 @@ Match Stats:`;
     tierIndicator.style.justifyContent = "center";
     tierIndicator.style.gap = "2px";
     container.appendChild(tierIndicator);
-    const normalDelay = 5e3;
-    const firstViewDelay = 1500;
+    const normalDelay = 8e3;
+    const firstViewDelay = 5e3;
     function startAutoTransition(delay = normalDelay) {
       clearActiveCarouselInterval();
       activeCarouselInterval = setInterval(() => {
@@ -11639,7 +13830,6 @@ Match Stats:`;
   window.openRankingModal = openRankingModal;
   window.openStatsModal = openStatsModal;
   window.closeRankingModal = closeRankingModal;
-  window.handleGenderToggle = handleGenderToggle;
   window.showPerformerSelection = showPerformerSelection;
   window.handleChooseItem = handleChooseItem;
   var lastPath2 = "";
