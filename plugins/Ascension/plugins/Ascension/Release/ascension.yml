@@ -1,15 +1,14 @@
 name: Ascension
-description: "A comprehensive comparison tool that adds a tier based rating system for stash entities. Features include real time dynamic and scaling matchmaking system, leaderboards, metrics, better UI, better mobile integration."
-version: 1.3.1
-url: 
+description: "Ascension features a unique engine and mechanics to function as a comprehensive stash entity rating and tier system that scales and adapts to your database in real time. This fork sets out to further expand and develop core features of the original while maintaining a consistent, fair, and stable rating system."
+version: 1.3.5
+url: https://discourse.stashapp.cc/t/ascension/6714
 exec:
   - python
-  - "{pluginDir}/jumper.py"
+  - "{pluginDir}/asc_taskmaster.py"
 
 ui: 
   javascript:
     - ascension.js
-    - ascen-stats.js
   css:
     - ascension.css
   assets:
@@ -36,6 +35,18 @@ tasks:
       mode: processAll
       task: reset
 
+  - name: "Wipe Scene Match History"
+    description: Deletes all Scene Ascension history from custom fields.
+    defaultArgs:
+      mode: processAll
+      task: scenewipe
+
+  - name: "Reset All Scene Ratings"
+    description: Resets all Scene ratings to null.
+    defaultArgs:
+      mode: processAll
+      task: scenereset
+
   - name: "Snapshot"
     description: Writes all ratings, match history, and ledger to a json file. Example- DATE-TIME - Ascension Database Snapshot.json
     defaultArgs:
@@ -47,10 +58,3 @@ tasks:
     defaultArgs:
       mode: processAll
       task: snapshotimport
-
-settings:
-  HideAscRankBadge:
-    displayName: Hide Ascension Rank Badge
-    description: Hide the rank badge and restore default stash rating badges.
-    type: BOOLEAN
-    
