@@ -1,6 +1,8 @@
 # Overview
 
-Ascension is a fork of the plugin known as hot or not. At its core it is a comparator with comprehensive matchmaking logic to accurately and granularly rate stash entities on a rating scale of .1 to 100. The plugin aims to solve the problems of inherited personal bias and overestimation forcing the user to make weighted decisions while maintaining engagement and keeping the process from becoming monotonous while also protecting database integrity and maintaining healthy vertical scaling.
+Ascension is a fork of the plugin known as hot or not created by lowgrade12. At its core it is a comparator with comprehensive matchmaking logic to accurately and precisely rate stash entities on a rating scale of .1 to 100 in combination with its custom scoring system known as the Ascension Score (Asc.Score). 
+
+The plugin aims to solve the problems of inherited personal bias and overestimation forcing the user to make weighted decisions while maintaining engagement and keeping the process from becoming monotonous while also protecting database integrity and maintaining healthy vertical scaling and elasticity.
 
 Ascension is able to achieve these goals through a variety of systems. Most of these systems feature variables that become unique to the player over time adapting to play schedule, frequency of play, rating and tier distribution.
 
@@ -8,16 +10,33 @@ Ascension is able to achieve these goals through a variety of systems. Most of t
 
 # Tier System
 
-A Tier System was introduced to better visualize entities in the user stash database. It allows for more granularity and allows potential levers to further refine and sophisticate the matchmaking. This system has been integrated in every aspect of Ascension and plays a minor role in match selection. 
+A Tier System was introduced to better visualize entities in the user stash database. It not only provides a visual aid and association, but also allows potential levers to further refine and sophisticate the matchmaking. This system has been integrated in every aspect of Ascension and plays a major role in match selection. 
 
-| **Tier**   | **Rating Range** | **Status**         | **Matchmaking Logic**                                  |
-| ---------- | ---------------- | ------------------ | ------------------------------------------------------ |
-| **S-Tier** | **85 – 100**     | **Elite**          | Can only battle S, A, or B-Tier opponents.             |
-| **A-Tier** | **70 – 84.9**    | **Top Tier**       | High-performance bracket.                              |
-| **B-Tier** | **55 – 69.9**    | **Mid-High**       | The lowest tier eligible to face S-Tier seeds.         |
-| **C-Tier** | **40 – 54.9**    | **Average**        | Standard competitive pool.                             |
-| **D-Tier** | **25 – 39.9**    | **Below Average**  | Entry-level competitive bracket.                       |
-| **F-Tier** | **0 – 24.9**     | **Underperformer** | New or Performers struggling to maintain a 25+ rating. |
+The Tier system uses a percentile bracket to provide tier elasticity according to your database size. As your database grows or shrinks in size, the tier system will dynamically scale its distribution accordingly. This prevents a number of issues that can happen such  as potential drifts in tier distribution, bottlenecks overtime as match counts increase, and distribution flatlining.
+
+Utilizing these dynamic values allows for each user to experience a distribution according to them and not hard-coded values that will ultimately limit and degrade the plugin experience.
+
+| **Tier**   | **Percentile Bracket**    | **Percentage of Population** | **Status**         | **Matchmaking** **Logic**                      |
+| ---------- | ------------------------- | ---------------------------- | ------------------ | ---------------------------------------------- |
+| **S-Tier** | **Top 5%**                | **5%**                       | **Elite**          | Can only battle S, A, or B-Tier opponents.     |
+| **A-Tier** | **Next 13% (Top 6–18%)**  | **13%**                      | **Top Tier**       | High-performance bracket.                      |
+| **B-Tier** | **Next 20% (Top 19–38%)** | **20%**                      | **Mid-High**       | The lowest tier eligible to face S-Tier seeds. |
+| **C-Tier** | **Next 30% (Top 39–68%)** | **30%**                      | **Average**        | Standard competitive pool.                     |
+| **D-Tier** | **Next 20% (Top 69–88%)** | **20%**                      | **Below Average**  | Entry-level competitive bracket.               |
+| **F-Tier** | **Bottom 12% (89–100%)**  | **12%**                      | **Underperformer** | Struggling or brand new.                       |
+
+## Tier Gates
+
+To prevent performers instantly being placed into newer tiers just due to match success, gates have been implemented to allow for the tier system to scale more efficiently. This provides a less volatile performer experience as they climb the later naturally.
+
+| **Tier**   | **Percentile** | **Minimum Ascended Score** |
+| ---------- | -------------- | -------------------------- |
+| **S-Tier** | **Top 5%**     | **9.0**                    |
+| **A-Tier** | **Top 13%**    | **7.5**                    |
+| **B-Tier** | **Top 20%**    | **5.0**                    |
+| **C-Tier** | **Top 30%**    | **2.0**                    |
+| **D-Tier** | **Bottom 60%** | **0.4**                    |
+| **F-Tier** | **Bottom 12%** | **0.11**                   |
 
 ## Tier Focus
 
@@ -33,13 +52,15 @@ Tier Focus was introduced to force battles within their respective tier. The sys
  - Any
     - No requirements are used for the Any selection, and the logic is the same as regular matchmaking.
   
-When evaluting selection for a tier focus, a calculation is made verifying requirements for tier selection. If a selection fails, the battle log will update with its reason and a new check is made. The calculation will continue until it finds a valid selection and will safely fallback to the Any selection should no tier qualify. 
+When evaluating selection for a tier focus, a calculation is made verifying requirements for tier selection. If a selection fails, the battle log will update with its reason and a new check is made. The calculation will continue until it finds a valid selection and will safely fallback to the Any selection should no tier qualify. 
 
-When a tier is selected, all performers within that tier have their weights boosted (2.0) for focused selection. This means if you have had performers within a tier rated in the Any selection and their weights have been dropped to a low value, they will get another oppurtunity for a match if the tier is selected for focus. The Any selection does not boost weights. While the system will still use the weight and recency calculations to prioritize entities, depending on your tier size you can still see entities who may have been shown more recently in your session. 
+When a tier is selected, all performers within that tier have their weights boosted (2.0) for focused selection. This means if you have had performers within a tier rated in the Any selection and their weights have been dropped to a low value, they will get another opportunity for a match if the tier is selected for focus. The Any selection does not boost weights. While the system will still use the weight and recency calculations to prioritize entities, depending on your tier size you can still see entities who may have been shown more recently in your session. 
 
 To maintain focus selection balance the system will lock on a tier for a semi-random block of matches ($7$ to $19$ matches long) before rolling a weighted probability check to select a new tier from the shuffled rotation list. If all pools have been exhausted, it will rely on the Any selection logic until a new pool qualifies for selection. The logic continuously evaluates tiers as users engage and entities recharge to determine eligibility.
 
 This system further boosts database priming speed while promoting healthy match-ups. With the catch up mechanics like getLowMatchBoost and fair handling of tier selection match count distribution remains within an acceptable level of drift.
+
+As the user database primes and tiers begin to distribute further, the user can specify specific tier against tier selections overriding the default logic. 
 
 ---
 
@@ -87,13 +108,18 @@ To maintain reasonable pairing the selection logic uses a match cap of 10 compar
 |**1 to 9**|**1-9**|**Scaling Boost**: If the community average is high, these performers still receive 1.5x or 1.2x multipliers to reach the "Veteran" status faster.|
 |**10+**|**10**|**Stabilized**: The multiplier drops to **1.0x**. Once a performer hits 10 matches, they are considered "sampled enough" to compete purely on recency.|
 
-### Comparator Selection Window
+### Comparative Selection Window
 
 When selecting a performer, the matchmaking does not select the first available. Instead it chooses via weightedRandomSelect from the top 15 weighted performers to maintain variety. The selected performer becomes the seed. The seed's rating determines its anchor pairing eligibility.
 
+#### Match Discriminators 
+
+- For S Tier performers, they are restricted from battling anyone below A tier to maintain match integrity.  
+- For A Tier performers,  they are restricted from battling anyone below B tier to maintain match integrity. 
+- Both of these values are considered in the cross tier match event pairing.
 #### Anchor Eligibility Selectors
 
-The anchor must be within 15 points of the seed above or below while respecting recency. For S Tier performers, they are restricted from battling anyone below B tier to maintain match integrity. This is also considered in the cross tier match event pairing.
+The anchor is calculated off of the seed (performer) global percentile rank while respecting recency. Match pairing has a wider range for lower percentile tiers (B/C/D/F).
 
 ### Match Selection Events
 
@@ -101,7 +127,14 @@ Match selection events are meant to maintain engagement while introducing a litt
 
 #### shouldForceCrossTierMatch
 
-The match selection features a 10% chance of a Cross tier matchup with the selection of a minimum 20 point gap. The maintain balance, S tiers are excluded from performers below B tier. 
+The match selection features a 10% chance of a Cross tier matchup with the selection of a minimum 20 point gap. To maintain balance, S tiers are excluded from performers below A tier. 
+
+- The Custom Cross-Tier Event is boosted significantly over the default Cross-Tier event to promote more cross tier matching. If users want to stay within their tier, they should only select one tier.
+- In a single tier selection a regular cross-tier event can happen, its search window for pairing remains wider within that tier.
+
+### Filter Overrides
+
+Should the user want an experience with specific datasets they have defined via stash filters. They can override the default match selection for performer\scenes using the override feature in options. The core rules mentioned above are still followed, they are just applied to your singular filtered dataset.
 
 ## applyTemporaryWeightBoost
 
@@ -109,11 +142,11 @@ As an added fallback before dropping weight selection entirely the applyTemporar
 
 ## Additional Fallbacks
 
-The system will always maintain checks to satisfy the 2 minimum performer requirement. However if criteria fails to be met, the system will drop the smart selection and search the nearest opponent. This is to maintain match continuity in the event of failover. If it cannot find the next closest opponent, it will randomly select. 
+The system will always maintain checks to satisfy the 2 minimum performer requirement. However if criteria fails to be met, the system will drop the smart selection and search the nearest opponent. This is to maintain match continuity in the event of fail-over. If it cannot find the next closest opponent, it will randomly select. 
 
 ---
 
-# Scoring
+# Point Distribution
 
 The system now provides dynamic scoring according to point gap and Dynamic K-Factor. Protections have also been implemented for underdog and high tier loses which is considered in the point gap and scoring. 
 
@@ -131,13 +164,14 @@ A base K-Factor of 32 is given to every new performer to maintain maximum fluidi
 
 ### Tier Score Reductions
 
-The K-Factor scoring is reduced once performers hit A or S tier. This is to avoid rating inflation and to further established earned rank performers vs tourists.
+The K-Factor scoring is reduced once performers hit B Tier. This is to avoid rating inflation and to further established earned rank performers vs tourists.
 
-| **Rating**      | **Reduction Applied** | **Effect on Volatility**                                                           |
-| --------------- | --------------------- | ---------------------------------------------------------------------------------- |
-| **0 - 60**      | **None (1.0x)**       | Full mobility; rewards climb equally.                                              |
-| **75**          | **~0.78x**            | Points become "heavier"; harder to gain/easier to lose.                            |
-| **95 (S-Tier)** | **~0.50x**            | **High Squeeze**: Significant stability; protects the elite tier from wild swings. |
+| **Rating**           | **Reduction Applied** | **Effect on Volatility**                           |
+| -------------------- | --------------------- | -------------------------------------------------- |
+| **S-Tier**           | **× 0.6**             | **Only 60% of the normal rating gain is awarded.** |
+| **A-Tier**           | **× 0.7**             | **70% of the normal gain is awarded.**             |
+| **B-Tier**           | **× 0.8**             | **80% of the normal gain is awarded.**             |
+| **C-Tier and Below** | **× 1.0**             | **Full gain, no tier-based reduction.**            |
 
 ### Other Game Mode Scoring
 
@@ -181,12 +215,29 @@ $$Result = (K \text{ Factor}) \times (\text{Elo Probability}) \times (\text{Unde
 | **Champion** | Streak $5–9$          | **0.7x**                         | Significant reduction in gains to keep the "King" within reach.      |
 | **Champion** | Streak $\ge 10$       | **0.4x**                         | **Hard Cap**: Extreme dampening to stop runaway leaderboard leaders. |
 
+# Rank Calculation
 
-## Composite Scoring
+Rank placement is calculated off of the Ascended Score to allow for finer ranking over time. 
 
-Composite scoring is added in addition to the default 0-100 (0-10) scale system of stash without changing the plugin database rating system. This allows for more granular rating at all levels of the tier spectrum and allowing for infinite scaling while maintaining rank integrity.
+### Ascended Score Calculation
 
-Forumla:
+The Ascended Score is the combination of raw rating and composite scoring. It is the core rating system that works together with the stash rating system and allows for proper granular scaling beyond what stash can provide in its current iteration.
+
+The Ascended score is reflected throughout the plugin and solves the issue of bottlenecks at higher and lower levels while still providing meaningful ratings across the leaderboard.
+
+```  const compositeScore =
+    (rating100 / 100) +
+    (winRate * 0.5) +
+    (stats.winMargin / 100) +        
+    (Math.log10(stats.wins + 1) * 0.2); 
+```
+
+
+### Composite Scoring
+
+Composite scoring is added in addition to the default 0-100 (0-10) scale system of stash without changing the plugin database rating system. The Composite Scoring formula uses win margin to track variability of individual performances in addition to win rate and match count.
+
+Formula:
 **Composite Score = (Rating/100) + (Win Rate × 0.5) + (Win Margin/1000) + (Total Matches/10000)**
 ```
 Scoring Example of an Average Performer:
