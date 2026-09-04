@@ -18,9 +18,9 @@ Utilizing these dynamic values allows for each user to experience a distribution
 
 | **Tier**   | **Percentile Bracket**    | **Percentage of Population** | **Status**         | **Matchmaking** **Logic**                      |
 | ---------- | ------------------------- | ---------------------------- | ------------------ | ---------------------------------------------- |
-| **S-Tier** | **Top 5%**                | **5%**                       | **Elite**          | Can only battle S, A, or B-Tier opponents.     |
-| **A-Tier** | **Next 13% (Top 6–18%)**  | **13%**                      | **Top Tier**       | High-performance bracket.                      |
-| **B-Tier** | **Next 20% (Top 19–38%)** | **20%**                      | **Mid-High**       | The lowest tier eligible to face S-Tier seeds. |
+| **S-Tier** | **Top 5%**                | **5%**                       | **Elite**          | Can only battle S or A-Tier opponents.    |
+| **A-Tier** | **Next 13% (Top 6–18%)**  | **13%**                      | **Top Tier**       | High-performance bracket. Can only battle B-Tier or higher.  |
+| **B-Tier** | **Next 20% (Top 19–38%)** | **20%**                      | **Mid-High**       | The lowest tier eligible to face higher tier seeds. |
 | **C-Tier** | **Next 30% (Top 39–68%)** | **30%**                      | **Average**        | Standard competitive pool.                     |
 | **D-Tier** | **Next 20% (Top 69–88%)** | **20%**                      | **Below Average**  | Entry-level competitive bracket.               |
 | **F-Tier** | **Bottom 12% (89–100%)**  | **12%**                      | **Underperformer** | Struggling or brand new.                       |
@@ -49,6 +49,7 @@ Tier Focus was introduced to force battles within their respective tier. The sys
     - 6 matches or less
     - Minimum 20 Performers
     - Avg Pool Weight must be above .80
+    - Includes Unrated performers
  - Any
     - No requirements are used for the Any selection, and the logic is the same as regular matchmaking.
   
@@ -263,4 +264,4 @@ Total:                    = 1.51210
 
 # Summary
 
-The aggregation of all these systems allows for a dynamic granular vertical scaling rating system unique to the user that evolves in real time. Users can expect to see a healthy vertically scaled tier distribution of their database when starting from 0 or by using the Primer features in the stash task settings.
+The aggregation of all these systems allows for a dynamic granular vertical scaling rating system unique to the user that evolves in real time. Users can expect to see a healthy vertically scaled tier distribution of their database that'll naturally settle into a distinctive and healthy bell-curve. When starting from 0 or by using the Primer features defined by ascension in the stash task settings.
