@@ -1698,7 +1698,7 @@
   }
   function createSceneCard(scene, side, rank = null, gauntletStreak = null) {
     const file = scene.files?.[0] || {};
-    const performersHtml = scene.performers?.length ? scene.performers.map((p) => `<a href="/performers/${p.id}" target="_blank" class="hon-scene-link">${p.name}</a>`).join(", ") : "No performers";
+    const performersHtml = scene.performers?.length ? scene.performers.map((p) => `<a href="/performers/${p.id}" target="_blank" class="hon-scene-link" style="color: #4dabf7; text-decoration: underline;">${p.name}</a>`).join(", ") : "No performers";
     const studioHtml = scene.studio ? `<a href="/studios/${scene.studio.id}" target="_blank" class="hon-scene-link">${scene.studio.name}</a>` : "No studio";
     let title = scene.title;
     if (!title && file.path) {
@@ -1809,16 +1809,17 @@
     const stashRating = isRated ? (rawRating / 10).toFixed(1) : "Unrated";
     let tierClass = "";
     let tierDisplay = "";
+    let tierColor = "";
     let battleScore = null;
     if (isRated) {
       const tier = getRatingTier(performer, state.globalPerformerPool);
-      const tierColor = getTierColor(tier);
+      tierColor = getTierColor(tier);
       tierDisplay = `<span style="font-weight: bold; color: ${tierColor}">${tier}</span> | `;
       tierClass = ` tier-${tier.toLowerCase().charAt(0)}`;
       battleScore = calculateBattleScore(performer);
     }
     let genderIcon = "";
-    if (!getCardDisplayOption("HideGender") && performer.gender) {
+    if (!getCardDisplayOption("HideMediaCounters") && performer.gender) {
       const genderKey = performer.gender.toUpperCase();
       genderIcon = `${GENDER_ICONS[genderKey] || "\u{1F464}"} `;
     }
@@ -1851,7 +1852,7 @@
     }
     const metaItems = [];
     if (!getCardDisplayOption("HideAscendedScore") && battleScore !== null) {
-      metaItems.push(`<div class="hon-meta-item"><strong>Ascended Score:</strong> ${tierDisplay}<span class="hon-asc-score" data-asc-score="${battleScore.toFixed(2)}">${battleScore.toFixed(2)}</span></div>`);
+      metaItems.push(`<div class="hon-meta-item"><strong>Ascended Score:</strong> ${tierDisplay}<span class="hon-asc-score" style="color: ${tierColor}; font-weight: bold;" data-asc-score="${battleScore.toFixed(2)}">${battleScore.toFixed(2)}</span></div>`);
     } else if (battleScore === null) {
       metaItems.push(`<div class="hon-meta-item"><strong>Rating:</strong> ${tierDisplay}${stashRating}</div>`);
     }
@@ -5305,7 +5306,7 @@ Match Stats:`;
         rawFilter = null;
       }
     }
-    state.cachedUrlFilter = normalizePerformerFilter(rawFilter);
+    state.cachedUrlFilter = normalizeFilter(rawFilter, PERFORMER_FIELD_TYPES);
     return selected || null;
   }
   function getSelectedSavedSceneFilterId() {
@@ -5365,220 +5366,191 @@ Match Stats:`;
         rawFilter = null;
       }
     }
-    state.cachedSceneFilter = normalizeSceneFilter(rawFilter);
+    const normalized = normalizeFilter(rawFilter, SCENE_FIELD_TYPES);
+    state.cachedSceneFilter = normalized && Object.keys(normalized).length > 0 ? normalized : null;
     return selected || null;
   }
-  function normalizeSceneFilter(filter) {
-    if (!filter || typeof filter !== "object")
-      return filter;
-    const result = {};
-    for (const [key, value] of Object.entries(filter)) {
-      if (["AND", "OR", "NOT"].includes(key)) {
-        if (Array.isArray(value)) {
-          const nested = value.map(normalizeSceneFilter).filter(Boolean);
-          if (nested.length)
-            result[key] = nested;
-        } else if (value) {
-          const nested = normalizeSceneFilter(value);
-          if (nested)
-            result[key] = nested;
-        }
-        continue;
-      }
-      result[key] = normalizeCriterionValue(key, value);
+  function toBool(v) {
+    if (typeof v === "boolean")
+      return v;
+    if (typeof v === "string")
+      return /^(true|1|yes)$/i.test(v);
+    if (typeof v === "number")
+      return v !== 0;
+    if (v && typeof v === "object") {
+      if ("value" in v)
+        return toBool(v.value);
+      if ("checked" in v)
+        return toBool(v.checked);
     }
-    return result;
+    return void 0;
+  }
+  function toStr(v) {
+    if (v == null)
+      return void 0;
+    if (typeof v === "string")
+      return v;
+    if (typeof v === "number" || typeof v === "boolean")
+      return String(v);
+    if (v && typeof v === "object") {
+      if ("value" in v)
+        return toStr(v.value);
+    }
+    return void 0;
+  }
+  function toNum(v) {
+    if (v == null)
+      return void 0;
+    if (typeof v === "number")
+      return v;
+    if (typeof v === "string" && v.trim() !== "") {
+      const n = Number(v);
+      if (!Number.isNaN(n))
+        return n;
+    }
+    if (v && typeof v === "object") {
+      if ("value" in v)
+        return toNum(v.value);
+    }
+    return void 0;
+  }
+  function toFloatNum(v) {
+    if (v == null)
+      return void 0;
+    if (typeof v === "number")
+      return v;
+    if (typeof v === "string" && v.trim() !== "") {
+      const n = parseFloat(v);
+      if (!Number.isNaN(n))
+        return n;
+    }
+    if (v && typeof v === "object") {
+      if ("value" in v)
+        return toFloatNum(v.value);
+    }
+    return void 0;
+  }
+  function toEnumArray(v) {
+    if (v == null)
+      return [];
+    let arr = Array.isArray(v) ? v : [v];
+    return arr.map((item) => {
+      if (typeof item === "string")
+        return item.toUpperCase();
+      if (item && typeof item === "object") {
+        if (typeof item.value === "string")
+          return item.value.toUpperCase();
+        if (typeof item.label === "string")
+          return item.label.toUpperCase();
+      }
+      return null;
+    }).filter(Boolean);
   }
   function extractIds(items) {
     return (items || []).map((item) => typeof item === "string" ? item : item?.id).filter((id) => id != null && id !== "");
   }
-  function normalizeOrientationCriterion(criterion) {
-    if (!criterion || typeof criterion !== "object")
-      return criterion;
-    let rawValue = criterion.value;
-    if (rawValue && typeof rawValue === "object" && !Array.isArray(rawValue) && "value" in rawValue) {
-      rawValue = rawValue.value;
-    }
-    const values = Array.isArray(rawValue) ? rawValue : rawValue !== void 0 && rawValue !== null ? [rawValue] : [];
-    const normalized = values.map((v) => {
-      if (typeof v !== "string")
-        return v;
-      const upper = v.toUpperCase();
-      if (upper === "PORTRAIT" || upper === "LANDSCAPE")
-        return upper;
-      return v;
-    }).filter((v) => v !== void 0 && v !== null && v !== "");
-    if (normalized.length === 0)
+  function normalizeField(key, criterion, types) {
+    if (criterion === null || criterion === void 0)
       return null;
-    return { value: normalized };
-  }
-  function normalizeCriterionValue(key, criterion) {
-    if (!criterion || typeof criterion !== "object")
-      return criterion;
-    if (SCENE_BOOL_KEYS.has(key)) {
-      if (typeof criterion === "boolean")
-        return criterion;
-      if (typeof criterion.value === "boolean")
-        return criterion.value;
-      if (criterion.value && typeof criterion.value === "object" && typeof criterion.value.value === "boolean") {
-        return criterion.value.value;
+    if (types.boolean?.has(key)) {
+      const b = toBool(criterion);
+      return b === void 0 ? null : b;
+    }
+    if (types.stringScalar?.has(key)) {
+      const s = toStr(criterion);
+      return s === void 0 ? null : s;
+    }
+    if (typeof criterion !== "object" || Array.isArray(criterion)) {
+      if (types.stringCriterion?.has(key) && (typeof criterion === "string" || typeof criterion === "number" || typeof criterion === "boolean")) {
+        return { modifier: "EQUALS", value: String(criterion) };
       }
-      return criterion;
-    }
-    if (SCENE_STRING_SCALAR_KEYS.has(key)) {
-      if (typeof criterion === "string")
-        return criterion;
-      if (criterion.value !== void 0 && typeof criterion.value !== "object") {
-        return String(criterion.value);
+      if (types.intCriterion?.has(key) && (typeof criterion === "number" || typeof criterion === "string")) {
+        const n = toNum(criterion);
+        return n === void 0 ? null : { modifier: "EQUALS", value: n };
       }
-      if (criterion.value && typeof criterion.value === "object" && typeof criterion.value.value === "string") {
-        return criterion.value.value;
+      if (types.floatCriterion?.has(key) && (typeof criterion === "number" || typeof criterion === "string")) {
+        const n = toFloatNum(criterion);
+        return n === void 0 ? null : { modifier: "EQUALS", value: n };
       }
-      return criterion;
+      if (types.enumCriterion?.has(key) && (typeof criterion === "string" || typeof criterion === "number")) {
+        const vals = toEnumArray(criterion);
+        return vals.length ? { modifier: "EQUALS", value: vals } : null;
+      }
+      if ((types.hierarchicalMulti?.has(key) || types.multi?.has(key)) && Array.isArray(criterion)) {
+        const ids = extractIds(criterion);
+        return ids.length ? { modifier: "EQUALS", value: ids } : null;
+      }
+      return null;
     }
-    const nullaryModifiers = /* @__PURE__ */ new Set(["IS_NULL", "NOT_NULL", "IS_NOT_NULL"]);
-    if (nullaryModifiers.has(criterion.modifier)) {
-      const out = { modifier: criterion.modifier };
-      const value = criterion.value || {};
-      if ("depth" in value)
-        out.depth = value.depth;
-      else if ("depth" in criterion)
-        out.depth = criterion.depth;
-      const excludes = extractIds(value.excluded);
-      if (excludes.length)
-        out.excludes = excludes;
-      return out;
+    const mod = criterion.modifier || "EQUALS";
+    const isNullary = NULLARY_MODIFIERS.has(mod);
+    const value = criterion.value;
+    if (types.stringCriterion?.has(key)) {
+      if (isNullary)
+        return { modifier: mod, value: "" };
+      const s = toStr(value);
+      return s === void 0 ? null : { modifier: mod, value: s };
     }
-    if (isIntLikeCriterion(key, criterion)) {
-      const directValue = typeof criterion.value === "number" ? criterion.value : criterion.value?.value;
-      if (directValue === void 0 || directValue === null)
-        return criterion;
-      const { value, ...rest } = criterion;
-      return { ...rest, value: directValue };
+    if (types.intCriterion?.has(key)) {
+      if (isNullary)
+        return { modifier: mod, value: 0 };
+      const n = toNum(value);
+      return n === void 0 ? null : { modifier: mod, value: n };
     }
-    if (key === "orientation") {
-      return normalizeOrientationCriterion(criterion);
+    if (types.floatCriterion?.has(key)) {
+      if (isNullary)
+        return { modifier: mod, value: 0 };
+      const n = toFloatNum(value);
+      return n === void 0 ? null : { modifier: mod, value: n };
     }
-    if (isHierarchicalMultiCriterion(criterion)) {
-      const value = criterion.value || {};
-      const ids = extractIds(value.items);
-      const excludes = extractIds(value.excluded);
-      if (ids.length === 0 && excludes.length > 0) {
+    if (types.enumCriterion?.has(key)) {
+      if (isNullary)
+        return { modifier: mod, value: [] };
+      const vals = toEnumArray(value);
+      return vals.length ? { modifier: mod, value: vals } : null;
+    }
+    if (types.hierarchicalMulti?.has(key) || types.multi?.has(key)) {
+      const container = value && typeof value === "object" ? value : criterion;
+      const ids = extractIds(container.items ?? value);
+      const excludes = extractIds(container.excluded);
+      if (!ids.length && !excludes.length)
+        return null;
+      if (!ids.length && excludes.length > 0) {
         const out2 = { modifier: "EXCLUDES", value: excludes };
-        if ("depth" in value)
-          out2.depth = value.depth;
+        if ("depth" in container)
+          out2.depth = container.depth;
         return out2;
       }
-      if (ids.length === 0)
-        return null;
-      const out = { modifier: criterion.modifier, value: ids };
-      if ("depth" in value)
-        out.depth = value.depth;
+      const out = { modifier: mod, value: ids };
+      if ("depth" in container)
+        out.depth = container.depth;
       if (excludes.length)
         out.excludes = excludes;
       return out;
     }
     return criterion;
   }
-  function isIntLikeCriterion(key, criterion) {
-    const intKeys = ["tag_count", "file_count", "rating100", "o_counter", "duration", "framerate", "bitrate", "performer_count", "stash_id_count", "resume_time", "play_count", "play_duration"];
-    return intKeys.includes(key) && (typeof criterion.value === "number" || criterion.value && typeof criterion.value === "object" && typeof criterion.value.value === "number");
-  }
-  function isHierarchicalMultiCriterion(criterion) {
-    return criterion && typeof criterion === "object" && (Array.isArray(criterion.value?.items) || Array.isArray(criterion.items));
-  }
-  function getScalarCriterionValue(criterion) {
-    if (criterion.value === void 0 || criterion.value === null)
-      return void 0;
-    if (typeof criterion.value === "number") {
-      return criterion.value;
-    }
-    if (typeof criterion.value === "object" && !Array.isArray(criterion.value) && typeof criterion.value.value === "number") {
-      return criterion.value.value;
-    }
-    return void 0;
-  }
-  function normalizePerformerCriterionValue(key, criterion) {
-    if (!criterion || typeof criterion !== "object")
-      return criterion;
-    if (PERFORMER_BOOL_KEYS.has(key)) {
-      if (typeof criterion === "boolean")
-        return criterion;
-      if (typeof criterion.value === "boolean")
-        return criterion.value;
-      if (criterion.value && typeof criterion.value === "object" && typeof criterion.value.value === "boolean") {
-        return criterion.value.value;
-      }
-      return criterion;
-    }
-    if (PERFORMER_STRING_SCALAR_KEYS.has(key)) {
-      if (typeof criterion === "string")
-        return criterion;
-      if (criterion.value !== void 0 && typeof criterion.value !== "object") {
-        return criterion.value;
-      }
-      if (criterion.value && typeof criterion.value === "object" && typeof criterion.value.value === "string") {
-        return criterion.value.value;
-      }
-      return criterion;
-    }
-    const nullaryModifiers = /* @__PURE__ */ new Set(["IS_NULL", "NOT_NULL", "IS_NOT_NULL"]);
-    if (nullaryModifiers.has(criterion.modifier)) {
-      const out = { modifier: criterion.modifier };
-      const value = criterion.value || {};
-      if ("depth" in value)
-        out.depth = value.depth;
-      else if ("depth" in criterion)
-        out.depth = criterion.depth;
-      const excludes = extractIds(value.excluded);
-      if (excludes.length)
-        out.excludes = excludes;
-      return out;
-    }
-    const directValue = getScalarCriterionValue(criterion);
-    if (directValue !== void 0) {
-      const { value, ...rest } = criterion;
-      return { ...rest, value: directValue };
-    }
-    if (isHierarchicalMultiCriterion(criterion)) {
-      const value = criterion.value || {};
-      const ids = extractIds(value.items);
-      const excludes = extractIds(value.excluded);
-      if (ids.length === 0 && excludes.length > 0) {
-        const out2 = { modifier: "EXCLUDES", value: excludes };
-        if ("depth" in value)
-          out2.depth = value.depth;
-        return out2;
-      }
-      if (ids.length === 0)
-        return null;
-      const out = { modifier: criterion.modifier, value: ids };
-      if ("depth" in value)
-        out.depth = value.depth;
-      if (excludes.length)
-        out.excludes = excludes;
-      return out;
-    }
-    return criterion;
-  }
-  function normalizePerformerFilter(filter) {
+  function normalizeFilter(filter, types) {
     if (!filter || typeof filter !== "object")
       return filter;
     const result = {};
     for (const [key, value] of Object.entries(filter)) {
       if (["AND", "OR", "NOT"].includes(key)) {
         if (Array.isArray(value)) {
-          const nested = value.map(normalizePerformerFilter).filter(Boolean);
+          const nested = value.map((v) => normalizeFilter(v, types)).filter(Boolean);
           if (nested.length)
             result[key] = nested;
         } else if (value) {
-          const nested = normalizePerformerFilter(value);
+          const nested = normalizeFilter(value, types);
           if (nested)
             result[key] = nested;
         }
         continue;
       }
-      result[key] = normalizePerformerCriterionValue(key, value);
+      const normalized = normalizeField(key, value, types);
+      if (normalized !== null && normalized !== void 0) {
+        result[key] = normalized;
+      }
     }
     return result;
   }
@@ -6287,7 +6259,7 @@ Match Stats:`;
       loadNewPair2();
     }
   }
-  var ALL_GENDERS2, TIER_ORDER_FOR_GAP, CARD_DISPLAY_LS_KEY, CARD_DISPLAY_OPTIONS, PICTURE_ONLY_MODE_KEY, ALL_HIDE_OPTIONS, BADGE_DISPLAY_LS_KEY, BADGE_DISPLAY_OPTIONS, SCENE_MIN_DURATION_LS_KEY, DEFAULT_SCENE_MIN_DURATION, USER_FILTER_OVERRIDE_LS_KEY, DEFAULT_USER_FILTER_OVERRIDE, SCENE_FILTER_OVERRIDE_LS_KEY, DEFAULT_SCENE_FILTER_OVERRIDE, DISABLE_IMAGELESS_LS_KEY, DEFAULT_DISABLE_IMAGELESS, SAVED_FILTER_LS_KEY, SAVED_SCENE_FILTER_LS_KEY, SCENE_BOOL_KEYS, SCENE_STRING_SCALAR_KEYS, PERFORMER_BOOL_KEYS, PERFORMER_STRING_SCALAR_KEYS, optionsRestoreState, badgeSettingsChangeListeners, sceneMinDurationChangeListeners;
+  var ALL_GENDERS2, TIER_ORDER_FOR_GAP, CARD_DISPLAY_LS_KEY, CARD_DISPLAY_OPTIONS, PICTURE_ONLY_MODE_KEY, ALL_HIDE_OPTIONS, BADGE_DISPLAY_LS_KEY, BADGE_DISPLAY_OPTIONS, SCENE_MIN_DURATION_LS_KEY, DEFAULT_SCENE_MIN_DURATION, USER_FILTER_OVERRIDE_LS_KEY, DEFAULT_USER_FILTER_OVERRIDE, SCENE_FILTER_OVERRIDE_LS_KEY, DEFAULT_SCENE_FILTER_OVERRIDE, DISABLE_IMAGELESS_LS_KEY, DEFAULT_DISABLE_IMAGELESS, SAVED_FILTER_LS_KEY, SAVED_SCENE_FILTER_LS_KEY, SCENE_FIELD_TYPES, PERFORMER_FIELD_TYPES, NULLARY_MODIFIERS, optionsRestoreState, badgeSettingsChangeListeners, sceneMinDurationChangeListeners;
   var init_ui_sidebar = __esm({
     "ui-sidebar.js"() {
       init_state();
@@ -6336,22 +6308,97 @@ Match Stats:`;
       DEFAULT_DISABLE_IMAGELESS = true;
       SAVED_FILTER_LS_KEY = "hon_selected_saved_filter_id";
       SAVED_SCENE_FILTER_LS_KEY = "hon_selected_saved_scene_filter_id";
-      SCENE_BOOL_KEYS = /* @__PURE__ */ new Set([
-        "organized",
-        "interactive",
-        "performer_favorite"
-      ]);
-      SCENE_STRING_SCALAR_KEYS = /* @__PURE__ */ new Set([
-        "is_missing",
-        "has_markers"
-      ]);
-      PERFORMER_BOOL_KEYS = /* @__PURE__ */ new Set([
-        "filter_favorites",
-        "ignore_auto_tag"
-      ]);
-      PERFORMER_STRING_SCALAR_KEYS = /* @__PURE__ */ new Set([
-        "is_missing"
-      ]);
+      SCENE_FIELD_TYPES = {
+        boolean: /* @__PURE__ */ new Set([
+          "organized",
+          "interactive",
+          "performer_favorite"
+        ]),
+        stringScalar: /* @__PURE__ */ new Set([
+          "is_missing",
+          "has_markers"
+        ]),
+        stringCriterion: /* @__PURE__ */ new Set([
+          "title",
+          "code",
+          "details",
+          "director",
+          "oshash",
+          "checksum",
+          "phash",
+          "path",
+          "video_codec",
+          "audio_codec",
+          "url",
+          "captions"
+        ]),
+        intCriterion: /* @__PURE__ */ new Set([
+          "id",
+          "file_count",
+          "rating100",
+          "o_counter",
+          "duration",
+          "framerate",
+          "bitrate",
+          "performer_count",
+          "stash_id_count",
+          "resume_time",
+          "play_count",
+          "play_duration",
+          "tag_count",
+          "performer_age"
+        ]),
+        enumCriterion: /* @__PURE__ */ new Set(["orientation", "resolution"]),
+        hierarchicalMulti: /* @__PURE__ */ new Set(["studios", "groups", "tags", "performer_tags"]),
+        multi: /* @__PURE__ */ new Set(["movies", "galleries", "performers"]),
+        floatCriterion: /* @__PURE__ */ new Set([])
+      };
+      PERFORMER_FIELD_TYPES = {
+        boolean: /* @__PURE__ */ new Set([
+          "filter_favorites",
+          "ignore_auto_tag"
+        ]),
+        stringScalar: /* @__PURE__ */ new Set([
+          "is_missing"
+        ]),
+        stringCriterion: /* @__PURE__ */ new Set([
+          "name",
+          "disambiguation",
+          "details",
+          "ethnicity",
+          "country",
+          "eye_color",
+          "measurements",
+          "fake_tits",
+          "career_length",
+          "tattoos",
+          "piercings",
+          "aliases",
+          "url",
+          "hair_color"
+        ]),
+        intCriterion: /* @__PURE__ */ new Set([
+          "birth_year",
+          "age",
+          "height_cm",
+          "tag_count",
+          "scene_count",
+          "marker_count",
+          "image_count",
+          "gallery_count",
+          "play_count",
+          "o_counter",
+          "stash_id_count",
+          "rating100",
+          "weight",
+          "death_year"
+        ]),
+        floatCriterion: /* @__PURE__ */ new Set(["penis_length"]),
+        enumCriterion: /* @__PURE__ */ new Set(["gender", "circumcised"]),
+        hierarchicalMulti: /* @__PURE__ */ new Set(["tags", "studios", "groups"]),
+        multi: /* @__PURE__ */ new Set(["performers"])
+      };
+      NULLARY_MODIFIERS = /* @__PURE__ */ new Set(["IS_NULL", "NOT_NULL", "IS_NOT_NULL"]);
       loadCardDisplayOptions();
       loadBadgeDisplayOptions();
       loadSceneMinDuration();
