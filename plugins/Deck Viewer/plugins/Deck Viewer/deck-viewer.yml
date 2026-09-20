@@ -2,7 +2,6 @@ name: Deck Viewer
 description: The Sakoto Fork of the Image-Deck plugin. Features include Hijacking of the built in stash viewbox, full mobile integration and optimization with one-handed controls, tagging, filtering, customizable visual effects, and additional features to better enhance the gallery and image viewing experience in stash.
 version: 1.0
 settings:
-  # Playback settings
   autoPlayInterval:
     displayName: Auto-play Interval (ms)
     description: 'Time between automatic transitions in milliseconds (100-5000, default: 500)'
@@ -17,7 +16,6 @@ settings:
     description: 'Display "3 of 150" counter (default: enabled)'
     type: BOOLEAN
 
-  # Color settings (0-360 for hue)
   ambientColorHue:
     displayName: Ambient Glow Hue
     description: 'Background ambient glow hue (0-360, default: 260 = purple)'
