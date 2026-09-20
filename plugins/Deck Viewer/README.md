@@ -44,8 +44,8 @@ Numerous performance enhancements were made to reduce client side load and enhan
 ## Additional Plugin Support
 - Supports SFW Plugin
 
-[
-Buy me a coffee](https://buymeacoffee.com/sakotobot?status=1)
+[Buy me a coffee](https://buymeacoffee.com/sakotobot?status=1)
+
 ---
 ## Plugin Installation Instructions
 1. Settings → Plugins → Available Plugins
