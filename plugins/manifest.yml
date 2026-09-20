@@ -12,9 +12,9 @@
   metadata:
     description: Plugin for viewing decks
   version: 1.0.0
-  date: "2026-06-01 12:23:26"
+  date: "2026-09-20 21:13:19"
   path: https://github.com/Servbot91/Sakotos-Stash-Repo/raw/main/plugins/Deck%20Viewer/plugins/Deck%20Viewer.zip
-  sha256: b3904bdbc8a793e42d77d6fe0c887b93df348d995e41f677f8e37a18a6e0f6fd
+  sha256: a9000a7f2e1a7e3573929d43d6c7414c2562ad6355f4ca101f56f68536197225
 - id: DiceR
   name: DiceR
   metadata:
