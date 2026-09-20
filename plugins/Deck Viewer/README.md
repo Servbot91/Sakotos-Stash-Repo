@@ -1,46 +1,51 @@
 ## Overview
 
-Deck Viewer is an image viewer that hijacks the built in stash image viewer. It is meant to further enhance gallery and image content consumption, streamlining one handed use while providing necessary functionality for cataloging and reducing accidental clicks\swipes.
+Deck Viewer is a image viewer that hijacks the built in stash image viewer. It is meant to further enhance gallery and image content consumption, streamlining one handed use while providing necessary functionality for cataloging and filtering.
+
+It is a fork of the original abandoned plugin known as image-deck which restores functionality and further improves upon the concept originally presented.
 
 ---
-## Improvements
+# Features
 
-### Feature Integration
-- Performer page integration. Switch Between Gallery Mode and Image Mode anytime regardless of where you are in stash even on performer pages!
-- Added Mouse wheel functionality
-- Tag images\galleries with studios, update titles, details, performer gallery tags
-- Added zoom functionality for mobile and desktop (buttons respect context ie no zoom on galleries)
-- Full mobile integration and optimization
-- One Handed browsing
-- Added Gallery support
-- Added keyboard support (strict)
-- Supports SFW Plugin
-- Integrated with default stash buttons
-- Filter your galleries\images in real time. Add exclusions, or filter for performers. It all happens server side with minimal client side stress.
-- Default Stash Image Viewer Hijacking
-- Localstorage utilized to remember states and places, persists.
-- Infinite Scroll 
-	- For as long as you have content. It will scroll as long as content exists, it however does not loop around.
----
-### Performance
+## Mode Selection
+
+### Gallery Mode
+
+Browse your galleries within the deck viewer UI. Hovering over a gallery provides a card style fan out image preview of the images within the gallery.
+
+### Image Mode
+
+Browse your images within your library with mobile support complete with nav controls and swipe and tap gestures.
+
+### Performer page integration
+
+Switch Between Gallery Mode and Image Mode on a performer page while maintaining performer context 
+
+## Filtering
+
+You can use your saved stash image and gallery filters to sort content. You can also manually filter by include/excluding specific tags or performers. If no filter is specified, Deck Viewer will default to your default gallery\image sort or display what is down in your current sort.
+
+## Manage Metadata
+
+- Tag images\galleries with studios, update titles, details, performer gallery tags, and organize complete with fuzzy find.
+
+## Performance
+
+Numerous performance enhancements were made to reduce client side load and enhance battery usage when on mobile. You can expect significant improvements over the original in terms of performance and browser memory usage.
 
 - Optimized for large datasets (in the millions)
-- Added 'Chunk' system
-	- Images are locked to 50 on load for performance. Once you are nearing the end of a chunk, the next chunk is loaded. You also have the option to preload multiple chunks ahead by pressing the load next chunk feature.
-	- Chunk system has a safety check to prevent backend query spam and will skip if a chunk load is in progress
-	- Can manually load the next chunk via button
-- Removed bloat effects
-- Backend GraphQL is properly using stash schema
----
+- Utilizes a backend cache system that reliably allows the user to infinite scroll while maintaining scalability for large databases without sacrificing plugin speed or functionality
 
-### QOL Improvements
+## QOL
 
+- Infinite scroll
 - Server Side Filtering
-- Focused view over original card view
-- Buttons and text fade out when zoomed in
 - Single hand optimizations
+## Additional Plugin Support
+- Supports SFW Plugin
 
-  
+[
+Buy me a coffee](https://buymeacoffee.com/sakotobot?status=1)
 ---
 ## Plugin Installation Instructions
 1. Settings → Plugins → Available Plugins
