@@ -1,8 +1,569 @@
+/* === gallery_styling.css === */
+/* Image Deck — Gallery cover & gallery-mode specific styles */
+
+/* Hide zoom buttons when viewing gallery covers */
+.image-deck-container.gallery-active .image-deck-control-btn[data-action="zoom-in"],
+.image-deck-container.gallery-active .image-deck-control-btn[data-action="zoom-out"],
+.image-deck-container.gallery-active .image-deck-control-btn[data-action="zoom-reset"] {
+    display: none;
+}
+
+/* Gallery cover layout */
+.gallery-cover-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    padding: 8px;
+    box-sizing: border-box;
+    text-align: center;
+    gap: 4px;
+    position: relative;
+}
+
+.gallery-cover-title {
+    color: white;
+    font-size: clamp(16px, 3vw, 28px);
+    font-weight: 600;
+    text-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.gallery-image-count {
+    font-size: clamp(13px, 2vw, 17px) !important;
+    color: #ccc !important;
+    margin: 0 !important;
+    flex-shrink: 0;
+}
+
+/* Image box — explicit size, centered */
+.image-deck-container .swiper-slide .gallery-cover-link {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    align-self: center;
+    width: 20vw;
+    height: 56vh;
+    max-width: 20vw;
+    max-height: 56vh;
+    margin: 0;
+    padding: 0;
+    pointer-events: auto;
+    overflow: hidden;
+    border-radius: 12px;
+    position: relative;
+    z-index: 2;
+}
+
+/* Fill the box with cropping allowed */
+.image-deck-container .swiper-slide .gallery-cover-link img {
+    width: 100%;
+    height: 100%;
+    max-width: none;
+    max-height: none;
+    object-fit: cover;
+    display: block;
+    content-visibility: visible;
+    contain: none;
+}
+
+.gallery-performers {
+    margin-top: 4px;
+    font-size: 16px;
+    color: #ccc;
+    flex-shrink: 0;
+}
+
+/* Mobile — NO fan-out */
+@media (max-width: 768px) {
+    .gallery-cover-container {
+        padding: 4px;
+        gap: 2px;
+    }
+
+    .image-deck-container .swiper-slide .gallery-cover-link {
+        width: 60vw;
+        height: 45vh;
+        max-width: 60vw;
+        max-height: 45vh;
+    }
+
+    .gallery-cover-title {
+        font-size: clamp(14px, 4.5vw, 20px);
+    }
+
+    .gallery-image-count {
+        font-size: 13px !important;
+    }
+
+    .gallery-performers {
+        font-size: 12px;
+    }
+
+    .gallery-preview-stack {
+        display: none !important;
+    }
+}
+
+/* Desktop-only gallery preview card fan-out */
+@media (min-width: 769px) {
+    .gallery-preview-stack {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 20vw;
+        height: 56vh;
+        transform: translate(-50%, -50%);
+        pointer-events: none;
+        z-index: 1;
+    }
+
+    .gallery-preview-card {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        border-radius: 12px;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+        transform-origin: bottom left;
+        will-change: transform, opacity;
+        transition: transform 0.45s cubic-bezier(0.25, 0.46, 0.45, 0.94), opacity 0.35s ease;
+        opacity: 0;
+    }
+
+    .gallery-preview-card.preview-1 {
+        transform: translate(0, 0) rotate(0deg) scale(0.95);
+        z-index: -1;
+    }
+
+    .gallery-preview-card.preview-2 {
+        transform: translate(0, 0) rotate(0deg) scale(0.90);
+        z-index: -2;
+    }
+
+    .gallery-preview-card.preview-3 {
+        transform: translate(0, 0) rotate(0deg) scale(0.85);
+        z-index: -3;
+    }
+
+    .gallery-cover-container:hover .gallery-preview-card {
+        opacity: 1;
+    }
+
+    .gallery-cover-container:hover .gallery-preview-card.preview-1 {
+        transform: translate(30%, -4%) rotate(10deg) scale(1);
+    }
+
+    .gallery-cover-container:hover .gallery-preview-card.preview-2 {
+        transform: translate(60%, -2%) rotate(20deg) scale(1);
+    }
+
+    .gallery-cover-container:hover .gallery-preview-card.preview-3 {
+        transform: translate(90%, 2%) rotate(30deg) scale(1);
+    }
+}
+
+
+/* === sidebar.css === */
+/* Image Deck — Settings sidebar & sidebar-open interaction styles */
+
+/* Settings sidebar panel */
+.image-deck-sidebar {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 320px;
+    max-width: 85vw;
+    height: 100%;
+    background: rgba(20, 20, 20, 0.98);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    z-index: 25;
+    transform: translateX(100%);
+    transition: transform 0.3s ease;
+    display: flex;
+    flex-direction: column;
+    border-left: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: -5px 0 30px rgba(0, 0, 0, 0.5);
+}
+
+.image-deck-container.sidebar-open .image-deck-sidebar {
+    transform: translateX(0);
+}
+
+/* Sidebar close button */
+.image-deck-sidebar-close {
+    position: absolute;
+    top: 15px;
+    right: 15px;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.1);
+    border: none;
+    color: white;
+    font-size: 18px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 5;
+    transition: background 0.2s ease, transform 0.2s ease;
+}
+
+.image-deck-sidebar-close:hover {
+    background: rgba(255, 255, 255, 0.2);
+    transform: scale(1.1);
+}
+
+.image-deck-sidebar-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 60px 20px 20px;
+}
+
+.sidebar-section {
+    margin-bottom: 20px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.sidebar-section:last-child {
+    border-bottom: none;
+}
+
+.sidebar-label {
+    display: block;
+    margin-bottom: 10px;
+    font-size: 13px;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.6);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/* Mode indicator in sidebar */
+.mode-indicator {
+    width: 100%;
+    padding: 12px;
+    background: rgba(102, 126, 234, 0.15);
+    border: 1px solid rgba(102, 126, 234, 0.3);
+    border-radius: 8px;
+    color: white;
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.mode-indicator.exclude {
+    background: rgba(255, 107, 107, 0.15);
+    border-color: rgba(255, 107, 107, 0.3);
+}
+
+.mode-indicator:hover {
+    background: rgba(102, 126, 234, 0.25);
+}
+
+.mode-indicator.exclude:hover {
+    background: rgba(255, 107, 107, 0.25);
+}
+
+/* Saved filter dropdown */
+.image-deck-sidebar .saved-filters-section {
+    margin-bottom: 16px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.image-deck-sidebar .saved-filters-section .sidebar-label {
+    display: block;
+    margin-bottom: 10px;
+    font-size: 13px;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.6);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.image-deck-sidebar .saved-filters-section .sidebar-saved-filter-select {
+    width: 100%;
+    padding: 11px 34px 11px 12px;
+    font-size: 14px;
+    line-height: 1.4;
+    color: #fff;
+    background-color: #252525 !important;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23999' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    border: 1px solid rgba(255, 255, 255, 0.15) !important;
+    border-radius: 8px;
+    cursor: pointer;
+    outline: none;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.image-deck-sidebar .saved-filters-section .sidebar-saved-filter-select:hover {
+    border-color: rgba(255, 255, 255, 0.3) !important;
+}
+
+.image-deck-sidebar .saved-filters-section .sidebar-saved-filter-select:focus {
+    border-color: #667eea !important;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.2);
+}
+
+.image-deck-sidebar .saved-filters-section .sidebar-saved-filter-select option {
+    background: #252525;
+    color: #fff;
+    padding: 10px;
+}
+
+/* Filter mode toggle */
+.filter-mode-toggle {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.filter-mode-btn {
+    flex: 1;
+    padding: 8px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 6px;
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.filter-mode-btn.active {
+    background: rgba(102, 126, 234, 0.25);
+    border-color: rgba(102, 126, 234, 0.5);
+    color: #fff;
+}
+
+/* Tag / performer search inputs */
+.sidebar-tag-search,
+.sidebar-performer-search {
+    width: 100%;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 6px;
+    color: #fff;
+    font-size: 14px;
+    outline: none;
+    transition: border-color 0.2s ease;
+}
+
+.sidebar-tag-search:focus,
+.sidebar-performer-search:focus {
+    border-color: #667eea;
+}
+
+.sidebar-tag-results,
+.sidebar-performer-results {
+    max-height: 160px;
+    overflow-y: auto;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 6px;
+    margin-bottom: 12px;
+}
+
+.sidebar-tag-result,
+.sidebar-performer-result {
+    padding: 10px 12px;
+    color: rgba(255, 255, 255, 0.85);
+    cursor: pointer;
+    transition: background 0.2s ease;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.sidebar-tag-result:hover,
+.sidebar-performer-result:hover,
+.sidebar-tag-result.active,
+.sidebar-performer-result.active {
+    background: rgba(102, 126, 234, 0.35);
+}
+
+.sidebar-filter-group-label {
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.5);
+    margin: 12px 0 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.sidebar-pending-filters,
+.sidebar-active-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    min-height: 30px;
+}
+
+.sidebar-empty-state {
+    color: rgba(255, 255, 255, 0.35);
+    font-size: 13px;
+    font-style: italic;
+    padding: 8px 0;
+}
+
+.sidebar-filter-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 10px;
+    border-radius: 20px;
+    font-size: 12px;
+    color: #fff;
+}
+
+.sidebar-filter-pill.include {
+    background: rgba(17, 153, 142, 0.25);
+    border: 1px solid rgba(17, 153, 142, 0.4);
+}
+
+.sidebar-filter-pill.exclude {
+    background: rgba(255, 107, 107, 0.25);
+    border: 1px solid rgba(255, 107, 107, 0.4);
+}
+
+.remove-pill {
+    background: rgba(255, 255, 255, 0.15);
+    border: none;
+    color: #fff;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    line-height: 1;
+    padding: 0;
+    margin-left: 4px;
+    transition: background 0.2s ease;
+}
+
+.remove-pill:hover {
+    background: rgba(255, 255, 255, 0.3);
+}
+
+/* Sidebar actions */
+.sidebar-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 16px;
+}
+
+.sidebar-apply-btn,
+.sidebar-clear-btn {
+    flex: 1;
+    padding: 10px;
+    border-radius: 6px;
+    border: none;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.sidebar-apply-btn {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: #fff;
+}
+
+.sidebar-clear-btn {
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.sidebar-apply-btn:hover {
+    opacity: 0.9;
+}
+
+.sidebar-clear-btn:hover {
+    background: rgba(255, 255, 255, 0.15);
+}
+
+/* Mobile: disable sidebar backdrop blur for performance */
+.mobile-optimized .image-deck-sidebar {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    background: rgba(20, 20, 20, 0.98) !important;
+}
+
+/* Sidebar visibility: only when explicitly open, NOT during inactivity auto-hide */
+.image-deck-container.sidebar-open .image-deck-sidebar,
+.image-deck-container.hiding-ui.sidebar-open .image-deck-sidebar {
+    opacity: 1 !important;
+    transform: translateX(0) !important;
+    pointer-events: auto !important;
+    visibility: visible !important;
+    transition: transform 0.3s ease !important;
+}
+
+/* Settings gear stays reachable only when sidebar is open */
+.image-deck-container.sidebar-open .image-deck-sidebar-toggle,
+.image-deck-container.hiding-ui.sidebar-open .image-deck-sidebar-toggle {
+    opacity: 1 !important;
+    visibility: visible !important;
+    pointer-events: auto !important;
+}
+
+/* When sidebar is open, keep topbar reachable but hide bottom controls */
+.image-deck-container.sidebar-open .image-deck-topbar,
+.image-deck-container.hiding-ui.sidebar-open .image-deck-topbar {
+    opacity: 1 !important;
+    pointer-events: auto !important;
+}
+
+.image-deck-container.sidebar-open .image-deck-controls-wrapper,
+.image-deck-container.hiding-ui.sidebar-open .image-deck-controls-wrapper,
+.image-deck-container.sidebar-open .image-deck-speed,
+.image-deck-container.hiding-ui.sidebar-open .image-deck-speed,
+.image-deck-container.sidebar-open .image-deck-current-filters,
+.image-deck-container.hiding-ui.sidebar-open .image-deck-current-filters {
+    opacity: 0 !important;
+    pointer-events: none !important;
+}
+.sidebar-tag-result,
+.sidebar-performer-result {
+    padding: 10px 12px;
+    color: rgba(255, 255, 255, 0.85);
+    cursor: pointer;
+    transition: background 0.2s ease;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.sidebar-tag-result:hover,
+.sidebar-performer-result:hover,
+.sidebar-tag-result.active,
+.sidebar-performer-result.active {
+    background: rgba(102, 126, 234, 0.35);
+}
+
+
+/* === styles.css === */
 /* Image Deck Plugin Styles - Performance Optimized */
 
 /* Remove the old floating button styles and replace with these */
 #image-deck-nav-btn {
-    /* Transitions only, the rest is handled by Bootstrap btn classes */
     transition: transform 0.2s ease, filter 0.2s ease;
 }
 
@@ -12,7 +573,6 @@
 }
 
 #image-deck-nav-btn .nav-menu-icon {
-    /* Align the emoji with the site's SVG icons */
     display: flex;
     align-items: center;
     justify-content: center;
@@ -20,8 +580,7 @@
 
 .image-deck-container {
     position: fixed;
-    top: 0;
-    left: 0;
+    inset: 0;
     width: 100vw;
     height: 100vh;
     background: rgba(0, 0, 0, 0.95);
@@ -30,11 +589,9 @@
     flex-direction: column;
     opacity: 0;
     transition: opacity 0.3s ease;
-    /* GPU acceleration */
-    will-change: opacity, transform;
-    transform: translateZ(0);
-    backface-visibility: hidden;
+    will-change: opacity;
     -webkit-font-smoothing: antialiased;
+    overscroll-behavior: contain;
 }
 
 /* Zoom cursor indicator */
@@ -62,12 +619,12 @@
     -moz-user-select: none;
     -ms-user-select: none;
     user-select: none;
-    touch-action: pan-y pinch-zoom; /* Allow vertical scrolling and pinch zoom */
+    touch-action: pan-y pinch-zoom;
 }
 
 /* Ensure proper touch handling */
 .swiper-zoom-container {
-    touch-action: manipulation; /* Better for double tap */
+    touch-action: manipulation;
     -webkit-tap-highlight-color: transparent;
 }
 
@@ -91,13 +648,6 @@
     object-fit: contain;
 }
 
-/* Hide zoom buttons when viewing gallery covers */
-.image-deck-container.gallery-active .image-deck-control-btn[data-action="zoom-in"],
-.image-deck-container.gallery-active .image-deck-control-btn[data-action="zoom-out"],
-.image-deck-container.gallery-active .image-deck-control-btn[data-action="zoom-reset"] {
-    display: none;
-}
-
 .image-deck-container.active {
     opacity: 1;
 }
@@ -107,15 +657,12 @@
     width: 100%;
     height: 100%;
     flex: 1;
-    /* GPU acceleration for swiper */
-    transform: translateZ(0);
     backface-visibility: hidden;
     will-change: transform;
     contain: layout style paint;
 }
 
 .swiper-wrapper {
-    /* GPU acceleration */
     transform-style: preserve-3d;
     will-change: transform;
 }
@@ -125,7 +672,6 @@
     align-items: center;
     justify-content: center;
     background: transparent;
-    /* GPU acceleration - DO NOT set transform here, Swiper controls it for animations */
     backface-visibility: hidden;
     will-change: transform, opacity;
 }
@@ -136,17 +682,13 @@
     object-fit: contain;
     user-select: none;
     -webkit-user-drag: none;
-    /* Performance optimizations */
     image-rendering: -webkit-optimize-contrast;
     contain: layout style paint;
-    /* GPU acceleration */
     transform: translateZ(0);
     backface-visibility: hidden;
-    /* Async image decode */
     content-visibility: auto;
-    /* Subtle glow effect */
-    filter: drop-shadow(0 0 40px rgba(102, 126, 234, 0.3));
 }
+
 
 /* Lazy loading states */
 .swiper-lazy-preloader {
@@ -186,10 +728,6 @@
     justify-content: space-between;
     padding: 0 20px;
     pointer-events: none;
-    /* GPU acceleration */
-    transform: translateZ(0);
-    backface-visibility: hidden;
-    contain: layout style paint;
 }
 
 .image-deck-topbar > * {
@@ -212,9 +750,7 @@
     transform-origin: left;
     transform: scaleX(0);
     z-index: 11;
-    /* GPU acceleration */
     will-change: transform;
-    backface-visibility: hidden;
 }
 
 /* Counter */
@@ -224,18 +760,14 @@
     font-weight: 500;
     text-shadow: 0 2px 4px rgba(0,0,0,0.5);
     margin-left: 10px;
-    /* Prevent layout shift */
     min-width: 80px;
-    /* GPU acceleration to prevent flicker */
-    will-change: contents;
-    transform: translateZ(0);
-    backface-visibility: hidden;
     -webkit-font-smoothing: antialiased;
 }
 
 /* Topbar buttons - shared styles */
 .image-deck-close,
-.image-deck-fullscreen{
+.image-deck-fullscreen,
+.image-deck-sidebar-toggle {
     width: 40px;
     height: 40px;
     border-radius: 50%;
@@ -246,27 +778,24 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: background 0.2s ease, transform 0.2s ease;
+    transition: background 0.2s ease, transform 0.2s ease, opacity 0.3s ease;
     font-size: 20px;
     backdrop-filter: blur(10px);
-    /* GPU acceleration */
-    will-change: transform;
-    transform: translateZ(0);
-    backface-visibility: hidden;
 }
 
 .image-deck-close:hover,
-.image-deck-fullscreen:hover{
+.image-deck-fullscreen:hover,
+.image-deck-sidebar-toggle:hover {
     background: rgba(255,255,255,0.2);
-    transform: scale(1.1) translateZ(0);
+    transform: scale(1.1);
 }
 
 /* Control buttons */
-.image-deck-controls {
+.image-deck-controls-wrapper {
     position: absolute;
     bottom: 30px;
     left: 50%;
-    transform: translateX(-50%) translateZ(0);
+    transform: translateX(-50%);
     display: flex;
     gap: 15px;
     z-index: 10;
@@ -274,26 +803,38 @@
     padding: 10px 20px;
     border-radius: 30px;
     backdrop-filter: blur(10px);
-    /* GPU acceleration */
-    will-change: transform;
-    backface-visibility: hidden;
-    contain: layout style paint;
 }
 
+/* Text button groups inside the wrapper */
+.image-deck-zoom-controls,
+.image-deck-navigation-controls {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+/* Accent all navigation text buttons */
 .image-deck-info-btn,
-.image-deck-control-btn[data-action="play"] {
+.image-deck-control-btn[data-action="play"],
+.image-deck-control-btn[data-action="prev"],
+.image-deck-control-btn[data-action="next"] {
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
     border-color: transparent !important;
 }
 
-.image-deck-control-btn[data-action="play"]:hover {
+.image-deck-control-btn[data-action="play"]:hover,
+.image-deck-control-btn[data-action="prev"]:hover,
+.image-deck-control-btn[data-action="next"]:hover,
+.image-deck-info-btn:hover {
     background: linear-gradient(135deg, #5568d3 0%, #654198 100%) !important;
 }
 
+/* Base control button */
 .image-deck-control-btn {
-    width: 44px;
+    min-width: 44px;
     height: 44px;
     border-radius: 50%;
+    padding: 0;
     background: rgba(255,255,255,0.1);
     border: 1px solid rgba(255,255,255,0.2);
     color: white;
@@ -303,15 +844,12 @@
     justify-content: center;
     transition: background 0.2s ease, transform 0.2s ease;
     font-size: 18px;
-    /* GPU acceleration */
     will-change: transform;
-    transform: translateZ(0);
-    backface-visibility: hidden;
 }
 
 .image-deck-control-btn:hover {
     background: rgba(255,255,255,0.2);
-    transform: scale(1.1) translateZ(0);
+    transform: scale(1.1);
 }
 
 .image-deck-control-btn.active {
@@ -319,12 +857,31 @@
     border-color: transparent;
 }
 
+/* Navigation text buttons: equal pill shape, same size */
+.image-deck-control-btn[data-action="prev"],
+.image-deck-control-btn[data-action="play"],
+.image-deck-control-btn[data-action="next"],
+.image-deck-info-btn {
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    border-radius: 50%;
+    font-size: 18px;
+}
+
+/* Zoom icon-only buttons: stay circular */
+.image-deck-zoom-controls .image-deck-control-btn {
+    width: 44px;
+    padding: 0;
+    border-radius: 50%;
+}
+
 /* Speed indicator */
 .image-deck-speed {
     position: absolute;
     bottom: 90px;
     left: 50%;
-    transform: translateX(-50%) translateZ(0);
+    transform: translateX(-50%);
     color: white;
     font-size: 12px;
     background: rgba(0,0,0,0.5);
@@ -334,12 +891,7 @@
     opacity: 0;
     transition: opacity 0.3s ease;
     pointer-events: none;
-    /* GPU acceleration */
-    will-change: opacity;
-    backface-visibility: hidden;
 }
-
-
 
 .image-deck-speed.visible {
     opacity: 1;
@@ -359,16 +911,10 @@
     overflow: visible !important;
 }
 
-/* Cards effect - Make background cards nearly invisible */
+/* Cards effect - background slides hidden */
 .swiper-cards .swiper-slide:not(.swiper-slide-active) {
-    /* Adjust opacity: 0.05 is almost gone, 0.15 is a faint ghost */
-    opacity: 0.00 !important; 
-    
-    /* Optional: add a slight blur to further separate focus */
-    filter: blur(4px) brightness(0.5);
-    
-    /* Ensure smooth fading when sliding */
-    transition: opacity 0.4s ease, filter 0.4s ease;
+    opacity: 0 !important;
+    transition: opacity 0.4s ease;
 }
 
 /* Ensure the active slide is always fully visible */
@@ -380,7 +926,6 @@
 .swiper-cards .swiper-slide {
     border-radius: 12px;
     overflow: hidden;
-    /* Lighter shadow for performance */
     box-shadow: 0 5px 20px rgba(0,0,0,0.3);
 }
 
@@ -392,75 +937,90 @@
 
 /* Virtual slides optimization */
 .swiper-virtual .swiper-slide {
-    /* Prevent unnecessary reflows */
     contain: layout style paint;
 }
 
 /* Mobile optimizations - disable expensive GPU operations */
 .mobile-optimized .image-deck-topbar,
-.mobile-optimized .image-deck-controls,
+.mobile-optimized .image-deck-controls-wrapper,
 .mobile-optimized .image-deck-speed,
 .mobile-optimized .image-deck-close,
 .mobile-optimized .image-deck-fullscreen,
 .mobile-optimized .image-deck-strobe-btn,
 .mobile-optimized .image-deck-metadata-modal {
-    backdrop-filter: none !important; /* Extremely expensive on mobile */
+    backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
 }
 
-.mobile-optimized .image-deck-controls {
-    background: rgba(0,0,0,0.85) !important; /* Solid bg instead of blur */
+.mobile-optimized .image-deck-controls-wrapper {
+    background: rgba(0,0,0,0.85) !important;
 }
 
 .mobile-optimized .image-deck-metadata-modal {
-    background: rgba(0, 0, 0, 0.98) !important; /* Nearly solid for performance */
+    background: rgba(0, 0, 0, 0.98) !important;
 }
 
 .mobile-optimized .swiper-cards .swiper-slide:not(.swiper-slide-active) {
-    filter: none !important; /* Remove blur on mobile, keep just the opacity */
+    filter: none !important;
 }
 
 /* Mobile layout adjustments */
 @media (max-width: 768px) {
-    .image-deck-controls {
+    .image-deck-controls-wrapper {
         bottom: 20px;
         padding: 8px 15px;
+        gap: 10px;
     }
 
-    .image-deck-control-btn {
-        width: 40px;
-        height: 40px;
-        font-size: 16px;
+    .image-deck-zoom-controls .image-deck-control-btn,
+    .image-deck-control-btn[data-action="prev"],
+    .image-deck-control-btn[data-action="play"],
+    .image-deck-control-btn[data-action="next"],
+    .image-deck-info-btn {
+        width: 36px;
+        height: 36px;
+        padding: 0;
+        border-radius: 50%;
+        font-size: 14px;
     }
-
     .image-deck-launch-btn {
         width: 48px;
         height: 48px;
         font-size: 20px;
         bottom: 70px;
     }
-}
 
-/* Loading spinner */
-.image-deck-loading {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    width: 50px;
-    height: 50px;
-    border: 3px solid rgba(255,255,255,0.1);
-    border-top-color: #667eea;
-    border-radius: 50%;
-    animation: spin 1s linear infinite;
-    will-change: transform;
+    /* Mobile viewport fixes so the metadata modal isn't hidden by browser chrome */
+    .image-deck-container {
+        height: 100dvh;
+        height: -webkit-fill-available;
+    }
+
+    .image-deck-metadata-modal {
+        height: 80dvh;
+        max-height: 80dvh;
+    }
+
+    .image-deck-metadata-body {
+        padding-bottom: max(24px, env(safe-area-inset-bottom));
+        scroll-padding-bottom: max(24px, env(safe-area-inset-bottom));
+    }
+
+    .metadata-actions {
+        position: sticky;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.95);
+        margin: 24px -20px -20px;
+        padding: 20px;
+        border-top: 1px solid rgba(255,255,255,0.1);
+    }
 }
 
 @keyframes spin {
     to { transform: translate(-50%, -50%) rotate(360deg); }
 }
 
-/* Ambient gradient overlay */
+/* Ambient gradient overlay — static only */
 .image-deck-ambient {
     position: absolute;
     top: 0;
@@ -475,36 +1035,6 @@
         rgba(118, 75, 162, 0.1) 50%,
         transparent 100%
     );
-    mix-blend-mode: screen;
-    animation: ambientPulse 8s ease-in-out infinite;
-    /* GPU acceleration */
-    transform: translateZ(0);
-    backface-visibility: hidden;
-    will-change: opacity;
-}
-
-@keyframes ambientPulse {
-    0%, 100% { opacity: 0.3; }
-    50% { opacity: 0.6; }
-}
-
-/* Edge glow effect */
-.image-deck-container::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    pointer-events: none;
-    z-index: 3;
-    box-shadow: inset 0 0 100px rgba(102, 126, 234, 0.2);
-    animation: edgeGlow 4s ease-in-out infinite alternate;
-}
-
-@keyframes edgeGlow {
-    0% { box-shadow: inset 0 0 100px rgba(102, 126, 234, 0.2); }
-    100% { box-shadow: inset 0 0 150px rgba(118, 75, 162, 0.3); }
 }
 
 /* Metadata modal */
@@ -514,6 +1044,7 @@
     left: 0;
     right: 0;
     height: 80%;
+    max-height: 80dvh;
     background: rgba(0, 0, 0, 0.95);
     backdrop-filter: blur(20px);
     z-index: 100;
@@ -522,9 +1053,7 @@
     overflow: hidden;
     border-radius: 20px 20px 0 0;
     box-shadow: 0 -10px 40px rgba(0,0,0,0.5);
-    /* GPU acceleration */
     will-change: transform;
-    backface-visibility: hidden;
     contain: layout style paint;
 }
 
@@ -827,12 +1356,10 @@
     background: linear-gradient(135deg, #0d7a6f 0%, #2dd164 100%);
 }
 
-/* Disable body scroll when deck is open */
+/* No body scroll lock — the deck is a true fixed overlay.
+   Do NOT add overflow/position/fixed rules to body here. */
 body.image-deck-open {
-    overflow: hidden;
-    /* Prevent iOS bounce */
-    position: fixed;
-    width: 100%;
+    /* keep empty; class used only for optional styling state */
 }
 
 /* Performance hints for browsers */
@@ -844,31 +1371,32 @@ body.image-deck-open {
     }
 
     .image-deck-ambient,
-    .image-deck-particles,
     .image-deck-container::before {
         display: none !important;
     }
 }
 
-/* Add these improved styles instead */
+/* Fullscreen UI auto-hide */
 .image-deck-container.fullscreen-mode .image-deck-topbar-btns > * {
     transition: opacity 0.3s ease, transform 0.2s ease;
 }
 
-.image-deck-container.fullscreen-mode.hiding-ui .image-deck-topbar,
-.image-deck-container.fullscreen-mode.hiding-ui .image-deck-controls-wrapper,
-.image-deck-container.fullscreen-mode.hiding-ui .image-deck-speed,
-.image-deck-container.fullscreen-mode.hiding-ui .image-deck-current-filters {
+.image-deck-container.hiding-ui .image-deck-topbar,
+.image-deck-container.hiding-ui .image-deck-controls-wrapper,
+.image-deck-container.hiding-ui .image-deck-speed,
+.image-deck-container.hiding-ui .image-deck-current-filters {
     opacity: 0;
     pointer-events: none;
     transition: opacity 0.3s ease;
 }
 
-.image-deck-container.fullscreen-mode:not(.hiding-ui) .image-deck-topbar,
-.image-deck-container.fullscreen-mode:not(.hiding-ui) .image-deck-controls-wrapper,
-.image-deck-container.fullscreen-mode:not(.hiding-ui) .image-deck-speed,
-.image-deck-container.fullscreen-mode:not(.hiding-ui) .image-deck-current-filters {
+.image-deck-container:not(.hiding-ui) .image-deck-topbar,
+.image-deck-container:not(.hiding-ui) .image-deck-controls-wrapper,
+.image-deck-container:not(.hiding-ui) .image-deck-speed,
+.image-deck-container:not(.hiding-ui) .image-deck-current-filters {
     opacity: 1;
     pointer-events: auto;
     transition: opacity 0.3s ease;
 }
+
+
