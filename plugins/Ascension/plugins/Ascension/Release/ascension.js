@@ -1678,6 +1678,226 @@
   function getCardDisplayOption(key) {
     return state.cardDisplayOptions?.[key] === true;
   }
+  function shouldDisplayExtraImages() {
+    return getCardDisplayOption2("DisplayExtraImages", false) && window.innerWidth >= 1201;
+  }
+  function shouldEnableMobileExtraImageRefresh() {
+    return getCardDisplayOption2("DisplayExtraImages", false) && window.innerWidth < 1201;
+  }
+  const galleryImagePools = new Map();
+  const GALLERY_PAGE_SIZE = 5;
+  async function fetchGalleryPage(performerId, orientation, seed, page) {
+    const query = `
+      query FindPerformerExtraImages($image_filter: ImageFilterType, $filter: FindFilterType) {
+        findImages(image_filter: $image_filter, filter: $filter) {
+          count
+          images { paths { thumbnail } }
+        }
+      }
+    `;
+    const result = await graphqlQuery(query, {
+      image_filter: {
+        performers: { value: [performerId], modifier: "INCLUDES" },
+        orientation: { value: [orientation === "Landscape" ? "LANDSCAPE" : "PORTRAIT"] }
+      },
+      filter: { per_page: GALLERY_PAGE_SIZE, page, sort: `random_${seed}` }
+    });
+    return {
+      thumbnails: (result.findImages?.images || []).map((img) => img.paths?.thumbnail).filter(Boolean),
+      total: result.findImages?.count || 0
+    };
+  }
+  async function ensureGalleryPool(performerId) {
+    if (galleryImagePools.has(performerId)) {
+      return galleryImagePools.get(performerId);
+    }
+    const seed = Math.floor(Math.random() * 99999999);
+    const pool = {
+      seed,
+      lPage: 1,
+      pPage: 1,
+      landscape: [],
+      portrait: [],
+      lTotal: 0,
+      pTotal: 0,
+      lExhausted: false,
+      pExhausted: false,
+      seen: new Set()
+    };
+    try {
+      const [landscape, portrait] = await Promise.all([
+        fetchGalleryPage(performerId, "Landscape", seed, 1),
+        fetchGalleryPage(performerId, "Portrait", seed, 1)
+      ]);
+      pool.landscape = landscape.thumbnails;
+      pool.portrait = portrait.thumbnails;
+      pool.lTotal = landscape.total;
+      pool.pTotal = portrait.total;
+      if (landscape.thumbnails.length < GALLERY_PAGE_SIZE)
+        pool.lExhausted = true;
+      if (portrait.thumbnails.length < GALLERY_PAGE_SIZE)
+        pool.pExhausted = true;
+    } catch (e) {
+      console.warn("[Ascension] Failed to fetch gallery pool for performer", performerId, e);
+    }
+    galleryImagePools.set(performerId, pool);
+    return pool;
+  }
+  async function getFreeBucket(pool, performerId, orientation) {
+    const isLandscape = orientation === "Landscape";
+    const bucketKey = isLandscape ? "landscape" : "portrait";
+    const pageKey = isLandscape ? "lPage" : "pPage";
+    const exhaustedKey = isLandscape ? "lExhausted" : "pExhausted";
+    let fresh = pool[bucketKey].filter((url) => !pool.seen.has(url));
+    if (fresh.length === 0 && !pool[exhaustedKey]) {
+      pool[pageKey] += 1;
+      try {
+        const more = await fetchGalleryPage(performerId, orientation, pool.seed, pool[pageKey]);
+        pool[bucketKey].push(...more.thumbnails);
+        if (more.thumbnails.length < GALLERY_PAGE_SIZE)
+          pool[exhaustedKey] = true;
+      } catch (e) {
+        console.warn("[Ascension] Failed to fetch next gallery page", e);
+        pool[exhaustedKey] = true;
+      }
+      fresh = pool[bucketKey].filter((url) => !pool.seen.has(url));
+    }
+    return fresh;
+  }
+  async function fetchPerformerExtraImages(performerId) {
+    const pool = await ensureGalleryPool(performerId);
+    let freshL = await getFreeBucket(pool, performerId, "Landscape");
+    let freshP = await getFreeBucket(pool, performerId, "Portrait");
+    const canL = freshL.length >= 1;
+    const canP = freshP.length >= 2;
+    if (!canL && !canP) {
+      pool.seen.clear();
+      freshL = await getFreeBucket(pool, performerId, "Landscape");
+      freshP = await getFreeBucket(pool, performerId, "Portrait");
+    }
+    const canL2 = freshL.length >= 1;
+    const canP2 = freshP.length >= 2;
+    const canP1 = freshP.length >= 1;
+    let useLandscape = false;
+    if (canL2 && canP2) {
+      useLandscape = Math.random() < 0.5;
+    } else if (canL2) {
+      useLandscape = true;
+    } else if (canP2) {
+      useLandscape = false;
+    } else if (canP1) {
+      useLandscape = false;
+    } else {
+      return { thumbnails: [], single: true, lonePortrait: false, hasMore: false };
+    }
+    let selected = [];
+    if (useLandscape) {
+      selected = [freshL[Math.floor(Math.random() * freshL.length)]];
+    } else if (freshP.length >= 2) {
+      const idx1 = Math.floor(Math.random() * freshP.length);
+      let idx2 = Math.floor(Math.random() * (freshP.length - 1));
+      if (idx2 >= idx1)
+        idx2 += 1;
+      selected = [freshP[idx1], freshP[idx2]];
+    } else {
+      selected = [freshP[0]];
+    }
+    selected.forEach((url) => pool.seen.add(url));
+    const totalImages = (pool.lTotal || 0) + (pool.pTotal || 0);
+    const remainingInPool = (pool.landscape.length + pool.portrait.length) - pool.seen.size;
+    const hasMore = selected.length > 0 && (totalImages > selected.length || remainingInPool > 0 || !pool.lExhausted || !pool.pExhausted);
+    const lonePortrait = !useLandscape && selected.length === 1;
+    return {
+      thumbnails: selected,
+      single: useLandscape || selected.length === 1,
+      lonePortrait,
+      hasMore
+    };
+  }
+  function buildGalleryExtrasHtml(extraData, performerId) {
+    const { thumbnails = [], single = false, lonePortrait = false, hasMore = false } = extraData || {};
+    const sliceClass = single ? " hon-gallery-single" : "";
+    const lonePortraitClass = lonePortrait ? " hon-gallery-lone-portrait" : "";
+    const imgs = thumbnails.map((src) => `<img class="hon-gallery-extra-img" src="${src}" loading="lazy" alt="" />`).join("\n      ");
+    const isMobileSingleRefresh = window.innerWidth < 1201 && getCardDisplayOption2("DisplayExtraImages", false);
+    const refreshBtn = hasMore || isMobileSingleRefresh ? `<button class="hon-gallery-refresh-btn" title="Refresh images" type="button">↺</button>` : "";
+    return `
+      <div class="hon-image-gallery-extras${sliceClass}${lonePortraitClass}" data-performer-id="${performerId}">
+        ${imgs}
+        ${refreshBtn}
+      </div>`;
+  }
+  function attachGalleryRefreshHandlers(root) {
+    if (!root || typeof root.querySelectorAll !== "function")
+      return;
+    root.querySelectorAll(".hon-gallery-refresh-btn").forEach((btn) => {
+      btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const extrasEl = btn.closest(".hon-image-gallery-extras");
+        if (!extrasEl)
+          return;
+        const performerId = extrasEl.dataset.performerId;
+        if (!performerId)
+          return;
+        const isMobileSingleRefresh = window.innerWidth < 1201 && getCardDisplayOption2("DisplayExtraImages", false);
+        btn.disabled = true;
+        btn.textContent = "⌛";
+        const data = await fetchPerformerExtraImages(performerId);
+        if (isMobileSingleRefresh) {
+          const galleryRoot = extrasEl.closest(".hon-mobile-refresh-gallery");
+          if (galleryRoot) {
+            galleryRoot.classList.add("hon-mobile-active");
+          }
+          extrasEl.classList.add("hon-mobile-active");
+          extrasEl.classList.toggle("hon-gallery-single", data.single);
+          extrasEl.classList.toggle("hon-gallery-lone-portrait", data.lonePortrait);
+          extrasEl.querySelectorAll(".hon-gallery-extra-img").forEach((el) => el.remove());
+          data.thumbnails.forEach((src) => {
+            const img = document.createElement("img");
+            img.className = "hon-gallery-extra-img";
+            img.src = src;
+            img.loading = "lazy";
+            img.alt = "";
+            extrasEl.appendChild(img);
+          });
+          const refreshBtn = extrasEl.querySelector(".hon-gallery-refresh-btn");
+          if (refreshBtn) {
+            refreshBtn.disabled = false;
+            refreshBtn.textContent = "↺";
+          }
+          return;
+        }
+        extrasEl.classList.toggle("hon-gallery-single", data.single);
+        extrasEl.classList.toggle("hon-gallery-lone-portrait", data.lonePortrait);
+        extrasEl.querySelectorAll(".hon-gallery-extra-img").forEach((el) => el.remove());
+        const existingBtn = extrasEl.querySelector(".hon-gallery-refresh-btn");
+        if (data.hasMore && !existingBtn) {
+          const newBtn = document.createElement("button");
+          newBtn.type = "button";
+          newBtn.className = "hon-gallery-refresh-btn";
+          newBtn.title = "Refresh images";
+          newBtn.textContent = "↺";
+          extrasEl.appendChild(newBtn);
+          attachGalleryRefreshHandlers(extrasEl);
+        } else if (!data.hasMore && existingBtn) {
+          existingBtn.remove();
+        }
+        data.thumbnails.forEach((src) => {
+          const img = document.createElement("img");
+          img.className = "hon-gallery-extra-img";
+          img.src = src;
+          img.loading = "lazy";
+          img.alt = "";
+          const refreshBtn = extrasEl.querySelector(".hon-gallery-refresh-btn");
+          extrasEl.insertBefore(img, refreshBtn || null);
+        });
+        if (btn.isConnected) {
+          btn.disabled = false;
+          btn.textContent = "↺";
+        }
+      });
+    });
+  }
   function formatHeight(heightCm) {
     if (!heightCm)
       return null;
@@ -1686,10 +1906,10 @@
     const inches = totalInches % 12;
     return `${feet}\u2032${inches}\u2033 (${heightCm} cm)`;
   }
-  function renderCard(item, side, rank) {
+  function renderCard(item, side, rank, extraImages = null) {
     const gauntletStreak = state.gauntletChampion?.id === item.id ? state.gauntletWins : null;
     if (state.battleType === "performers")
-      return createPerformerCard(item, side, rank, gauntletStreak);
+      return createPerformerCard(item, side, rank, gauntletStreak, extraImages);
     if (state.battleType === "images")
       return createImageCard(item, side, rank, gauntletStreak);
     if (state.battleType === "scenes")
@@ -1801,7 +2021,7 @@
     );
     return htmlParts.join("");
   }
-  function createPerformerCard(performer, side, rank = null, gauntletStreak = null) {
+  function createPerformerCard(performer, side, rank = null, gauntletStreak = null, extraImages = null) {
     const name = performer.name || `Performer #${performer.id}`;
     const imagePath = performer.image_path;
     const rawRating = performer.rating100 ?? 1;
@@ -1915,10 +2135,15 @@
     const isPictureOnly = getCardDisplayOption("PictureOnlyMode");
     const pictureOnlyClass = isPictureOnly ? "hon-picture-only" : "";
     const imageWinnerAttr = isPictureOnly ? ` data-winner="${performer.id}"` : "";
-    const performerImageHtml = imagePath ? `<img class="hon-performer-image hon-scene-image" src="${imagePath}" alt="${name}" />` : `<div class="hon-no-image">No Image</div>`;
-    const imageContainerInner = isPictureOnly ? performerImageHtml : `<a href="/performers/${performer.id}" target="_blank" class="hon-performer-link">${performerImageHtml}</a>`;
+    const mainImageHtml = imagePath ? `<img class="hon-performer-image hon-scene-image" src="${imagePath}" alt="${name}" />` : `<div class="hon-no-image">No Image</div>`;
+    const desktopGalleryEnabled = shouldDisplayExtraImages() && extraImages && Array.isArray(extraImages.thumbnails) && extraImages.thumbnails.length > 0;
+    const mobileRefreshEnabled = shouldEnableMobileExtraImageRefresh() && extraImages && Array.isArray(extraImages.thumbnails) && extraImages.thumbnails.length > 0;
+    const hasGallery = desktopGalleryEnabled;
+    const galleryHtml = hasGallery ? buildGalleryExtrasHtml(extraImages, performer.id) : "";
+    const mobileRefreshHtml = mobileRefreshEnabled ? buildGalleryExtrasHtml(extraImages, performer.id) : "";
+    const imageContainerInner = hasGallery ? `<div class="hon-image-gallery-main">${mainImageHtml}</div>${galleryHtml}` : mobileRefreshEnabled ? `<div class="hon-image-gallery-main hon-mobile-refresh-gallery">${mainImageHtml}${mobileRefreshHtml}</div>` : isPictureOnly ? mainImageHtml : `<a href="/performers/${performer.id}" target="_blank" class="hon-performer-link">${mainImageHtml}</a>`;
     return `
-    <div class="hon-performer-card hon-scene-card hon-card-enter hon-card-enter-${side}${tierClass}${pictureOnlyClass ? " " + pictureOnlyClass : ""}" data-performer-id="${performer.id}" data-side="${side}" data-rating="${performer.rating100 || 1}" data-asc-score="${battleScore?.toFixed(2) ?? ""}">
+    <div class="hon-performer-card hon-scene-card hon-card-enter hon-card-enter-${side}${tierClass}${pictureOnlyClass ? " " + pictureOnlyClass : ""}${hasGallery ? " hon-has-extra-images" : ""}" data-performer-id="${performer.id}" data-side="${side}" data-rating="${performer.rating100 || 1}" data-asc-score="${battleScore?.toFixed(2) ?? ""}">
       <div class="hon-performer-image-container hon-scene-image-container"${imageWinnerAttr}>
         ${imageContainerInner}
         ${currentStreakDisplay}
@@ -5061,6 +5286,7 @@ Match Stats:`;
   function getDefaultCardDisplayOptions() {
     const defaults = {};
     CARD_DISPLAY_OPTIONS.forEach((opt) => defaults[opt.key] = false);
+    UI_OPTIONS.forEach((opt) => defaults[opt.key] = false);
     return defaults;
   }
   function getCardDisplayOption2(key, defaultValue = false) {
@@ -5080,19 +5306,39 @@ Match Stats:`;
   function getPictureOnlyMode() {
     return getCardDisplayOption2(PICTURE_ONLY_MODE_KEY);
   }
+  function getCompactMode() {
+    return getCardDisplayOption2(COMPACT_MODE_KEY, false);
+  }
   function setPictureOnlyMode(value) {
     setCardDisplayOption(PICTURE_ONLY_MODE_KEY, !!value);
     if (value) {
       ALL_HIDE_OPTIONS.forEach((key) => setCardDisplayOption(key, false));
     }
   }
+  function setCompactMode(value) {
+    setCardDisplayOption(COMPACT_MODE_KEY, !!value);
+    applyCompactModeLayout();
+  }
+  function applyCompactModeLayout() {
+    const pluginLayout = document.querySelector(".hon-plugin-layout");
+    if (!pluginLayout)
+      return;
+    pluginLayout.classList.toggle("compact-mode", getCompactMode());
+    const sidebar = pluginLayout.querySelector("#hon-sidebar");
+    if (sidebar)
+      sidebar.classList.toggle("compact-mode", getCompactMode());
+    const mainContent = pluginLayout.querySelector(".hon-main-plugin-content");
+    if (mainContent)
+      mainContent.classList.toggle("compact-mode", getCompactMode());
+  }
   function toggleCardDisplayOption(key, checked) {
     const currentPOM = getPictureOnlyMode();
+    const compatibleWithPictureOnly = key === "DisplayExtraImages";
     if (key === PICTURE_ONLY_MODE_KEY) {
       setPictureOnlyMode(checked);
       return;
     }
-    if (currentPOM) {
+    if (currentPOM && !compatibleWithPictureOnly) {
       setCardDisplayOption(PICTURE_ONLY_MODE_KEY, false);
       setCardDisplayOption(key, checked);
       return;
@@ -5904,13 +6150,19 @@ Match Stats:`;
     });
   }
   function syncCardDisplayCheckboxUI(vsContainer) {
-    vsContainer.querySelectorAll(".hon-options-checkbox[data-card-display]").forEach((label) => {
-      const key = label.dataset.cardDisplay;
-      const checkbox = label.querySelector('input[type="checkbox"]');
-      const isChecked = getCardDisplayOption2(key);
-      label.classList.toggle("active", isChecked);
-      if (checkbox)
-        checkbox.checked = isChecked;
+    const optionSelectors = [
+      ".hon-options-checkbox[data-card-display]",
+      ".hon-options-checkbox[data-ui-option]"
+    ];
+    optionSelectors.forEach((selector) => {
+      vsContainer.querySelectorAll(selector).forEach((label) => {
+        const key = label.dataset.cardDisplay || label.dataset.uiOption;
+        const checkbox = label.querySelector('input[type="checkbox"]');
+        const isChecked = getCardDisplayOption2(key);
+        label.classList.toggle("active", isChecked);
+        if (checkbox)
+          checkbox.checked = isChecked;
+      });
     });
   }
   function renderOptionsPanel() {
@@ -5969,6 +6221,23 @@ Match Stats:`;
       return `
               <label class="hon-options-checkbox ${isHidden ? "active" : ""}" data-card-display="${opt.key}">
                 <input type="checkbox" value="${opt.key}" ${isHidden ? "checked" : ""}>
+                <span class="hon-options-checkmark">\u2713</span>
+                <span class="hon-options-label-text">${opt.label}</span>
+              </label>
+            `;
+    }).join("")}
+        </div>
+      </div>
+
+      <div class="hon-options-section">
+        <h3 class="hon-options-section-title">UI</h3>
+        <p class="hon-options-hint">Adjust the interface layout and card density.</p>
+        <div class="hon-options-gender-grid">
+          ${UI_OPTIONS.map((opt) => {
+      const isEnabled = getCardDisplayOption2(opt.key, false);
+      return `
+              <label class="hon-options-checkbox ${isEnabled ? "active" : ""}" data-ui-option="${opt.key}">
+                <input type="checkbox" value="${opt.key}" ${isEnabled ? "checked" : ""}>
                 <span class="hon-options-checkmark">\u2713</span>
                 <span class="hon-options-label-text">${opt.label}</span>
               </label>
@@ -6084,6 +6353,18 @@ Match Stats:`;
         const key = e.target.value;
         const checked = e.target.checked;
         toggleCardDisplayOption(key, checked);
+        syncCardDisplayCheckboxUI(vsContainer);
+      });
+    });
+    const uiCheckboxes = vsContainer.querySelectorAll('.hon-options-checkbox[data-ui-option] input[type="checkbox"]');
+    uiCheckboxes.forEach((checkbox) => {
+      checkbox.addEventListener("change", (e) => {
+        const key = e.target.value;
+        const checked = e.target.checked;
+        setCardDisplayOption(key, checked);
+        if (key === COMPACT_MODE_KEY) {
+          applyCompactModeLayout();
+        }
         syncCardDisplayCheckboxUI(vsContainer);
       });
     });
@@ -6259,7 +6540,7 @@ Match Stats:`;
       loadNewPair2();
     }
   }
-  var ALL_GENDERS2, TIER_ORDER_FOR_GAP, CARD_DISPLAY_LS_KEY, CARD_DISPLAY_OPTIONS, PICTURE_ONLY_MODE_KEY, ALL_HIDE_OPTIONS, BADGE_DISPLAY_LS_KEY, BADGE_DISPLAY_OPTIONS, SCENE_MIN_DURATION_LS_KEY, DEFAULT_SCENE_MIN_DURATION, USER_FILTER_OVERRIDE_LS_KEY, DEFAULT_USER_FILTER_OVERRIDE, SCENE_FILTER_OVERRIDE_LS_KEY, DEFAULT_SCENE_FILTER_OVERRIDE, DISABLE_IMAGELESS_LS_KEY, DEFAULT_DISABLE_IMAGELESS, SAVED_FILTER_LS_KEY, SAVED_SCENE_FILTER_LS_KEY, SCENE_FIELD_TYPES, PERFORMER_FIELD_TYPES, NULLARY_MODIFIERS, optionsRestoreState, badgeSettingsChangeListeners, sceneMinDurationChangeListeners;
+  var ALL_GENDERS2, TIER_ORDER_FOR_GAP, CARD_DISPLAY_LS_KEY, CARD_DISPLAY_OPTIONS, UI_OPTIONS, PICTURE_ONLY_MODE_KEY, COMPACT_MODE_KEY, ALL_HIDE_OPTIONS, BADGE_DISPLAY_LS_KEY, BADGE_DISPLAY_OPTIONS, SCENE_MIN_DURATION_LS_KEY, DEFAULT_SCENE_MIN_DURATION, USER_FILTER_OVERRIDE_LS_KEY, DEFAULT_USER_FILTER_OVERRIDE, SCENE_FILTER_OVERRIDE_LS_KEY, DEFAULT_SCENE_FILTER_OVERRIDE, DISABLE_IMAGELESS_LS_KEY, DEFAULT_DISABLE_IMAGELESS, SAVED_FILTER_LS_KEY, SAVED_SCENE_FILTER_LS_KEY, SCENE_FIELD_TYPES, PERFORMER_FIELD_TYPES, NULLARY_MODIFIERS, optionsRestoreState, badgeSettingsChangeListeners, sceneMinDurationChangeListeners;
   var init_ui_sidebar = __esm({
     "ui-sidebar.js"() {
       init_state();
@@ -6280,6 +6561,7 @@ Match Stats:`;
       CARD_DISPLAY_LS_KEY = "hon_card_display_options";
       CARD_DISPLAY_OPTIONS = [
         { key: "PictureOnlyMode", label: "Picture Only Mode" },
+        { key: "DisplayExtraImages", label: "Display Extra Images" },
         { key: "HidePerformerName", label: "Hide Performer Name" },
         { key: "HideAscendedScore", label: "Hide Ascended Score" },
         { key: "HideCountry", label: "Hide Country" },
@@ -6291,8 +6573,12 @@ Match Stats:`;
         { key: "HideChooseThisPerformerButton", label: "Hide Choose Button" },
         { key: "HideMediaCounters", label: "Hide Media Counters" }
       ];
+      UI_OPTIONS = [
+        { key: "CompactMode", label: "Compact mode" }
+      ];
       PICTURE_ONLY_MODE_KEY = "PictureOnlyMode";
-      ALL_HIDE_OPTIONS = CARD_DISPLAY_OPTIONS.map((opt) => opt.key).filter((key) => key !== PICTURE_ONLY_MODE_KEY);
+      COMPACT_MODE_KEY = "CompactMode";
+      ALL_HIDE_OPTIONS = CARD_DISPLAY_OPTIONS.map((opt) => opt.key).filter((key) => key !== PICTURE_ONLY_MODE_KEY && key !== "DisplayExtraImages");
       BADGE_DISPLAY_LS_KEY = "hon_badge_display_options";
       BADGE_DISPLAY_OPTIONS = [
         { key: "HideAscRankBadge", label: "Hide Ascension Rank Badge" },
@@ -8255,13 +8541,21 @@ Match Stats:`;
       const [left, right] = result.items;
       state.currentPair = { left, right };
       state.currentRanks = { left: result.ranks[0], right: result.ranks[1] };
+      let leftExtraImages = null;
+      let rightExtraImages = null;
+      if (state.battleType === "performers" && (shouldDisplayExtraImages() || shouldEnableMobileExtraImageRefresh())) {
+        [leftExtraImages, rightExtraImages] = await Promise.all([
+          fetchPerformerExtraImages(left.id),
+          fetchPerformerExtraImages(right.id)
+        ]);
+      }
       const oldContainer = area.querySelector(".hon-vs-container");
       const newContainer = document.createElement("div");
       newContainer.className = "hon-vs-container hon-pair-entering";
       newContainer.innerHTML = `
-      ${renderCard(left, "left", result.ranks[0])}
+      ${renderCard(left, "left", result.ranks[0], leftExtraImages)}
       <div class="hon-vs-divider"><span>VS</span></div>
-      ${renderCard(right, "right", result.ranks[1])}
+      ${renderCard(right, "right", result.ranks[1], rightExtraImages)}
     `;
       if (oldContainer) {
         oldContainer.replaceWith(newContainer);
@@ -8269,6 +8563,7 @@ Match Stats:`;
         area.innerHTML = "";
         area.appendChild(newContainer);
       }
+      attachGalleryRefreshHandlers(newContainer);
       attachBattleListeners(area);
     } catch (err) {
       area.innerHTML = `<div class="hon-error">Error: ${err.message}</div>`;
@@ -10035,9 +10330,10 @@ Match Stats:`;
         modal.className = "hon-modal";
         const { isMobile: isMobile3 } = await Promise.resolve().then(() => (init_ui_swipe(), ui_swipe_exports));
         const mobileCheck = isMobile3();
+        const compactMode = getCompactMode();
         const mainUI = `
         <div id="hotornot-container" class="hon-container">
-          <div class="hon-plugin-layout ${mobileCheck ? "mobile" : ""}">
+          <div class="hon-plugin-layout ${mobileCheck ? "mobile" : ""} ${compactMode ? "compact-mode" : ""}">
             ${createSidebar()}
             <div class="hon-main-plugin-content">
               <div class="hon-header"></div>
@@ -10072,9 +10368,25 @@ Match Stats:`;
           ${mainUI}
         </div>
       `;
-        if (mobileCheck) {
-          const style = document.createElement("style");
-          style.textContent = `
+        const style = document.createElement("style");
+        style.textContent = `
+          .hon-plugin-layout.compact-mode {
+            flex-direction: column;
+            width: 100%;
+            max-width: none;
+          }
+          .hon-sidebar.compact-mode {
+            order: 2;
+            width: 100%;
+            max-width: none;
+            border-top: 1px solid #444;
+          }
+          .hon-plugin-layout.compact-mode .hon-main-plugin-content {
+            order: 1;
+            width: 100%;
+            max-width: none;
+            flex: 1 1 auto;
+          }
           .hon-plugin-layout.mobile {
             flex-direction: column;
             height: 100%;
@@ -10108,8 +10420,7 @@ Match Stats:`;
             box-shadow: none;
           }
         `;
-          modal.appendChild(style);
-        }
+        modal.appendChild(style);
         document.body.appendChild(modal);
         const sidebarContainer = modal.querySelector("#hon-sidebar");
         if (sidebarContainer) {
