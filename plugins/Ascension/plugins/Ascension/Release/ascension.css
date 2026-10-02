@@ -904,12 +904,11 @@
 
 .hon-vs-container {
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   gap: 12px;
   align-items: stretch;
   width: 100%;
   max-width: 960px;
-  /* Keep the container from collapsing while the old pair is replaced */
   min-height: 600px;
 }
 
@@ -917,6 +916,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  min-width: 72px;
 }
 
 .hon-vs-text {
@@ -3256,6 +3256,7 @@
   background: var(--hon-image-bg, #1a1a1a);
   border-radius: 0;
   margin: 0;
+  min-height: 33vh;
 }
 
 .hon-performer-image-container,
@@ -3329,6 +3330,12 @@
   max-height: 92vh;
 }
 
+.hon-performer-card.hon-has-extra-images {
+  width: min(760px, 68vw);
+  max-width: min(760px, 68vw);
+  min-width: 420px;
+}
+
 .hon-performer-image-container {
   max-height: 70vh;
 }
@@ -3356,6 +3363,212 @@
 .hon-image-body {
   padding: 12px;
   display: block;
+}
+
+.hon-image-gallery-main {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.hon-image-gallery-main .hon-performer-image,
+.hon-image-gallery-main .hon-scene-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center top;
+}
+
+.hon-has-extra-images .hon-performer-image-container,
+.hon-has-extra-images .hon-scene-image-container {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  padding: 8px;
+  box-sizing: border-box;
+}
+
+.hon-image-gallery-extras {
+  position: relative;
+  display: flex;
+  flex-direction: row;
+  gap: 2px;
+  flex: 2 1 66.66%;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.hon-image-gallery-extras.hon-gallery-single {
+  flex: 2 1 66.66%;
+}
+
+.hon-gallery-extra-img {
+  display: block;
+  flex: 1 1 0;
+  min-width: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 80px;
+  object-fit: cover;
+  object-position: center;
+  border-radius: 0;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  transition: transform 0.5s ease;
+  transform: translateZ(0);
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+}
+
+.hon-image-gallery-extras.hon-gallery-single .hon-gallery-extra-img {
+  flex: 1 1 100%;
+}
+
+.hon-image-gallery-extras.hon-gallery-lone-portrait .hon-gallery-extra-img {
+  object-fit: contain;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.hon-has-extra-images:hover .hon-gallery-extra-img {
+  transform: scale(1.04) translateZ(0);
+}
+
+.hon-gallery-refresh-btn {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.9rem;
+  z-index: 3;
+}
+
+.hon-gallery-refresh-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.hon-gallery-refresh-btn:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+
+@media (max-width: 1200px) {
+  .hon-mobile-refresh-gallery {
+    position: relative;
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
+  .hon-mobile-refresh-gallery .hon-image-gallery-extras,
+  .hon-mobile-refresh-gallery .hon-image-gallery-extras.hon-gallery-single {
+    position: absolute;
+    right: 10px;
+    bottom: 10px;
+    width: 42px;
+    min-width: 42px;
+    height: 42px;
+    max-width: 42px;
+    max-height: 42px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    z-index: 5;
+    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.25);
+  }
+
+  .hon-mobile-refresh-gallery .hon-image-gallery-extras.hon-mobile-active {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    max-width: none;
+    height: 100%;
+    max-height: none;
+    min-width: 0;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: 1fr;
+    grid-template-rows: repeat(2, minmax(0, 1fr));
+    gap: 4px;
+    padding: 4px;
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.68);
+  }
+
+  .hon-mobile-refresh-gallery.hon-mobile-active .hon-performer-image {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .hon-mobile-refresh-gallery .hon-image-gallery-extras.hon-mobile-active.hon-gallery-single {
+    grid-template-rows: 1fr;
+  }
+
+  .hon-mobile-refresh-gallery .hon-image-gallery-extras.hon-mobile-active.hon-gallery-lone-portrait .hon-gallery-extra-img {
+    object-fit: contain;
+    background: rgba(0, 0, 0, 0.35);
+  }
+
+  .hon-mobile-refresh-gallery .hon-gallery-extra-img {
+    display: none;
+  }
+
+  .hon-mobile-refresh-gallery .hon-image-gallery-extras.hon-mobile-active .hon-gallery-extra-img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    border-radius: 0;
+    object-fit: cover;
+  }
+
+  .hon-mobile-refresh-gallery .hon-gallery-refresh-btn {
+    position: absolute;
+    right: 4px;
+    bottom: 4px;
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    font-size: 1.05rem;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 6;
+  }
+}
+
+@media (min-width: 1201px) {
+  .hon-has-extra-images .hon-performer-image-container {
+    height: 100%;
+  }
+
+  .hon-image-gallery-main {
+    flex: 1 1 33.33%;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .hon-image-gallery-extras {
+    flex: 2 1 66.66%;
+    width: 66.66%;
+  }
 }
 
 /* Typography + chip meta */
@@ -5884,6 +6097,37 @@
   background-color: rgba(255, 0, 0, 0.1);
   border-left: 3px solid #ff0000;
 }
+
+@media (min-width: 1201px) {
+  .hon-plugin-layout:not(.compact-mode):not(.mobile) {
+    flex-direction: row-reverse;
+  }
+
+  .hon-main-plugin-content {
+    min-width: 0;
+  }
+
+  .hon-comparison-area {
+    width: 100%;
+  }
+
+  .hon-vs-container {
+    grid-template-columns: minmax(0, 1fr) 72px minmax(0, 1fr);
+    width: 100%;
+    max-width: none;
+    margin: 0;
+  }
+
+  .hon-vs-container > .hon-performer-card,
+  .hon-vs-container > .hon-image-card,
+  .hon-vs-container > .hon-scene-card {
+    box-sizing: border-box;
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+  }
+}
+
 /* Grow */
 .hon-sidebar-subrow {
   transition: transform 0.2s ease; 
