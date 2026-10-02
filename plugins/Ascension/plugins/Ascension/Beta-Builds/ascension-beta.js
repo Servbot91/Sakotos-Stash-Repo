@@ -1678,6 +1678,274 @@
   function getCardDisplayOption(key) {
     return state.cardDisplayOptions?.[key] === true;
   }
+  function shouldDisplayExtraImages() {
+    return getCardDisplayOption2("DisplayExtraImages", false) && window.innerWidth >= 1201;
+  }
+  function shouldEnableMobileExtraImageRefresh() {
+    return getCardDisplayOption2("DisplayExtraImages", false) && window.innerWidth < 1201;
+  }
+  const galleryImagePools = new Map();
+  const GALLERY_PAGE_SIZE = 5;
+  async function fetchGalleryPage(performerId, orientation, seed, page) {
+    const query = `
+      query FindPerformerExtraImages($image_filter: ImageFilterType, $filter: FindFilterType) {
+        findImages(image_filter: $image_filter, filter: $filter) {
+          count
+          images { paths { thumbnail } }
+        }
+      }
+    `;
+    const result = await graphqlQuery(query, {
+      image_filter: {
+        performers: { value: [performerId], modifier: "INCLUDES" },
+        orientation: { value: [orientation === "Landscape" ? "LANDSCAPE" : "PORTRAIT"] }
+      },
+      filter: { per_page: GALLERY_PAGE_SIZE, page, sort: `random_${seed}` }
+    });
+    return {
+      thumbnails: (result.findImages?.images || []).map((img) => img.paths?.thumbnail).filter(Boolean),
+      total: result.findImages?.count || 0
+    };
+  }
+  async function ensureGalleryPool(performerId) {
+    if (galleryImagePools.has(performerId)) {
+      return galleryImagePools.get(performerId);
+    }
+    const seed = Math.floor(Math.random() * 99999999);
+    const pool = {
+      seed,
+      lPage: 1,
+      pPage: 1,
+      landscape: [],
+      portrait: [],
+      lTotal: 0,
+      pTotal: 0,
+      lExhausted: false,
+      pExhausted: false,
+      seen: new Set()
+    };
+    try {
+      const [landscape, portrait] = await Promise.all([
+        fetchGalleryPage(performerId, "Landscape", seed, 1),
+        fetchGalleryPage(performerId, "Portrait", seed, 1)
+      ]);
+      pool.landscape = landscape.thumbnails;
+      pool.portrait = portrait.thumbnails;
+      pool.lTotal = landscape.total;
+      pool.pTotal = portrait.total;
+      if (landscape.thumbnails.length < GALLERY_PAGE_SIZE)
+        pool.lExhausted = true;
+      if (portrait.thumbnails.length < GALLERY_PAGE_SIZE)
+        pool.pExhausted = true;
+    } catch (e) {
+      console.warn("[Ascension] Failed to fetch gallery pool for performer", performerId, e);
+    }
+    galleryImagePools.set(performerId, pool);
+    return pool;
+  }
+  async function getFreeBucket(pool, performerId, orientation) {
+    const isLandscape = orientation === "Landscape";
+    const bucketKey = isLandscape ? "landscape" : "portrait";
+    const pageKey = isLandscape ? "lPage" : "pPage";
+    const exhaustedKey = isLandscape ? "lExhausted" : "pExhausted";
+    let fresh = pool[bucketKey].filter((url) => !pool.seen.has(url));
+    if (fresh.length === 0 && !pool[exhaustedKey]) {
+      pool[pageKey] += 1;
+      try {
+        const more = await fetchGalleryPage(performerId, orientation, pool.seed, pool[pageKey]);
+        pool[bucketKey].push(...more.thumbnails);
+        if (more.thumbnails.length < GALLERY_PAGE_SIZE)
+          pool[exhaustedKey] = true;
+      } catch (e) {
+        console.warn("[Ascension] Failed to fetch next gallery page", e);
+        pool[exhaustedKey] = true;
+      }
+      fresh = pool[bucketKey].filter((url) => !pool.seen.has(url));
+    }
+    return fresh;
+  }
+  async function fetchPerformerExtraImages(performerId, mobileLayout = false) {
+    const pool = await ensureGalleryPool(performerId);
+    let freshL = await getFreeBucket(pool, performerId, "Landscape");
+    let freshP = await getFreeBucket(pool, performerId, "Portrait");
+    const landscapeCountNeeded = mobileLayout ? 2 : 1;
+    const portraitCountNeeded = mobileLayout ? 1 : 2;
+    if (pool.lExhausted && pool.lTotal >= landscapeCountNeeded && freshL.length < landscapeCountNeeded) {
+      pool.landscape.forEach((url) => pool.seen.delete(url));
+      freshL = pool.landscape.slice();
+    }
+    if (pool.pExhausted && pool.pTotal >= portraitCountNeeded && freshP.length < portraitCountNeeded) {
+      pool.portrait.forEach((url) => pool.seen.delete(url));
+      freshP = pool.portrait.slice();
+    }
+    const canL = freshL.length >= landscapeCountNeeded;
+    const canP = freshP.length >= portraitCountNeeded;
+    if (!canL && !canP) {
+      pool.seen.clear();
+      freshL = await getFreeBucket(pool, performerId, "Landscape");
+      freshP = await getFreeBucket(pool, performerId, "Portrait");
+    }
+    const canL2 = freshL.length >= landscapeCountNeeded;
+    const canP2 = freshP.length >= portraitCountNeeded;
+    const canP1 = freshP.length >= 1;
+    let useLandscape = false;
+    if (canL2 && canP2) {
+      useLandscape = Math.random() < 0.5;
+    } else if (canL2) {
+      useLandscape = true;
+    } else if (canP2) {
+      useLandscape = false;
+    } else if (canP1) {
+      useLandscape = false;
+    } else {
+      return { thumbnails: [], single: true, lonePortrait: false, hasMore: false };
+    }
+    let selected = [];
+    if (useLandscape) {
+      if (mobileLayout && freshL.length >= 2) {
+        const firstIndex = Math.floor(Math.random() * freshL.length);
+        let secondIndex = Math.floor(Math.random() * (freshL.length - 1));
+        if (secondIndex >= firstIndex)
+          secondIndex += 1;
+        selected = [freshL[firstIndex], freshL[secondIndex]];
+      } else {
+        selected = [freshL[Math.floor(Math.random() * freshL.length)]];
+      }
+    } else if (freshP.length >= 2) {
+      if (mobileLayout) {
+        selected = [freshP[Math.floor(Math.random() * freshP.length)]];
+      } else {
+        const idx1 = Math.floor(Math.random() * freshP.length);
+        let idx2 = Math.floor(Math.random() * (freshP.length - 1));
+        if (idx2 >= idx1)
+          idx2 += 1;
+        selected = [freshP[idx1], freshP[idx2]];
+      }
+    } else {
+      selected = [freshP[0]];
+    }
+    selected.forEach((url) => pool.seen.add(url));
+    const totalImages = (pool.lTotal || 0) + (pool.pTotal || 0);
+    const remainingInPool = (pool.landscape.length + pool.portrait.length) - pool.seen.size;
+    const hasMore = selected.length > 0 && (totalImages > selected.length || remainingInPool > 0 || !pool.lExhausted || !pool.pExhausted);
+    const lonePortrait = !useLandscape && selected.length === 1;
+    return {
+      thumbnails: selected,
+      single: useLandscape || selected.length === 1,
+      lonePortrait,
+      landscapePair: mobileLayout && useLandscape && selected.length === 2,
+      hasMore
+    };
+  }
+  function buildGalleryExtrasHtml(extraData, performerId) {
+    const { thumbnails = [], single = false, lonePortrait = false, landscapePair = false, hasMore = false } = extraData || {};
+    const sliceClass = single ? " hon-gallery-single" : "";
+    const lonePortraitClass = lonePortrait ? " hon-gallery-lone-portrait" : "";
+    const landscapePairClass = landscapePair ? " hon-gallery-landscape-pair" : "";
+    const imgs = thumbnails.map((src) => `<img class="hon-gallery-extra-img" src="${src}" loading="lazy" alt="" />`).join("\n      ");
+    const isMobileSingleRefresh = window.innerWidth < 1201 && getCardDisplayOption2("DisplayExtraImages", false);
+    const refreshBtn = hasMore || isMobileSingleRefresh ? `<button class="hon-gallery-refresh-btn" title="${hasMore ? "Refresh images" : "Show extra images"}" type="button">\u21BA</button>` : "";
+    return `
+      <div class="hon-image-gallery-extras${sliceClass}${lonePortraitClass}${landscapePairClass}" data-performer-id="${performerId}">
+        ${imgs}
+        ${refreshBtn}
+      </div>`;
+  }
+  function attachGalleryRefreshHandlers(root) {
+    if (!root || typeof root.querySelectorAll !== "function")
+      return;
+    root.querySelectorAll(".hon-gallery-refresh-btn").forEach((btn) => {
+      btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        if (btn.disabled)
+          return;
+        const extrasEl = btn.closest(".hon-image-gallery-extras");
+        if (!extrasEl)
+          return;
+        const performerId = extrasEl.dataset.performerId;
+        if (!performerId)
+          return;
+        const isMobileSingleRefresh = window.innerWidth < 1201 && getCardDisplayOption2("DisplayExtraImages", false);
+        btn.disabled = true;
+        btn.textContent = "\u231B";
+        const data = await fetchPerformerExtraImages(performerId, isMobileSingleRefresh);
+        if (isMobileSingleRefresh) {
+          const galleryRoot = extrasEl.closest(".hon-mobile-refresh-gallery");
+          if (galleryRoot) {
+            galleryRoot.classList.add("hon-mobile-active");
+          }
+          extrasEl.classList.add("hon-mobile-active");
+          extrasEl.classList.toggle("hon-gallery-single", data.single);
+          extrasEl.classList.toggle("hon-gallery-lone-portrait", data.lonePortrait);
+          extrasEl.classList.toggle("hon-gallery-landscape-pair", data.landscapePair);
+          const refreshButtons = Array.from(extrasEl.querySelectorAll(".hon-gallery-refresh-btn"));
+          const refreshBtn = refreshButtons.shift() || null;
+          refreshButtons.forEach((duplicate) => duplicate.remove());
+          if (data.thumbnails.length === 0) {
+            if (data.hasMore && refreshBtn) {
+              refreshBtn.disabled = false;
+              refreshBtn.textContent = "\u21BA";
+            } else {
+              refreshBtn?.remove();
+            }
+            return;
+          }
+          extrasEl.querySelectorAll(".hon-gallery-extra-img").forEach((el) => el.remove());
+          data.thumbnails.forEach((src) => {
+            const img = document.createElement("img");
+            img.className = "hon-gallery-extra-img";
+            img.src = src;
+            img.loading = "lazy";
+            img.alt = "";
+            extrasEl.insertBefore(img, extrasEl.querySelector(".hon-gallery-refresh-btn"));
+          });
+          if (data.hasMore && !refreshBtn) {
+            const newBtn = document.createElement("button");
+            newBtn.type = "button";
+            newBtn.className = "hon-gallery-refresh-btn";
+            newBtn.title = "Refresh images";
+            newBtn.textContent = "\u21BA";
+            extrasEl.appendChild(newBtn);
+            attachGalleryRefreshHandlers(extrasEl);
+          } else if (!data.hasMore && refreshBtn) {
+            refreshBtn.remove();
+          } else if (refreshBtn) {
+            refreshBtn.disabled = false;
+            refreshBtn.textContent = "\u21BA";
+          }
+          return;
+        }
+        extrasEl.classList.toggle("hon-gallery-single", data.single);
+        extrasEl.classList.toggle("hon-gallery-lone-portrait", data.lonePortrait);
+        extrasEl.querySelectorAll(".hon-gallery-extra-img").forEach((el) => el.remove());
+        const existingBtn = extrasEl.querySelector(".hon-gallery-refresh-btn");
+        if (data.hasMore && !existingBtn) {
+          const newBtn = document.createElement("button");
+          newBtn.type = "button";
+          newBtn.className = "hon-gallery-refresh-btn";
+          newBtn.title = "Refresh images";
+          newBtn.textContent = "\u21BA";
+          extrasEl.appendChild(newBtn);
+          attachGalleryRefreshHandlers(extrasEl);
+        } else if (!data.hasMore && existingBtn) {
+          existingBtn.remove();
+        }
+        data.thumbnails.forEach((src) => {
+          const img = document.createElement("img");
+          img.className = "hon-gallery-extra-img";
+          img.src = src;
+          img.loading = "lazy";
+          img.alt = "";
+          const refreshBtn = extrasEl.querySelector(".hon-gallery-refresh-btn");
+          extrasEl.insertBefore(img, refreshBtn || null);
+        });
+        if (btn.isConnected) {
+          btn.disabled = false;
+          btn.textContent = "\u21BA";
+        }
+      });
+    });
+  }
   function formatHeight(heightCm) {
     if (!heightCm)
       return null;
@@ -1686,10 +1954,10 @@
     const inches = totalInches % 12;
     return `${feet}\u2032${inches}\u2033 (${heightCm} cm)`;
   }
-  function renderCard(item, side, rank) {
+  function renderCard(item, side, rank, extraImages = null) {
     const gauntletStreak = state.gauntletChampion?.id === item.id ? state.gauntletWins : null;
     if (state.battleType === "performers")
-      return createPerformerCard(item, side, rank, gauntletStreak);
+      return createPerformerCard(item, side, rank, gauntletStreak, extraImages);
     if (state.battleType === "images")
       return createImageCard(item, side, rank, gauntletStreak);
     if (state.battleType === "scenes")
@@ -1801,7 +2069,7 @@
     );
     return htmlParts.join("");
   }
-  function createPerformerCard(performer, side, rank = null, gauntletStreak = null) {
+  function createPerformerCard(performer, side, rank = null, gauntletStreak = null, extraImages = null) {
     const name = performer.name || `Performer #${performer.id}`;
     const imagePath = performer.image_path;
     const rawRating = performer.rating100 ?? 1;
@@ -1916,9 +2184,14 @@
     const pictureOnlyClass = isPictureOnly ? "hon-picture-only" : "";
     const imageWinnerAttr = isPictureOnly ? ` data-winner="${performer.id}"` : "";
     const performerImageHtml = imagePath ? `<img class="hon-performer-image hon-scene-image" src="${imagePath}" alt="${name}" />` : `<div class="hon-no-image">No Image</div>`;
-    const imageContainerInner = isPictureOnly ? performerImageHtml : `<a href="/performers/${performer.id}" target="_blank" class="hon-performer-link">${performerImageHtml}</a>`;
+    const desktopGalleryEnabled = shouldDisplayExtraImages() && extraImages && Array.isArray(extraImages.thumbnails) && extraImages.thumbnails.length > 0;
+    const mobileRefreshEnabled = shouldEnableMobileExtraImageRefresh() && extraImages && Array.isArray(extraImages.thumbnails) && extraImages.thumbnails.length > 0;
+    const hasGallery = desktopGalleryEnabled;
+    const galleryHtml = hasGallery ? buildGalleryExtrasHtml(extraImages, performer.id) : "";
+    const mobileRefreshHtml = mobileRefreshEnabled ? buildGalleryExtrasHtml(extraImages, performer.id) : "";
+    const imageContainerInner = hasGallery ? `<div class="hon-image-gallery-main">${performerImageHtml}</div>${galleryHtml}` : mobileRefreshEnabled ? `<div class="hon-image-gallery-main hon-mobile-refresh-gallery">${performerImageHtml}${mobileRefreshHtml}</div>` : isPictureOnly ? performerImageHtml : `<a href="/performers/${performer.id}" target="_blank" class="hon-performer-link">${performerImageHtml}</a>`;
     return `
-    <div class="hon-performer-card hon-scene-card hon-card-enter hon-card-enter-${side}${tierClass}${pictureOnlyClass ? " " + pictureOnlyClass : ""}" data-performer-id="${performer.id}" data-side="${side}" data-rating="${performer.rating100 || 1}" data-asc-score="${battleScore?.toFixed(2) ?? ""}">
+    <div class="hon-performer-card hon-scene-card hon-card-enter hon-card-enter-${side}${tierClass}${pictureOnlyClass ? " " + pictureOnlyClass : ""}${hasGallery ? " hon-has-extra-images" : ""}" data-performer-id="${performer.id}" data-side="${side}" data-rating="${performer.rating100 || 1}" data-asc-score="${battleScore?.toFixed(2) ?? ""}">
       <div class="hon-performer-image-container hon-scene-image-container"${imageWinnerAttr}>
         ${imageContainerInner}
         ${currentStreakDisplay}
@@ -5066,6 +5339,24 @@ Match Stats:`;
   function getCardDisplayOption2(key, defaultValue = false) {
     return state.cardDisplayOptions?.[key] ?? defaultValue;
   }
+  function getLayoutOptionEnabled(key) {
+    try {
+      return localStorage.getItem(key) === "true";
+    } catch (err) {
+      console.warn(`[Ascension] Could not load layout setting ${key}:`, err);
+      return false;
+    }
+  }
+  function setLayoutOptionEnabled(key, enabled) {
+    try {
+      localStorage.setItem(key, String(enabled));
+    } catch (err) {
+      console.warn(`[Ascension] Could not save layout setting ${key}:`, err);
+    }
+  }
+  function getCompactModeEnabled() {
+    return getLayoutOptionEnabled("hon_compact_mode");
+  }
   function setCardDisplayOption(key, value) {
     if (!state.cardDisplayOptions) {
       state.cardDisplayOptions = getDefaultCardDisplayOptions();
@@ -5088,11 +5379,12 @@ Match Stats:`;
   }
   function toggleCardDisplayOption(key, checked) {
     const currentPOM = getPictureOnlyMode();
+    const compatibleWithPictureOnly = key === "DisplayExtraImages";
     if (key === PICTURE_ONLY_MODE_KEY) {
       setPictureOnlyMode(checked);
       return;
     }
-    if (currentPOM) {
+    if (currentPOM && !compatibleWithPictureOnly) {
       setCardDisplayOption(PICTURE_ONLY_MODE_KEY, false);
       setCardDisplayOption(key, checked);
       return;
@@ -5914,6 +6206,9 @@ Match Stats:`;
     });
   }
   function renderOptionsPanel() {
+    const compactModeEnabled = getCompactModeEnabled();
+    const hideLogEnabled = getLayoutOptionEnabled("hon_hide_log");
+    const hoverExpandEnabled = getLayoutOptionEnabled("hon_hover_expand_image");
     const noGenderWarning = state.selectedGenders.length === 0 ? '<p class="hon-options-hint hon-options-warning">Please select at least one gender to continue.</p>' : '<p class="hon-options-hint">Select which genders to include in matchups.</p>';
     const tierWarningHTML = getTierGapWarningHTML(state.selectedTiers);
     const overrideEnabled = getUserFilterOverrideEnabled();
@@ -5974,6 +6269,27 @@ Match Stats:`;
               </label>
             `;
     }).join("")}
+        </div>
+      </div>
+
+      <div class="hon-options-section">
+        <h3 class="hon-options-section-title">Layout</h3>
+        <div class="hon-options-gender-grid">
+          <label class="hon-options-checkbox ${compactModeEnabled ? "active" : ""}" data-compact-mode>
+            <input type="checkbox" ${compactModeEnabled ? "checked" : ""}>
+            <span class="hon-options-checkmark">\u2713</span>
+            <span class="hon-options-label-text">Compact mode</span>
+          </label>
+          <label class="hon-options-checkbox ${hideLogEnabled ? "active" : ""}" data-layout-option="hon_hide_log">
+            <input type="checkbox" ${hideLogEnabled ? "checked" : ""}>
+            <span class="hon-options-checkmark">\u2713</span>
+            <span class="hon-options-label-text">Hide log</span>
+          </label>
+          <label class="hon-options-checkbox ${hoverExpandEnabled ? "active" : ""}" data-layout-option="hon_hover_expand_image">
+            <input type="checkbox" ${hoverExpandEnabled ? "checked" : ""}>
+            <span class="hon-options-checkmark">\u2713</span>
+            <span class="hon-options-label-text">Hover to expand image</span>
+          </label>
         </div>
       </div>
 
@@ -6085,6 +6401,32 @@ Match Stats:`;
         const checked = e.target.checked;
         toggleCardDisplayOption(key, checked);
         syncCardDisplayCheckboxUI(vsContainer);
+      });
+    });
+    const compactModeCheckbox = vsContainer.querySelector('[data-compact-mode] input[type="checkbox"]');
+    if (compactModeCheckbox) {
+      compactModeCheckbox.addEventListener("change", (e) => {
+        const enabled = e.target.checked;
+        setLayoutOptionEnabled("hon_compact_mode", enabled);
+        e.target.closest(".hon-options-checkbox")?.classList.toggle("active", enabled);
+        document.getElementById("hon-modal")?.classList.toggle("hon-compact-mode", enabled);
+      });
+    }
+    const layoutOptionCheckboxes = vsContainer.querySelectorAll('[data-layout-option] input[type="checkbox"]');
+    layoutOptionCheckboxes.forEach((checkbox) => {
+      checkbox.addEventListener("change", (e) => {
+        const label = e.target.closest("[data-layout-option]");
+        const key = label?.dataset.layoutOption;
+        if (!key)
+          return;
+        const enabled = e.target.checked;
+        setLayoutOptionEnabled(key, enabled);
+        label.classList.toggle("active", enabled);
+        const modal = document.getElementById("hon-modal");
+        if (modal) {
+          const className = key === "hon_hide_log" ? "hon-hide-log" : "hon-hover-expand-enabled";
+          modal.classList.toggle(className, enabled);
+        }
       });
     });
     const badgeCheckboxes = vsContainer.querySelectorAll('.hon-options-checkbox[data-badge-display] input[type="checkbox"]');
@@ -6280,6 +6622,7 @@ Match Stats:`;
       CARD_DISPLAY_LS_KEY = "hon_card_display_options";
       CARD_DISPLAY_OPTIONS = [
         { key: "PictureOnlyMode", label: "Picture Only Mode" },
+        { key: "DisplayExtraImages", label: "Display Extra Images" },
         { key: "HidePerformerName", label: "Hide Performer Name" },
         { key: "HideAscendedScore", label: "Hide Ascended Score" },
         { key: "HideCountry", label: "Hide Country" },
@@ -6292,7 +6635,7 @@ Match Stats:`;
         { key: "HideMediaCounters", label: "Hide Media Counters" }
       ];
       PICTURE_ONLY_MODE_KEY = "PictureOnlyMode";
-      ALL_HIDE_OPTIONS = CARD_DISPLAY_OPTIONS.map((opt) => opt.key).filter((key) => key !== PICTURE_ONLY_MODE_KEY);
+      ALL_HIDE_OPTIONS = CARD_DISPLAY_OPTIONS.map((opt) => opt.key).filter((key) => key !== PICTURE_ONLY_MODE_KEY && key !== "DisplayExtraImages");
       BADGE_DISPLAY_LS_KEY = "hon_badge_display_options";
       BADGE_DISPLAY_OPTIONS = [
         { key: "HideAscRankBadge", label: "Hide Ascension Rank Badge" },
@@ -7053,6 +7396,8 @@ Match Stats:`;
       pairSnapshot: {
         left: state.currentPair.left ? { ...state.currentPair.left } : null,
         right: state.currentPair.right ? { ...state.currentPair.right } : null,
+        leftExtraImages: state.currentPair.leftExtraImages || null,
+        rightExtraImages: state.currentPair.rightExtraImages || null,
         rankLeft: state.currentRanks.left,
         rankRight: state.currentRanks.right
       },
@@ -7454,7 +7799,12 @@ Match Stats:`;
     let restoredPairSnapshot = null;
     if (last.pairSnapshot) {
       const { left, right } = last.pairSnapshot;
-      state.currentPair = { left, right };
+      state.currentPair = {
+        left,
+        right,
+        leftExtraImages: last.pairSnapshot.leftExtraImages || null,
+        rightExtraImages: last.pairSnapshot.rightExtraImages || null
+      };
       state.currentRanks = { left: last.pairSnapshot.rankLeft, right: last.pairSnapshot.rankRight };
       restoredPairSnapshot = last.pairSnapshot;
       console.log("[Ascension] Restored pair snapshot");
@@ -7787,11 +8137,12 @@ Match Stats:`;
           state.disableChoice = false;
           area.innerHTML = `
           <div class="hon-vs-container">
-            ${renderCard2(pairSnapshot.left, "left", pairSnapshot.rankLeft)}
+            ${renderCard2(pairSnapshot.left, "left", pairSnapshot.rankLeft, pairSnapshot.leftExtraImages)}
             <div class="hon-vs-divider"><span>VS</span></div>
-            ${renderCard2(pairSnapshot.right, "right", pairSnapshot.rankRight)}
+            ${renderCard2(pairSnapshot.right, "right", pairSnapshot.rankRight, pairSnapshot.rightExtraImages)}
           </div>
         `;
+          attachGalleryRefreshHandlers(area);
           attachBattleListeners2(area);
         }
         console.log("[Ascension] Undo successful \u2014 previous pair restored.");
@@ -7939,6 +8290,27 @@ Match Stats:`;
       focusTimeout = null;
       clickTimeout = null;
     };
+    const galleryImageContainers = area.querySelectorAll(".hon-performer-card.hon-has-extra-images .hon-performer-image-container");
+    galleryImageContainers.forEach((imageContainer) => {
+      const card = imageContainer.closest(".hon-performer-card");
+      const imageClickHandler = (event) => {
+        const image = event.target instanceof Element ? event.target.closest("img.hon-performer-image, img.hon-gallery-extra-img") : null;
+        if (!image || !card?.dataset.performerId)
+          return;
+        event.preventDefault();
+        event.stopPropagation();
+        const link = document.createElement("a");
+        link.href = `/performers/${card.dataset.performerId}`;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.style.display = "none";
+        document.body.appendChild(link);
+        link.click();
+        setTimeout(() => link.remove(), 0);
+      };
+      imageContainer.addEventListener("click", imageClickHandler);
+      cleanupFunctions2.push(() => imageContainer.removeEventListener("click", imageClickHandler));
+    });
     if (isMobile()) {
       const clearAutoPlay = () => {
         if (autoPlayTimeout) {
@@ -8255,13 +8627,24 @@ Match Stats:`;
       const [left, right] = result.items;
       state.currentPair = { left, right };
       state.currentRanks = { left: result.ranks[0], right: result.ranks[1] };
+      let leftExtraImages = null;
+      let rightExtraImages = null;
+      if (state.battleType === "performers" && (shouldDisplayExtraImages() || shouldEnableMobileExtraImageRefresh())) {
+        const mobileGallery = shouldEnableMobileExtraImageRefresh();
+        [leftExtraImages, rightExtraImages] = await Promise.all([
+          fetchPerformerExtraImages(left.id, mobileGallery),
+          fetchPerformerExtraImages(right.id, mobileGallery)
+        ]);
+      }
+      state.currentPair.leftExtraImages = leftExtraImages;
+      state.currentPair.rightExtraImages = rightExtraImages;
       const oldContainer = area.querySelector(".hon-vs-container");
       const newContainer = document.createElement("div");
       newContainer.className = "hon-vs-container hon-pair-entering";
       newContainer.innerHTML = `
-      ${renderCard(left, "left", result.ranks[0])}
+      ${renderCard(left, "left", result.ranks[0], leftExtraImages)}
       <div class="hon-vs-divider"><span>VS</span></div>
-      ${renderCard(right, "right", result.ranks[1])}
+      ${renderCard(right, "right", result.ranks[1], rightExtraImages)}
     `;
       if (oldContainer) {
         oldContainer.replaceWith(newContainer);
@@ -8269,6 +8652,7 @@ Match Stats:`;
         area.innerHTML = "";
         area.appendChild(newContainer);
       }
+      attachGalleryRefreshHandlers(newContainer);
       attachBattleListeners(area);
     } catch (err) {
       area.innerHTML = `<div class="hon-error">Error: ${err.message}</div>`;
@@ -9981,6 +10365,91 @@ Match Stats:`;
       buttonObserver = null;
     }
   }
+  function setupHoverImagePreview(modal) {
+    const imageSelector = ".hon-performer-image, .hon-scene-image, .hon-gallery-extra-img, .hon-image-image-container img";
+    let preview = null;
+    let previewTimer = null;
+    let activeImage = null;
+    let pointerX = 0;
+    let pointerY = 0;
+    const hidePreview = () => {
+      window.clearTimeout(previewTimer);
+      previewTimer = null;
+      preview?.remove();
+      preview = null;
+      activeImage = null;
+    };
+    const positionPreview = () => {
+      if (!preview)
+        return;
+      const bounds = preview.getBoundingClientRect();
+      const gap = 20;
+      const edge = 12;
+      let left = pointerX + gap;
+      let top = pointerY + gap;
+      if (left + bounds.width > window.innerWidth - edge)
+        left = pointerX - bounds.width - gap;
+      if (top + bounds.height > window.innerHeight - edge)
+        top = pointerY - bounds.height - gap;
+      preview.style.left = `${Math.max(edge, Math.min(left, window.innerWidth - bounds.width - edge))}px`;
+      preview.style.top = `${Math.max(edge, Math.min(top, window.innerHeight - bounds.height - edge))}px`;
+    };
+    const canPreview = () => window.innerWidth > 1200 && window.matchMedia("(hover: hover) and (pointer: fine)").matches;
+    modal.addEventListener("pointerover", (event) => {
+      if (event.pointerType !== "mouse" || !canPreview() || !modal.classList.contains("hon-hover-expand-enabled"))
+        return;
+      const image = event.target instanceof HTMLImageElement ? event.target.closest(imageSelector) : null;
+      if (!image || image === activeImage)
+        return;
+      hidePreview();
+      activeImage = image;
+      pointerX = event.clientX;
+      pointerY = event.clientY;
+      previewTimer = window.setTimeout(() => {
+        previewTimer = null;
+        if (!activeImage?.isConnected || !modal.classList.contains("hon-hover-expand-enabled")) {
+          hidePreview();
+          return;
+        }
+        preview = document.createElement("img");
+        preview.className = "hon-hover-expanded-image";
+        preview.alt = activeImage.alt || "";
+        preview.src = activeImage.currentSrc || activeImage.src;
+        preview.style.visibility = "hidden";
+        const showPreview = () => {
+          if (!preview)
+            return;
+          preview.style.visibility = "visible";
+          positionPreview();
+          requestAnimationFrame(() => preview?.classList.add("hon-hover-preview-visible"));
+        };
+        preview.addEventListener("load", showPreview, { once: true });
+        preview.addEventListener("error", hidePreview, { once: true });
+        document.body.appendChild(preview);
+        if (preview.complete && preview.naturalWidth > 0)
+          showPreview();
+      }, 500);
+    });
+    modal.addEventListener("pointermove", (event) => {
+      if (!activeImage)
+        return;
+      if (event.pointerType !== "mouse" || !canPreview() || !modal.classList.contains("hon-hover-expand-enabled") || !activeImage?.isConnected) {
+        hidePreview();
+        return;
+      }
+      pointerX = event.clientX;
+      pointerY = event.clientY;
+      if (preview)
+        positionPreview();
+    });
+    modal.addEventListener("pointerout", (event) => {
+      const image = event.target instanceof HTMLImageElement ? event.target.closest(imageSelector) : null;
+      const relatedTarget = event.relatedTarget;
+      if (image === activeImage && (!relatedTarget || !(relatedTarget instanceof Node) || !image.contains(relatedTarget)))
+        hidePreview();
+    });
+    modal._hideHoverImagePreview = hidePreview;
+  }
   function finishModalClose() {
     const gameModal = document.getElementById("hon-modal");
     const statsModal = document.getElementById("hon-stats-modal");
@@ -9990,6 +10459,7 @@ Match Stats:`;
       return;
     }
     if (gameModal) {
+      gameModal._hideHoverImagePreview?.();
       gameModal.style.display = "none";
       gameModal.classList.remove("hon-modal-opening", "hon-modal-closing");
     }
@@ -10004,6 +10474,7 @@ Match Stats:`;
   function closeRankingModal() {
     const gameModal = document.getElementById("hon-modal");
     const statsModal = document.getElementById("hon-stats-modal");
+    gameModal?._hideHoverImagePreview?.();
     if (statsModal)
       statsModal.style.display = "none";
     if (!gameModal || gameModal.style.display === "none" || closeAnimationInProgress) {
@@ -10111,6 +10582,7 @@ Match Stats:`;
           modal.appendChild(style);
         }
         document.body.appendChild(modal);
+        setupHoverImagePreview(modal);
         const sidebarContainer = modal.querySelector("#hon-sidebar");
         if (sidebarContainer) {
           attachSidebarEventListeners(modal);
@@ -10130,6 +10602,19 @@ Match Stats:`;
           modalBackdrop.onclick = () => closeRankingModal();
       }
       modal.classList.remove("hon-modal-closing");
+      let compactModeEnabled = false;
+      let hideLogEnabled = false;
+      let hoverExpandEnabled = false;
+      try {
+        compactModeEnabled = localStorage.getItem("hon_compact_mode") === "true";
+        hideLogEnabled = localStorage.getItem("hon_hide_log") === "true";
+        hoverExpandEnabled = localStorage.getItem("hon_hover_expand_image") === "true";
+      } catch (err) {
+        console.warn("[Ascension] Could not load layout settings:", err);
+      }
+      modal.classList.toggle("hon-compact-mode", compactModeEnabled);
+      modal.classList.toggle("hon-hide-log", hideLogEnabled);
+      modal.classList.toggle("hon-hover-expand-enabled", hoverExpandEnabled);
       modal.style.display = "flex";
       modal.style.alignItems = "center";
       modal.style.justifyContent = "center";
