@@ -3619,7 +3619,7 @@
     return { includedTags: [], excludedTags: [], includedPerformers: [], excludedPerformers: [] };
   }
   function setupEventHandlers(container, callbacks = {}) {
-    const { closeDeck: closeDeck2, startAutoPlay: startAutoPlay2, stopAutoPlay: stopAutoPlay2, loadNextChunk: loadNextChunk2 } = callbacks;
+    const { closeDeck: closeDeck2, startAutoPlay: startAutoPlay2, stopAutoPlay: stopAutoPlay2, loadNextChunk: loadNextChunk2, goBack } = callbacks;
     setDeckActive(true);
     const filterChangeListener = async (e) => {
       console.log("[Image Deck] Filter changed, updating content");
@@ -3682,6 +3682,9 @@
             break;
           case "next-chunk":
             loadNextChunk2();
+            break;
+          case "back":
+            if (goBack) goBack();
             break;
           default:
             console.log("[Image Deck] Unknown action:", action);
@@ -4174,21 +4177,21 @@
       const galleryIdMatch = img.url.match(/\/galleries\/(\d+)/);
       const galleryId = galleryIdMatch ? galleryIdMatch[1] : "";
       return `
-      <div class="swiper-zoom-container" data-type="gallery" data-url="${img.url}" data-gallery-id="${galleryId}">
-        <div class="gallery-cover-container">
-          <div class="gallery-cover-title" title="${title}">${title}</div>
-          ${imageCountDisplay ? `<div class="gallery-image-count" style="font-size: 18px; color: #ccc; margin-top: 3px;">${imageCountDisplay}</div>` : ""}
-          <div class="gallery-cover-link">
-            <img src="${fullSrc}" alt="${title}" decoding="async" loading="${loading}" />
-          </div>
-          ${performerDisplay}
-        </div>
-      </div>`;
+<div class="swiper-zoom-container" data-type="gallery" data-url="${img.url}" data-gallery-id="${galleryId}">
+  <div class="gallery-cover-container">
+    <div class="gallery-cover-title" title="${title}">${title}</div>
+    ${imageCountDisplay ? `<div class="gallery-image-count" style="font-size: 18px; color: #ccc; margin-top: 3px;">${imageCountDisplay}</div>` : ""}
+    <div class="gallery-cover-link">
+      <img src="${fullSrc}" alt="${title}" decoding="async" loading="${loading}" />
+    </div>
+    ${performerDisplay}
+  </div>
+</div>`;
     }
     return `
-    <div class="swiper-zoom-container" data-type="image">
-      <img src="${fullSrc}" alt="${title}" decoding="async" loading="${loading}" style="max-width: 100%; height: auto; display: block; margin: 0 auto;" />
-    </div>`;
+<div class="swiper-zoom-container" data-type="image">
+  <img src="${fullSrc}" alt="${title}" decoding="async" loading="${loading}" style="max-width: 100%; height: auto; display: block; margin: 0 auto;" />
+</div>`;
   }
   function positionKey() {
     const type = contextInfo?.type ?? "unknown";
@@ -4522,7 +4525,8 @@
         closeDeck,
         startAutoPlay,
         stopAutoPlay,
-        loadNextChunk
+        loadNextChunk,
+        goBack: restoreGalleryListState
       });
       if (sidebarCleanupFn) {
         cleanupFunctions2 = cleanupFunctions2.filter((fn) => fn !== sidebarCleanupFn);
@@ -4779,11 +4783,11 @@
         const thumb = img.paths?.thumbnail || img.paths?.image || "";
         const title = escapeHtml(img.title || "Untitled");
         return `
-        <div class="image-deck-reel-item" data-index="${i}" data-type="${isGallery ? "gallery" : "image"}" title="${title}">
-          <img class="image-deck-reel-thumb" src="${thumb}" alt="" loading="lazy" decoding="async" />
-          <span class="image-deck-reel-title">${title}</span>
-        </div>
-      `;
+<div class="image-deck-reel-item" data-index="${i}" data-type="${isGallery ? "gallery" : "image"}" title="${title}">
+  <img class="image-deck-reel-thumb" src="${thumb}" alt="" loading="lazy" decoding="async" />
+  <span class="image-deck-reel-title">${title}</span>
+</div>
+`;
       }).join("");
       lastReelRenderedCount = count;
       if (savedScrollTop > 0) {
@@ -4866,7 +4870,8 @@
         closeDeck,
         startAutoPlay,
         stopAutoPlay,
-        loadNextChunk
+        loadNextChunk,
+        goBack: restoreGalleryListState
       });
     }).catch((error) => {
       console.error("[Image Deck] Error loading controls module:", error);
@@ -5002,110 +5007,100 @@
     }
     const autoPlayIntervalMs = Math.max(100, parseInt(pluginConfig?.autoPlayInterval, 10) || 500);
     container.innerHTML = `
-    <div class="image-deck-ambient"></div>
-    <div class="image-deck-topbar">
-      <div class="image-deck-counter"></div>
-      <div class="image-deck-topbar-btns">
-        <button class="image-deck-back" type="button" title="Back to gallery list" style="display: none;">\u21A9</button>
-        <button class="image-deck-sidebar-toggle" type="button" title="Settings">\u2699\uFE0F</button>
-        <button class="image-deck-fullscreen" title="Toggle Fullscreen">\u26F6</button>
-        <button class="image-deck-close">\u2715</button>
+<div class="image-deck-ambient"></div>
+<div class="image-deck-topbar">
+  <div class="image-deck-counter"></div>
+  <div class="image-deck-topbar-btns">
+    <button class="image-deck-sidebar-toggle" type="button" title="Settings">\u2699\uFE0F</button>
+    <button class="image-deck-fullscreen" title="Toggle Fullscreen">\u26F6</button>
+    <button class="image-deck-close">\u2715</button>
+  </div>
+</div>
+<div class="image-deck-progress"></div>
+<div class="image-deck-loading"></div>
+<div class="image-deck-swiper swiper">
+  <div class="swiper-wrapper"></div>
+</div>
+<div class="image-deck-controls-wrapper">
+  <div class="image-deck-zoom-controls">
+    <button class="image-deck-control-btn image-deck-back" data-action="back" type="button" title="Back to gallery list" style="display: none;">\u21A9</button>
+    <button class="image-deck-control-btn" data-action="zoom-in" title="Zoom In (+)">\u2795</button>
+    <button class="image-deck-control-btn" data-action="zoom-out" title="Zoom Out (-)">\u2796</button>
+  </div>
+  <div class="image-deck-navigation-controls">
+    <button class="image-deck-control-btn" data-action="prev">\u23EA</button>
+    <button class="image-deck-control-btn" data-action="play">\u25B6\uFE0F</button>
+    <button class="image-deck-control-btn" data-action="next">\u23E9</button>
+    <button class="image-deck-control-btn image-deck-info-btn" data-action="info" title="Image Info (I)">\u2139\uFE0F</button>
+  </div>
+</div>
+<div class="image-deck-speed">Speed: ${autoPlayIntervalMs}ms</div>
+<div class="image-deck-sidebar">
+  <button class="image-deck-sidebar-close" type="button" title="Close settings">\u2715</button>
+  <div class="image-deck-sidebar-content">
+    <div class="sidebar-section mode-section">
+      <span class="sidebar-label">Mode</span>
+      <div class="sidebar-section-content"></div>
+    </div>
+    <div class="sidebar-section saved-filters-section">
+      <span class="sidebar-label">Saved Filter</span>
+      <select class="sidebar-saved-filter-select">
+        <option value="">-- Current view --</option>
+      </select>
+    </div>
+    <div class="sidebar-section sidebar-gallery-search-section">
+      <span class="sidebar-label">Search Galleries</span>
+      <input type="text" class="sidebar-gallery-search" placeholder="Search gallery names..." autocomplete="off" />
+      <div class="sidebar-gallery-results"></div>
+    </div>
+    <div class="sidebar-section active-filters-section">
+      <span class="sidebar-label">Active Filters</span>
+      <div class="sidebar-active-filters">
+        <div class="sidebar-empty-state">No filters applied</div>
       </div>
     </div>
-    <div class="image-deck-progress"></div>
-    <div class="image-deck-loading"></div>
-    <div class="image-deck-swiper swiper">
-      <div class="swiper-wrapper"></div>
-    </div>
-    <div class="image-deck-controls-wrapper">
-      <div class="image-deck-zoom-controls">
-        <button class="image-deck-control-btn" data-action="zoom-in" title="Zoom In (+)">\u2795</button>
-        <button class="image-deck-control-btn" data-action="zoom-out" title="Zoom Out (-)">\u2796</button>
+    <div class="sidebar-section filter-section">
+      <span class="sidebar-label">Tag Filter Settings</span>
+      <div class="filter-mode-toggle">
+        <button class="filter-mode-btn active" data-mode="include" type="button">Include</button>
+        <button class="filter-mode-btn" data-mode="exclude" type="button">Exclude</button>
       </div>
-      <div class="image-deck-navigation-controls">
-        <button class="image-deck-control-btn" data-action="prev">\u23EA</button>
-        <button class="image-deck-control-btn" data-action="play">\u25B6\uFE0F</button>
-        <button class="image-deck-control-btn" data-action="next">\u23E9</button>
-        <button class="image-deck-control-btn image-deck-info-btn" data-action="info" title="Image Info (I)">\u2139\uFE0F</button>
+      <input type="text" class="sidebar-tag-search" placeholder="Search tags..." autocomplete="off" />
+      <div class="sidebar-tag-results"></div>
+      <div class="sidebar-filter-group-label">Performers</div>
+      <input type="text" class="sidebar-performer-search" placeholder="Search performers..." autocomplete="off" />
+      <div class="sidebar-performer-results"></div>
+      <div class="sidebar-filter-group-label">Selected Filters</div>
+      <div class="sidebar-pending-filters">
+        <div class="sidebar-empty-state">No filters selected</div>
       </div>
-    </div>
-    <div class="image-deck-speed">Speed: ${autoPlayIntervalMs}ms</div>
-    <div class="image-deck-sidebar">
-      <button class="image-deck-sidebar-close" type="button" title="Close settings">\u2715</button>
-      <div class="image-deck-sidebar-content">
-        <div class="sidebar-section mode-section">
-          <span class="sidebar-label">Mode</span>
-          <div class="sidebar-section-content"></div>
-        </div>
-        <div class="sidebar-section saved-filters-section">
-          <span class="sidebar-label">Saved Filter</span>
-          <select class="sidebar-saved-filter-select">
-            <option value="">-- Current view --</option>
-          </select>
-        </div>
-        <div class="sidebar-section sidebar-gallery-search-section">
-          <span class="sidebar-label">Search Galleries</span>
-          <input type="text" class="sidebar-gallery-search" placeholder="Search gallery names..." autocomplete="off" />
-          <div class="sidebar-gallery-results"></div>
-        </div>
-        <div class="sidebar-section active-filters-section">
-          <span class="sidebar-label">Active Filters</span>
-          <div class="sidebar-active-filters">
-            <div class="sidebar-empty-state">No filters applied</div>
-          </div>
-        </div>
-        <div class="sidebar-section filter-section">
-          <span class="sidebar-label">Tag Filter Settings</span>
-          <div class="filter-mode-toggle">
-            <button class="filter-mode-btn active" data-mode="include" type="button">Include</button>
-            <button class="filter-mode-btn" data-mode="exclude" type="button">Exclude</button>
-          </div>
-          <input type="text" class="sidebar-tag-search" placeholder="Search tags..." autocomplete="off" />
-          <div class="sidebar-tag-results"></div>
-          <div class="sidebar-filter-group-label">Performers</div>
-          <input type="text" class="sidebar-performer-search" placeholder="Search performers..." autocomplete="off" />
-          <div class="sidebar-performer-results"></div>
-          <div class="sidebar-filter-group-label">Selected Filters</div>
-          <div class="sidebar-pending-filters">
-            <div class="sidebar-empty-state">No filters selected</div>
-          </div>
-          <div class="sidebar-actions">
-            <button class="sidebar-apply-btn" type="button">Apply Filters</button>
-            <button class="sidebar-clear-btn" type="button">Clear All</button>
-          </div>
-        </div>
+      <div class="sidebar-actions">
+        <button class="sidebar-apply-btn" type="button">Apply Filters</button>
+        <button class="sidebar-clear-btn" type="button">Clear All</button>
       </div>
     </div>
-    <div class="image-deck-metadata-modal">
-      <div class="image-deck-metadata-content">
-        <div class="image-deck-metadata-header">
-          <h3>Image Details</h3>
-          <button class="image-deck-metadata-close">\u2715</button>
-        </div>
-        <div class="image-deck-metadata-body"></div>
-      </div>
+  </div>
+</div>
+<div class="image-deck-metadata-modal">
+  <div class="image-deck-metadata-content">
+    <div class="image-deck-metadata-header">
+      <h3>Image Details</h3>
+      <button class="image-deck-metadata-close">\u2715</button>
     </div>
-    <div class="image-deck-reel">
-      <button class="image-deck-reel-toggle" type="button" aria-label="Toggle reel">&#10094;</button>
-      <div class="image-deck-reel-panel">
-        <div class="image-deck-reel-header">
-          <span>Reel</span>
-          <button class="image-deck-reel-close" type="button" aria-label="Close reel">&#10095;</button>
-        </div>
-        <div class="image-deck-reel-list"></div>
-      </div>
+    <div class="image-deck-metadata-body"></div>
+  </div>
+</div>
+<div class="image-deck-reel">
+  <button class="image-deck-reel-toggle" type="button" aria-label="Toggle reel">&#10094;</button>
+  <div class="image-deck-reel-panel">
+    <div class="image-deck-reel-header">
+      <span>Reel</span>
+      <button class="image-deck-reel-close" type="button" aria-label="Close reel">&#10095;</button>
     </div>
-  `;
-    const backBtn = container.querySelector(".image-deck-back");
-    if (backBtn) {
-      const onBackClick = (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        restoreGalleryListState();
-      };
-      backBtn.addEventListener("click", onBackClick);
-      cleanupFunctions2.push(() => backBtn.removeEventListener("click", onBackClick));
-    }
+    <div class="image-deck-reel-list"></div>
+  </div>
+</div>
+`;
     const filterCallbacks = { onFilterRemoved: forceRefreshGalleryCovers };
     sidebarCleanupFn = initSidebarFilters(container, {
       contextInfo,
@@ -5214,7 +5209,6 @@
     if (speedIndicator) {
       speedIndicator.textContent = `Speed: ${interval}ms`;
       speedIndicator.classList.add("visible");
-      setTimeout(() => speedIndicator.classList.remove("visible"), 2e3);
     }
   }
   function stopAutoPlay() {
@@ -5228,6 +5222,10 @@
     if (autoPlayInterval) {
       clearInterval(autoPlayInterval);
       autoPlayInterval = null;
+    }
+    const speedIndicator = document.querySelector(".image-deck-speed");
+    if (speedIndicator) {
+      speedIndicator.classList.remove("visible");
     }
   }
   async function loadNextChunk() {
