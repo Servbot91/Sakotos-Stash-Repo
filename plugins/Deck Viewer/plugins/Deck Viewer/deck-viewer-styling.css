@@ -808,8 +808,7 @@
 /* Topbar buttons - shared styles */
 .image-deck-close,
 .image-deck-fullscreen,
-.image-deck-sidebar-toggle,
-.image-deck-back {
+.image-deck-sidebar-toggle {
   width: 40px;
   height: 40px;
   border-radius: 50%;
@@ -826,8 +825,7 @@
 }
 .image-deck-close:hover,
 .image-deck-fullscreen:hover,
-.image-deck-sidebar-toggle:hover,
-.image-deck-back:hover {
+.image-deck-sidebar-toggle:hover {
   background: rgba(255,255,255,0.2);
   transform: scale(1.1);
 }
@@ -909,7 +907,8 @@
 }
 
 /* Zoom icon-only buttons: stay circular */
-.image-deck-zoom-controls .image-deck-control-btn {
+.image-deck-zoom-controls .image-deck-control-btn,
+.image-deck-zoom-controls .image-deck-back {
   width: 44px;
   padding: 0;
   border-radius: 50%;
@@ -1007,6 +1006,7 @@
     gap: 10px;
   }
   .image-deck-zoom-controls .image-deck-control-btn,
+  .image-deck-zoom-controls .image-deck-back,
   .image-deck-control-btn[data-action="prev"],
   .image-deck-control-btn[data-action="play"],
   .image-deck-control-btn[data-action="next"],
@@ -1172,6 +1172,7 @@
   border-radius: 8px;
   border: 1px solid rgba(255,255,255,0.1);
 }
+
 .metadata-filename {
   color: rgba(255,255,255,0.9);
   font-size: 13px;
@@ -1203,6 +1204,7 @@
   display: flex;
   gap: 8px;
 }
+
 .metadata-star {
   background: none;
   border: none;
@@ -1253,6 +1255,7 @@
   gap: 8px;
   margin-bottom: 12px;
 }
+
 .metadata-tag {
   display: inline-flex;
   align-items: center;
@@ -1263,6 +1266,7 @@
   border-radius: 20px;
   font-size: 13px;
 }
+
 .metadata-tag-remove {
   background: rgba(255,255,255,0.2);
   border: none;
@@ -1287,6 +1291,7 @@
   border-radius: 8px;
   margin-top: 8px;
 }
+
 .metadata-tag-result {
   padding: 12px;
   color: white;
@@ -1402,7 +1407,6 @@ body.image-deck-open {
 }
 .image-deck-container.hiding-ui .image-deck-topbar,
 .image-deck-container.hiding-ui .image-deck-controls-wrapper,
-.image-deck-container.hiding-ui .image-deck-speed,
 .image-deck-container.hiding-ui .image-deck-current-filters {
   opacity: 0;
   pointer-events: none;
@@ -1410,7 +1414,6 @@ body.image-deck-open {
 }
 .image-deck-container:not(.hiding-ui) .image-deck-topbar,
 .image-deck-container:not(.hiding-ui) .image-deck-controls-wrapper,
-.image-deck-container:not(.hiding-ui) .image-deck-speed,
 .image-deck-container:not(.hiding-ui) .image-deck-current-filters {
   opacity: 1;
   pointer-events: auto;
@@ -1558,6 +1561,7 @@ Reel panel — right-edge slide-out thumbnail list
   transform: translateX(100%);
   pointer-events: none;
 }
+
 /* Mobile reel sizing */
 @media (max-width: 768px) {
   .image-deck-reel {
