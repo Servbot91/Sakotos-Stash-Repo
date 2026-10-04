@@ -1,6 +1,6 @@
 name: Deck Viewer
 description: The Sakoto Fork of the Image-Deck plugin. Features include Hijacking of the built in stash viewbox, full mobile integration and optimization with one-handed controls, tagging, filtering, customizable visual effects, and additional features to better enhance the gallery and image viewing experience in stash.
-version: 1.1HF1
+version: 1.2
 settings:
   autoPlayInterval:
     displayName: Auto-play Interval (ms)
@@ -25,15 +25,9 @@ settings:
 
 ui:
   javascript:
-    - https://cdn.jsdelivr.net/npm/swiper@11.2.4/swiper-bundle.min.js
+    - swiper-bundle.min.js
     - deck-viewer-beta.js
   css:
-    - https://cdn.jsdelivr.net/npm/swiper@11.2.4/swiper-bundle.min.css
+    - swiper-bundle.min.css
     - deck-viewer-beta.css
-  csp:
-    script-src:
-      - 'self'
-      - https://cdn.jsdelivr.net/npm/swiper@11.2.4/swiper-bundle.min.js
-    style-src:
-      - 'self'
-      - https://cdn.jsdelivr.net/npm/swiper@11.2.4/swiper-bundle.min.css
+
