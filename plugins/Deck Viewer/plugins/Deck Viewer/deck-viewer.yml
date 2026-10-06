@@ -26,8 +26,8 @@ settings:
 ui:
   javascript:
     - swiper-bundle.min.js
-    - deck-viewer-beta.js
+    - deck-viewer.js
   css:
     - swiper-bundle.min.css
-    - deck-viewer-beta.css
+    - deck-viewer-styling.css
 
