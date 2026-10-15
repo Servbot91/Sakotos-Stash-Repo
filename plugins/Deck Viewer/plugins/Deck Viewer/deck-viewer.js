@@ -535,8 +535,8 @@
       };
     }
   }
-  function getVisibleImages() {
-    const images = [];
+  async function getVisibleImages() {
+    const rawImages = [];
     const seenIds = /* @__PURE__ */ new Set();
     const selectors = [
       ".image-card img",
@@ -552,20 +552,69 @@
       const id = idMatch[1];
       if (seenIds.has(id)) return;
       seenIds.add(id);
-      images.push({
+      rawImages.push({
         id,
         title: img.alt || img.dataset.title || img.getAttribute("title") || "Untitled",
-        paths: {
-          image: src.includes("/thumbnail/") ? src.replace("/thumbnail/", "/image/") : src,
-          thumbnail: src
-        },
+        thumbnailSrc: src,
         performers: [],
         tags: [],
         isGallery: false,
         type: "image"
       });
     });
-    return images;
+    if (rawImages.length === 0) return [];
+    try {
+      const ids = rawImages.map((img) => img.id);
+      const query = `query FindImages($filter: FindFilterType!, $image_filter: ImageFilterType) {
+      findImages(filter: $filter, image_filter: $image_filter) {
+        images {
+          id
+          title
+          paths { thumbnail image }
+        }
+      }
+    }`;
+      const response = await fetch("/graphql", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query,
+          variables: {
+            filter: { per_page: ids.length, page: 1, sort: "id", direction: "ASC" },
+            image_filter: { id: { modifier: "INCLUDES", value: ids } }
+          }
+        })
+      });
+      const data = await response.json();
+      if (data?.errors) throw new Error(data.errors[0].message);
+      const foundImages = data?.data?.findImages?.images || [];
+      const pathMap = /* @__PURE__ */ new Map();
+      foundImages.forEach((img) => {
+        pathMap.set(String(img.id), img.paths);
+      });
+      return rawImages.map((img) => {
+        const fullPaths = pathMap.get(String(img.id));
+        return {
+          ...img,
+          paths: fullPaths ? {
+            image: fullPaths.image || fullPaths.thumbnail || img.thumbnailSrc,
+            thumbnail: fullPaths.thumbnail || img.thumbnailSrc
+          } : {
+            image: img.thumbnailSrc.includes("/thumbnail/") ? img.thumbnailSrc.replace("/thumbnail/", "/image/") : img.thumbnailSrc,
+            thumbnail: img.thumbnailSrc
+          }
+        };
+      });
+    } catch (error) {
+      console.error("[Image Deck] Error fetching full paths for visible images:", error);
+      return rawImages.map((img) => ({
+        ...img,
+        paths: {
+          image: img.thumbnailSrc.includes("/thumbnail/") ? img.thumbnailSrc.replace("/thumbnail/", "/image/") : img.thumbnailSrc,
+          thumbnail: img.thumbnailSrc
+        }
+      }));
+    }
   }
   var MODIFIERS_THAT_SUPPORT_DEPTH, VALID_FILTER_FIELDS, INT_CRITERION_FIELDS, MULTI_CRITERION_FIELDS, VALID_SORTS;
   var init_context = __esm({
@@ -1658,7 +1707,7 @@
     return null;
   }
   function removeCurrentItemFromDeck(targetIndex = null) {
-    if (!currentSwiperRef) return;
+    if (!currentSwiperRef || typeof currentSwiperRef.activeIndex !== "number") return;
     const currentIndex = currentSwiperRef.activeIndex;
     const currentImage = window.currentImages?.[currentIndex];
     if (!currentImage) return;
@@ -1870,7 +1919,6 @@
     let currentStudioId = originalStudioId;
     const studioSearch = body.querySelector(".metadata-studio-search");
     const studioResults = body.querySelector(".metadata-studio-results");
-    let studioSearchTimeout;
     if (studioSearch) {
       studioSearch.addEventListener("input", (e) => {
         clearTimeout(studioSearchTimeout);
@@ -1922,7 +1970,6 @@
     });
     const performerSearch = body.querySelector(".metadata-performer-search");
     const performerResults = body.querySelector(".metadata-performer-results");
-    let performerSearchTimeout;
     if (performerSearch) {
       performerSearch.addEventListener("input", (e) => {
         clearTimeout(performerSearchTimeout);
@@ -1976,7 +2023,6 @@
     });
     const tagSearch = body.querySelector(".metadata-tag-search:not(.metadata-performer-search):not(.metadata-studio-search)");
     const tagResults = body.querySelector(".metadata-tag-results:not(.metadata-performer-results):not(.metadata-studio-results)");
-    let tagSearchTimeout;
     if (tagSearch) {
       tagSearch.addEventListener("input", (e) => {
         clearTimeout(tagSearchTimeout);
@@ -2221,15 +2267,14 @@
     });
     const tagSearch = body.querySelector(".metadata-tag-search");
     const tagResults = body.querySelector(".metadata-tag-results");
-    let searchTimeout;
     tagSearch.addEventListener("input", (e) => {
-      clearTimeout(searchTimeout);
+      clearTimeout(imageSearchTimeout);
       const query = e.target.value.trim();
       if (query.length < 2) {
         tagResults.innerHTML = "";
         return;
       }
-      searchTimeout = setTimeout(async () => {
+      imageSearchTimeout = setTimeout(async () => {
         const tags = await searchTags(query);
         tagResults.innerHTML = tags.map(
           (tag) => `<div class="metadata-tag-result" data-tag-id="${tag.id}" data-tag-name="${tag.name}">
@@ -2317,12 +2362,16 @@
       }
     });
   }
-  var currentMetadata, currentSwiperRef;
+  var currentMetadata, currentSwiperRef, studioSearchTimeout, performerSearchTimeout, tagSearchTimeout, imageSearchTimeout;
   var init_metadata = __esm({
     "metadata.js"() {
       init_graphql();
       currentMetadata = null;
       currentSwiperRef = null;
+      studioSearchTimeout = null;
+      performerSearchTimeout = null;
+      tagSearchTimeout = null;
+      imageSearchTimeout = null;
     }
   });
 
@@ -2382,7 +2431,6 @@
           }
           this.eventCallbacks.get(event).push(callback);
         }
-        // FIX: Add off method to remove event handlers
         off(event, callback) {
           if (!this.eventCallbacks.has(event)) {
             return;
@@ -2396,7 +2444,6 @@
             this.eventCallbacks.delete(event);
           }
         }
-        // Alternative: Add once method for one-time events
         once(event, callback) {
           const onceWrapper = (data) => {
             callback(data);
@@ -2480,29 +2527,29 @@
       let performerDisplay = "";
       if (img.performers && img.performers.length > 0) {
         const performerNames = img.performers.map((p) => p.name).join(", ");
-        performerDisplay = `<div class=\\"gallery-performers\\" style=\\"margin-top: 5px; font-size: 18px; color: #ccc;\\">${performerNames}</div>`;
+        performerDisplay = `<div class="gallery-performers" style="margin-top: 5px; font-size: 18px; color: #ccc;">${performerNames}</div>`;
       }
       const galleryIdMatch = img.url.match(/\/galleries\/(\d+)/);
       const galleryId = galleryIdMatch ? galleryIdMatch[1] : null;
       const previewStack = galleryId ? buildPreviewStack(galleryId) : "";
       return `
-            <div class="swiper-zoom-container" data-type="gallery" data-url="${img.url}" data-gallery-id="${galleryId || ""}">
-                <div class="gallery-cover-container">
-                    <div class="gallery-cover-title" title="${title}">${title}</div>
-                    ${imageCountDisplay ? `<div class=\\"gallery-image-count\\" style=\\"font-size: 18px; color: #ccc; margin-top: 3px;\\">${imageCountDisplay}</div>` : ""}
-                    <a href="${img.url}" target="_blank" class="gallery-cover-link">
-                        <img src="${fullSrc}" alt="${title}" decoding="async" loading="${loading}" />
-                    </a>
-                    ${previewStack}
-                    ${performerDisplay}
-                </div>
-            </div>`;
+      <div class="swiper-zoom-container" data-type="gallery" data-url="${img.url}" data-gallery-id="${galleryId || ""}">
+        <div class="gallery-cover-container">
+          <div class="gallery-cover-title" title="${title}">${title}</div>
+          ${imageCountDisplay ? `<div class="gallery-image-count" style="font-size: 18px; color: #ccc; margin-top: 3px;">${imageCountDisplay}</div>` : ""}
+          <a href="${img.url}" target="_blank" class="gallery-cover-link">
+            <img src="${fullSrc}" alt="${title}" decoding="async" loading="${loading}" />
+          </a>
+          ${previewStack}
+          ${performerDisplay}
+        </div>
+      </div>`;
     }
     return `
-        <div class="swiper-zoom-container" data-type="image">
-            <img src="${fullSrc}" alt="${title}" decoding="async" loading="${loading}"
-                 style="max-width: 100%; height: auto; display: block; margin: 0 auto;" />
-        </div>`;
+    <div class="swiper-zoom-container" data-type="image">
+      <img src="${fullSrc}" alt="${title}" decoding="async" loading="${loading}"
+        style="max-width: 100%; height: auto; display: block; margin: 0 auto;" />
+    </div>`;
   }
   function triggerPreviewFill(container) {
     const activeSlide = container.querySelector(".swiper-slide-active");
@@ -2516,7 +2563,10 @@
     fillGalleryPreviewsForSlide(container, galleryId);
   }
   function attachHoverFill(container) {
-    container.addEventListener("mouseenter", (e) => {
+    if (hoverFillHandler) {
+      container.removeEventListener("mouseenter", hoverFillHandler, true);
+    }
+    hoverFillHandler = (e) => {
       const cover = e.target.closest(".gallery-cover-container");
       if (!cover) return;
       const galleryZoom = cover.closest('[data-type="gallery"]');
@@ -2525,7 +2575,8 @@
       if (!galleryId) return;
       ensurePreviewStack(cover, galleryId);
       fillGalleryPreviewsForSlide(container, galleryId);
-    }, true);
+    };
+    container.addEventListener("mouseenter", hoverFillHandler, true);
   }
   function initSwiper(container, images, pluginConfig2, updateUICallback, savePositionCallback, contextInfo2, startAt = 0) {
     const swiperEl = container.querySelector(".swiper");
@@ -2539,7 +2590,6 @@
       slidesPerView: 1,
       slidesPerGroup: 1,
       initialSlide: safeInitialSlide,
-      // was hard-coded to 0
       keyboard: { enabled: false },
       mousewheel: false,
       zoom: {
@@ -2619,7 +2669,7 @@
     triggerPreviewFill(container);
     return swiper;
   }
-  var EFFECT_CONFIGS, memoizedGetSlideTemplate;
+  var EFFECT_CONFIGS, memoizedGetSlideTemplate, hoverFillHandler;
   var init_swiper = __esm({
     "swiper.js"() {
       init_constants();
@@ -2701,6 +2751,7 @@
         return memoizedFunction;
       })();
       window.memoizedGetSlideTemplate = memoizedGetSlideTemplate;
+      hoverFillHandler = null;
     }
   });
 
@@ -3185,6 +3236,12 @@
     const sidebar = container.querySelector(".image-deck-sidebar");
     if (!sidebar) return;
     currentContextInfo = contextInfo2 || null;
+    const trackedListeners = [];
+    function track(element, event, handler, options) {
+      if (!element) return;
+      element.addEventListener(event, handler, options);
+      trackedListeners.push({ element, event, handler, options });
+    }
     const current = getCurrentFilterTags();
     sidebarPendingFilters = {
       includedTags: [...current.includedTags || []],
@@ -3203,7 +3260,7 @@
     }
     const modeButtons = sidebar.querySelectorAll(".filter-mode-btn");
     modeButtons.forEach((btn) => {
-      btn.addEventListener("click", () => {
+      track(btn, "click", () => {
         modeButtons.forEach((b) => b.classList.remove("active"));
         btn.classList.add("active");
       });
@@ -3211,7 +3268,7 @@
     const tagInput = sidebar.querySelector(".sidebar-tag-search");
     const tagResults = sidebar.querySelector(".sidebar-tag-results");
     let tagDebounce;
-    tagInput?.addEventListener("input", (e) => {
+    track(tagInput, "input", (e) => {
       clearTimeout(tagDebounce);
       const q = e.target.value.trim();
       if (!q) {
@@ -3227,7 +3284,7 @@
         tagResults.classList.toggle("active", tags.length > 0);
       }, 250);
     });
-    tagResults?.addEventListener("click", (e) => {
+    track(tagResults, "click", (e) => {
       e.stopPropagation();
       e.preventDefault();
       const result = e.target.closest(".sidebar-tag-result");
@@ -3244,7 +3301,7 @@
     const performerInput = sidebar.querySelector(".sidebar-performer-search");
     const performerResults = sidebar.querySelector(".sidebar-performer-results");
     let performerDebounce;
-    performerInput?.addEventListener("input", (e) => {
+    track(performerInput, "input", (e) => {
       clearTimeout(performerDebounce);
       const q = e.target.value.trim();
       if (!q) {
@@ -3260,7 +3317,7 @@
         performerResults.classList.toggle("active", performers.length > 0);
       }, 250);
     });
-    performerResults?.addEventListener("click", (e) => {
+    track(performerResults, "click", (e) => {
       e.stopPropagation();
       e.preventDefault();
       const result = e.target.closest(".sidebar-tag-result");
@@ -3277,7 +3334,7 @@
     const galleryInput = sidebar.querySelector(".sidebar-gallery-search");
     const galleryResults = sidebar.querySelector(".sidebar-gallery-results");
     let galleryDebounce;
-    galleryInput?.addEventListener("input", (e) => {
+    track(galleryInput, "input", (e) => {
       clearTimeout(galleryDebounce);
       const q = e.target.value.trim();
       if (!q) {
@@ -3300,7 +3357,7 @@
         galleryResults.classList.toggle("active", galleries.length > 0);
       }, 250);
     });
-    galleryResults?.addEventListener("click", (e) => {
+    track(galleryResults, "click", (e) => {
       e.stopPropagation();
       e.preventDefault();
       const result = e.target.closest(".sidebar-gallery-result");
@@ -3317,7 +3374,7 @@
       }
     });
     const pendingContainer = sidebar.querySelector(".sidebar-pending-filters");
-    pendingContainer?.addEventListener("click", (e) => {
+    track(pendingContainer, "click", (e) => {
       e.stopPropagation();
       const btn = e.target.closest(".remove-pill");
       if (!btn) return;
@@ -3334,7 +3391,8 @@
       }
       renderPendingFilters(container);
     });
-    sidebar.querySelector(".sidebar-apply-btn")?.addEventListener("click", async (e) => {
+    const applyBtn = sidebar.querySelector(".sidebar-apply-btn");
+    track(applyBtn, "click", async (e) => {
       e.stopPropagation();
       const current2 = getCurrentFilterTags();
       const merged = mergeFilters(current2, sidebarPendingFilters);
@@ -3352,7 +3410,8 @@
       }
       await renderActiveFilters(container, { onFilterRemoved });
     });
-    sidebar.querySelector(".sidebar-clear-btn")?.addEventListener("click", async (e) => {
+    const clearBtn = sidebar.querySelector(".sidebar-clear-btn");
+    track(clearBtn, "click", async (e) => {
       e.stopPropagation();
       sidebarPendingFilters = { includedTags: [], excludedTags: [], includedPerformers: [], excludedPerformers: [] };
       renderPendingFilters(container);
@@ -3367,7 +3426,7 @@
     if (toggleBtn) {
       const newToggle = toggleBtn.cloneNode(true);
       toggleBtn.parentNode.replaceChild(newToggle, toggleBtn);
-      newToggle.addEventListener("click", (e) => {
+      track(newToggle, "click", (e) => {
         e.stopPropagation();
         const isOpen = container.classList.toggle("sidebar-open");
         if (isOpen) {
@@ -3379,7 +3438,7 @@
     if (closeBtn) {
       const newClose = closeBtn.cloneNode(true);
       closeBtn.parentNode.replaceChild(newClose, closeBtn);
-      newClose.addEventListener("click", (e) => {
+      track(newClose, "click", (e) => {
         e.stopPropagation();
         container.classList.remove("sidebar-open");
       });
@@ -3399,8 +3458,16 @@
     document.addEventListener("keydown", keyHandler);
     updateFilterButtons(container);
     return () => {
+      clearTimeout(tagDebounce);
+      clearTimeout(performerDebounce);
+      clearTimeout(galleryDebounce);
+      trackedListeners.forEach(({ element, event, handler, options }) => {
+        element.removeEventListener(event, handler, options);
+      });
+      trackedListeners.length = 0;
       document.removeEventListener("click", outsideClickHandler);
       document.removeEventListener("keydown", keyHandler);
+      currentContextInfo = null;
     };
   }
   var sidebarPendingFilters, currentContextInfo, SAVED_FILTER_ID_KEY, SAVED_FILTER_MODE_KEY, INT_CRITERION_FIELDS2, MULTI_CRITERION_FIELDS2;
@@ -4060,23 +4127,21 @@
           this.listeners = /* @__PURE__ */ new Map();
         }
         add(element, event, handler, options = false) {
-          const key = `${element.constructor.name}_${event}_${Math.random()}`;
+          const key = `${event}_${Math.random().toString(36).slice(2)}`;
           element.addEventListener(event, handler, options);
-          if (!this.listeners.has(key)) {
-            this.listeners.set(key, { element, event, handler, options });
-          }
+          this.listeners.set(key, { element, event, handler, options });
           return key;
         }
         remove(key) {
-          if (this.listeners.has(key)) {
-            const { element, event, handler } = this.listeners.get(key);
-            element.removeEventListener(event, handler);
-            this.listeners.delete(key);
-          }
+          const entry = this.listeners.get(key);
+          if (!entry) return;
+          const { element, event, handler, options } = entry;
+          element.removeEventListener(event, handler, options);
+          this.listeners.delete(key);
         }
         removeAll() {
-          for (const [key, { element, event, handler }] of this.listeners) {
-            element.removeEventListener(event, handler);
+          for (const { element, event, handler, options } of this.listeners.values()) {
+            element.removeEventListener(event, handler, options);
           }
           this.listeners.clear();
         }
@@ -4133,6 +4198,10 @@
       clearInterval(autoPlayInterval);
       autoPlayInterval = null;
     }
+    if (zoomReelInterval) {
+      clearInterval(zoomReelInterval);
+      zoomReelInterval = null;
+    }
     stopAutoPlay();
     cleanupControls().catch((e) => {
       console.warn("[Image Deck] Controls cleanup error:", e);
@@ -4154,6 +4223,10 @@
     contextInfo = null;
     storedContextInfo2 = null;
     window.currentContextInfo = null;
+    window.currentSwiperInstance = null;
+    window.currentImages = null;
+    if (typeof state2?.setSwiper === "function") state2.setSwiper(null);
+    if (typeof setCurrentSwiper === "function") setCurrentSwiper(null);
     pluginConfig = null;
     contextExtensionEnabled = false;
     sidebarCleanupFn = null;
@@ -4161,6 +4234,8 @@
     lastReelRenderedActive = -1;
     currentGalleryName = null;
     previousGalleryListState = null;
+    currentFilterUpdateListener = null;
+    uiUpdatePending = false;
   }
   function buildSlideHtml(img, contextInfo2, loading = "lazy") {
     if (!img) {
@@ -4807,16 +4882,16 @@
   }
   function attachZoomReelCloser(container) {
     if (!currentSwiper || typeof currentSwiper.on !== "function") return;
-    const closeIfZoomed = () => {
-      if (currentSwiper?.zoom?.scale > 1) {
-        closeReel(container);
-      }
-    };
+    if (zoomReelInterval) {
+      clearInterval(zoomReelInterval);
+      zoomReelInterval = null;
+    }
     currentSwiper.on("zoomChange", (swiper, scale) => {
       if (scale > 1) closeReel(container);
     });
-    const pollInterval = setInterval(closeIfZoomed, 200);
-    cleanupFunctions2.push(() => clearInterval(pollInterval));
+    zoomReelInterval = setInterval(() => {
+      if (currentSwiper?.zoom?.scale > 1) closeReel(container);
+    }, 200);
   }
   async function openNormalDeck(startIndex = 0) {
     if (deckClosePromise) {
@@ -4952,7 +5027,7 @@
       return;
     }
     console.warn(`[Image Deck] Target ${targetImageId} not in Stash page ${urlPage}; falling back to visible images`);
-    const visibleImages = getVisibleImages();
+    const visibleImages = await getVisibleImages();
     const visibleIndex = visibleImages.findIndex((img) => String(img.id).trim() === String(targetImageId).trim());
     if (visibleIndex !== -1) {
       await doOpenWithImages(visibleImages, visibleIndex);
@@ -5360,7 +5435,7 @@
     });
     return deckClosePromise;
   }
-  var CLOSE_ANIMATION_MS, POST_INIT_UPDATE_DELAY_MS, pluginConfig, currentSwiper, currentImages, autoPlayInterval, isAutoPlaying, contextInfo, currentChunkPage, chunkSize, totalImageCount, totalPages, storedContextInfo2, cleanupFunctions2, controlsModuleCache, isChunkLoading, currentFilterUpdateListener, sidebarCleanupFn, contextExtensionEnabled, deckContainer, deckClosePromise, isOpening, isModeSwitching, lastReelRenderedCount, lastReelRenderedActive, currentGalleryName, previousGalleryListState, uiUpdatePending;
+  var CLOSE_ANIMATION_MS, POST_INIT_UPDATE_DELAY_MS, pluginConfig, currentSwiper, currentImages, autoPlayInterval, isAutoPlaying, contextInfo, currentChunkPage, chunkSize, totalImageCount, totalPages, storedContextInfo2, cleanupFunctions2, controlsModuleCache, isChunkLoading, currentFilterUpdateListener, sidebarCleanupFn, contextExtensionEnabled, deckContainer, deckClosePromise, isOpening, isModeSwitching, zoomReelInterval, lastReelRenderedCount, lastReelRenderedActive, currentGalleryName, previousGalleryListState, uiUpdatePending;
   var init_deck = __esm({
     "deck.js"() {
       init_config();
@@ -5396,6 +5471,7 @@
       deckClosePromise = null;
       isOpening = false;
       isModeSwitching = false;
+      zoomReelInterval = null;
       lastReelRenderedCount = 0;
       lastReelRenderedActive = -1;
       currentGalleryName = null;
@@ -5480,6 +5556,8 @@
   var delegatedPreviewHandler = null;
   var sceneGalleryInterceptionInstalled = false;
   var isOpeningSceneGallery = false;
+  var mainObserver = null;
+  var boundSceneGalleryClickHandler = null;
   function isStashPreviewButton(el) {
     if (!el) return false;
     const className = (el.className || "").toString().toLowerCase();
@@ -5599,7 +5677,8 @@
   function setupSceneGalleryInterception() {
     if (sceneGalleryInterceptionInstalled) return;
     sceneGalleryInterceptionInstalled = true;
-    window.addEventListener("click", handleSceneGalleryClick, true);
+    boundSceneGalleryClickHandler = handleSceneGalleryClick;
+    window.addEventListener("click", boundSceneGalleryClickHandler, true);
   }
   function initialize() {
     console.log("[Image Deck] Initializing...");
@@ -5607,14 +5686,18 @@
       console.error("[Image Deck] Swiper not loaded!");
       return;
     }
+    if (mainObserver) {
+      mainObserver.disconnect();
+      mainObserver = null;
+    }
     initPreviewObserver();
     setupSceneGalleryInterception();
     createLaunchButton();
     let debounceTimer;
-    const observer = new MutationObserver(() => {
+    mainObserver = new MutationObserver(() => {
       clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
-        const hasButton = document.querySelector(".image-deck-launch-btn");
+        const hasButton = document.getElementById("image-deck-nav-btn");
         const hasImages = document.querySelectorAll('img[src*="/image/"]').length > 0;
         if (!hasButton && hasImages) {
           createLaunchButton();
@@ -5622,7 +5705,7 @@
       }, 300);
     });
     const mainContent = document.querySelector(".main-content") || document.querySelector('[role="main"]') || document.body;
-    observer.observe(mainContent, {
+    mainObserver.observe(mainContent, {
       childList: true,
       subtree: true
     });
@@ -5635,6 +5718,8 @@
   var popstateHandler = null;
   var navigationInterval = null;
   var suppressNextNavigation = false;
+  var navigationInitialized = false;
+  var boundPageUnloadHandler = null;
   window.suppressImageDeckNavigation = (value = true) => {
     suppressNextNavigation = value;
   };
@@ -5658,6 +5743,12 @@
       clearInterval(navigationInterval);
       navigationInterval = null;
     }
+    if (boundPageUnloadHandler) {
+      window.removeEventListener("beforeunload", boundPageUnloadHandler);
+      window.removeEventListener("pagehide", boundPageUnloadHandler);
+      boundPageUnloadHandler = null;
+    }
+    navigationInitialized = false;
   }
   var lastUrl = location.href;
   function handleNavigation() {
@@ -5700,17 +5791,17 @@
       console.warn("[Image Deck] Error closing deck on unload:", e);
     }
   }
-  window.addEventListener("beforeunload", handlePageUnload);
-  window.addEventListener("pagehide", handlePageUnload);
   function initNavigationHandlers() {
+    if (navigationInitialized) return;
+    navigationInitialized = true;
     originalPushState = history.pushState;
     originalReplaceState = history.replaceState;
-    history.pushState = function() {
-      originalPushState.apply(history, arguments);
+    history.pushState = function(...args) {
+      originalPushState.apply(history, args);
       setTimeout(handleNavigation, 100);
     };
-    history.replaceState = function() {
-      originalReplaceState.apply(history, arguments);
+    history.replaceState = function(...args) {
+      originalReplaceState.apply(history, args);
       setTimeout(handleNavigation, 100);
     };
     popstateHandler = () => {
@@ -5718,6 +5809,9 @@
     };
     window.addEventListener("popstate", popstateHandler);
     navigationInterval = setInterval(handleNavigation, 500);
+    boundPageUnloadHandler = handlePageUnload;
+    window.addEventListener("beforeunload", boundPageUnloadHandler);
+    window.addEventListener("pagehide", boundPageUnloadHandler);
   }
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", () => {
