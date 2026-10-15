@@ -17,14 +17,14 @@ ui:
 interface: raw
 
 tasks:
-  - name: "Prime Performer Ratings"
-    description: Randomly assigns all performers a rating between 1 (F-Tier) up to 40 (C-Tier) honoring correct distribution.
+  - name: "Prime Unrated Performers"
+    description: Randomly assigns all Performers a rating between 1 (F-Tier) up to 40 (C-Tier) honoring correct distribution.
     defaultArgs:
       mode: processAll
       task: prime
 
   - name: "Wipe Performer Match History"
-    description: Deletes all Performer Acension history from custom fields. 
+    description: Deletes all Performer Ascension history from custom fields. 
     defaultArgs:
       mode: processAll
       task: wipe
@@ -36,13 +36,13 @@ tasks:
       task: reset
 
   - name: "Prime Unrated Scenes"
-    description: Test Description.
+    description: Randomly assigns all scenes a rating between 1 (F-Tier) up to 40 (C-Tier) honoring correct distribution.
     defaultArgs:
       mode: processAll
       task: sceneprimeunrated
 
   - name: "Prime Scenes From Performer Ratings"
-    description: Test Description.
+    description: Generates baseline ratings for unrated scenes by combining performer ascended score, match history, and scene metadata.
     defaultArgs:
       mode: processAll
       task: sceneprime
@@ -54,7 +54,7 @@ tasks:
       task: scenewipe
 
   - name: "Reset All Scene Ratings"
-    description: Resets all Scene ratings to null.
+    description: Resets all Scene ratings to 0.
     defaultArgs:
       mode: processAll
       task: scenereset
@@ -66,7 +66,7 @@ tasks:
       task: snapshotexport
       
   - name: "Import Ascension Snapshot"
-    description: Looks for for most recent snapshot and restores database.
+    description: Looks for for most recent Ascension snapshot and restores database.
     defaultArgs:
       mode: processAll
       task: snapshotimport
