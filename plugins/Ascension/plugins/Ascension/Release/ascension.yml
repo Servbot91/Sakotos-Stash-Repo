@@ -1,6 +1,6 @@
 name: Ascension
-description: "Ascension features a unique engine to function as a comprehensive stash entity rating and tier system that scales and adapts to your database in real time. This fork sets out to further expand and develop core features of the original while maintaining a consistent, fair, and stable rating system."
-version: 1.3.5HF1
+description: "Ascension features a unique engine and mechanics to function as a comprehensive stash entity rating and tier system that scales and adapts to your database in real time. This fork sets out to further expand and develop core features of the original while maintaining a consistent, fair, and stable rating system."
+version: 1.4
 url: https://discourse.stashapp.cc/t/ascension/6714
 exec:
   - python
@@ -34,6 +34,18 @@ tasks:
     defaultArgs:
       mode: processAll
       task: reset
+
+  - name: "Prime Unrated Scenes"
+    description: Test Description.
+    defaultArgs:
+      mode: processAll
+      task: sceneprimeunrated
+
+  - name: "Prime Scenes From Performer Ratings"
+    description: Test Description.
+    defaultArgs:
+      mode: processAll
+      task: sceneprime
 
   - name: "Wipe Scene Match History"
     description: Deletes all Scene Ascension history from custom fields.
