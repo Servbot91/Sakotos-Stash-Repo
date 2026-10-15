@@ -1114,7 +1114,7 @@
   function escapeHtml(unsafe) {
     if (!unsafe)
       return "";
-    return String(unsafe).replace(/&/g, "&").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+    return String(unsafe).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
   }
   function getCountryDisplay(countryCode) {
     if (!countryCode)
@@ -1296,11 +1296,11 @@
       grid.insertAdjacentHTML(
         "beforeend",
         `<div class="stat-item">
-         <div class="stats-key">${label}</div>
-         <div class="stats-value ${valueClass}">
-           ${displayValue}${emoji}
-         </div>
-       </div>`
+        <div class="stats-key">${label}</div>
+        <div class="stats-value ${valueClass}">
+          ${displayValue}${emoji}
+        </div>
+      </div>`
       );
     });
     return grid;
@@ -1472,6 +1472,9 @@
       }
       return;
     }
+    if (ascensionStatsInitialized)
+      return;
+    ascensionStatsInitialized = true;
     expandCustomFields();
     let collapseTimeout;
     const collapseObserver = new MutationObserver(() => {
@@ -1479,19 +1482,23 @@
       collapseTimeout = setTimeout(expandCustomFields, 50);
     });
     collapseObserver.observe(document.body, { childList: true, subtree: true });
-    observeStatsFields(
+    ascensionObservers.push(collapseObserver);
+    const statsObserver1 = observeStatsFields(
       ".custom-field-hotornot_stats .TruncatedText",
       ".custom-field-hotornot_stats",
       ".detail-item-title.custom-field-hotornot-stats",
       "Match History"
     );
-    observeStatsFields(
+    ascensionObservers.push(statsObserver1);
+    const statsObserver2 = observeStatsFields(
       ".hotornot_stats .TruncatedText",
       ".hotornot_stats",
       ".detail-item-title.hotornot-stats",
       "Match History"
     );
-    observeRecordFields();
+    ascensionObservers.push(statsObserver2);
+    const recordObserver = observeRecordFields();
+    ascensionObservers.push(recordObserver);
     const style = document.createElement("style");
     style.textContent = `
     .rating-tier-container {
@@ -1523,7 +1530,7 @@
   `;
     document.head.appendChild(style);
   }
-  var recordPreviewTooltip, STREAK_EMOJIS2;
+  var recordPreviewTooltip, STREAK_EMOJIS2, ascensionStatsInitialized, ascensionObservers;
   var init_formatters = __esm({
     "formatters.js"() {
       init_constants();
@@ -1532,13 +1539,15 @@
       recordPreviewTooltip = null;
       STREAK_EMOJIS2 = [
         { min: 2, max: 3, symbol: " \u{1F525} " },
-        { min: 4, max: 5, symbol: " \u2764\uFE0F\u200D\u{1F525} " },
+        { min: 4, max: 5, symbol: " \u2764\uFE0F\u{1F525} " },
         { min: 6, max: 8, symbol: " \u2660\uFE0F " },
         { min: 9, max: 12, symbol: " \u{1F48E} " },
         { min: 13, max: 17, symbol: " \u2728 " },
         { min: 18, max: 24, symbol: " \u{1F451} " },
-        { min: 25, max: Infinity, symbol: "\u{1FABD}" }
+        { min: 25, max: Infinity, symbol: "" }
       ];
+      ascensionStatsInitialized = false;
+      ascensionObservers = [];
       initAscensionStats();
     }
   });
@@ -3626,12 +3635,12 @@ id
   }
   async function fetchAllScenesForBadge() {
     const query = `
-query AllScenesForBadge($page: Int!, $per_page: Int!) {
-  findScenes(filter: { per_page: $per_page, page: $page }) {
-    count
-    scenes { ${SCENE_BADGE_FRAGMENT} }
-  }
-}
+    query AllScenesForBadge($page: Int!, $per_page: Int!) {
+      findScenes(filter: { per_page: $per_page, page: $page }) {
+        count
+        scenes { ${SCENE_BADGE_FRAGMENT} }
+      }
+    }
   `;
     const all = [];
     const pageSize = 500;
@@ -3693,6 +3702,10 @@ query AllScenesForBadge($page: Int!, $per_page: Int!) {
         history.pushState = pushStateOriginal;
       }
       attachedListeners.delete("navigation");
+    }
+    if (sceneTooltipHandler) {
+      document.removeEventListener("mouseover", sceneTooltipHandler);
+      sceneTooltipHandler = null;
     }
     allPerformersCache = null;
     rankCache = null;
@@ -4030,7 +4043,7 @@ Match Stats:`;
     const performerId = linkEl.href.split("/").pop();
     if (!performerId)
       return false;
-    const ratingBanner = card.querySelector(".rating-banner");
+    let ratingBanner = card.querySelector(".rating-banner");
     let bannerRestored = false;
     const restoreRatingBanner = () => {
       if (ratingBanner && !bannerRestored) {
@@ -4059,14 +4072,21 @@ Match Stats:`;
       await initPerformerCacheFromDB();
       if (!allPerformersCache && !isFetchingAllPerformers) {
         isFetchingAllPerformers = true;
-        allPerformersCache = await getAllPerformersSorted();
-        rankCache = calculateAllPerformerRanks(allPerformersCache);
-        await writeCache(PERFORMER_STORE, "allPerformers", allPerformersCache);
-        await writeCache(PERFORMER_STORE, "rankMap", rankCache);
-        isFetchingAllPerformers = false;
-        while (performerQueue.length > 0) {
-          const queuedCard = performerQueue.shift();
-          await processPerformerCard(queuedCard);
+        try {
+          allPerformersCache = await getAllPerformersSorted();
+          rankCache = calculateAllPerformerRanks(allPerformersCache);
+          await writeCache(PERFORMER_STORE, "allPerformers", allPerformersCache);
+          await writeCache(PERFORMER_STORE, "rankMap", rankCache);
+        } catch (error) {
+          console.error("[Ascension] Failed to load performers:", error);
+        } finally {
+          isFetchingAllPerformers = false;
+        }
+        if (allPerformersCache) {
+          while (performerQueue.length > 0) {
+            const queuedCard = performerQueue.shift();
+            await processPerformerCard(queuedCard);
+          }
         }
       }
       if (!allPerformersCache) {
@@ -4102,6 +4122,7 @@ Match Stats:`;
       if (badge) {
         if (ratingBanner) {
           ratingBanner.replaceWith(badge);
+          ratingBanner = null;
         } else {
           linkEl.appendChild(badge);
         }
@@ -4159,14 +4180,21 @@ Match Stats:`;
       await initSceneCacheFromDB();
       if (!allScenesCache && !isFetchingAllScenes) {
         isFetchingAllScenes = true;
-        allScenesCache = await fetchAllScenesForBadge();
-        sceneRankCache = calculateAllSceneRanks(allScenesCache);
-        await writeCache(SCENE_STORE, "allScenes", allScenesCache);
-        await writeCache(SCENE_STORE, "rankMap", sceneRankCache);
-        isFetchingAllScenes = false;
-        while (sceneQueue.length > 0) {
-          const queuedCard = sceneQueue.shift();
-          await processSceneCard(queuedCard);
+        try {
+          allScenesCache = await fetchAllScenesForBadge();
+          sceneRankCache = calculateAllSceneRanks(allScenesCache);
+          await writeCache(SCENE_STORE, "allScenes", allScenesCache);
+          await writeCache(SCENE_STORE, "rankMap", sceneRankCache);
+        } catch (error) {
+          console.error("[Ascension] Failed to load scenes:", error);
+        } finally {
+          isFetchingAllScenes = false;
+        }
+        if (allScenesCache) {
+          while (sceneQueue.length > 0) {
+            const queuedCard = sceneQueue.shift();
+            await processSceneCard(queuedCard);
+          }
         }
       }
       if (!allScenesCache) {
@@ -4505,42 +4533,45 @@ Match Stats:`;
   function setupScenePageTooltips() {
     if (!isOnScenePage())
       return;
-    const performerImages = document.querySelectorAll(".performer-card-image");
-    performerImages.forEach((img) => {
+    if (sceneTooltipHandler) {
+      document.removeEventListener("mouseover", sceneTooltipHandler);
+    }
+    sceneTooltipHandler = async (event) => {
+      const img = event.target.closest(".performer-card-image");
+      if (!img)
+        return;
       const linkEl = img.closest('a[href^="/performers/"]');
       if (!linkEl)
         return;
       const performerId = linkEl.href.split("/").pop();
       if (!performerId)
         return;
-      img.addEventListener("mouseenter", async () => {
-        try {
-          await initPerformerCacheFromDB();
-          if (!allPerformersCache) {
-            allPerformersCache = await getAllPerformersSorted();
-            rankCache = calculateAllPerformerRanks(allPerformersCache);
-            await writeCache(PERFORMER_STORE, "allPerformers", allPerformersCache);
-            await writeCache(PERFORMER_STORE, "rankMap", rankCache);
-          }
-          let rankInfo = rankCache ? rankCache.get(performerId) : null;
-          if (!rankInfo) {
-            rankInfo = await getPerformerGlobalRank(performerId, allPerformersCache);
-          }
-          if (rankInfo) {
-            const tooltipText = createBattleRankTooltip(
-              rankInfo.rank,
-              rankInfo.total,
-              rankInfo.rating,
-              rankInfo.stats,
-              rankInfo.battleScore
-            );
-            img.title = tooltipText;
-          }
-        } catch (error) {
-          console.error(`Error fetching rank for performer ${performerId}:`, error);
+      try {
+        await initPerformerCacheFromDB();
+        if (!allPerformersCache) {
+          allPerformersCache = await getAllPerformersSorted();
+          rankCache = calculateAllPerformerRanks(allPerformersCache);
+          await writeCache(PERFORMER_STORE, "allPerformers", allPerformersCache);
+          await writeCache(PERFORMER_STORE, "rankMap", rankCache);
         }
-      });
-    });
+        let rankInfo = rankCache ? rankCache.get(performerId) : null;
+        if (!rankInfo) {
+          rankInfo = await getPerformerGlobalRank(performerId, allPerformersCache);
+        }
+        if (rankInfo) {
+          img.title = createBattleRankTooltip(
+            rankInfo.rank,
+            rankInfo.total,
+            rankInfo.rating,
+            rankInfo.stats,
+            rankInfo.battleScore
+          );
+        }
+      } catch (error) {
+        console.error(`Error fetching rank for performer ${performerId}:`, error);
+      }
+    };
+    document.addEventListener("mouseover", sceneTooltipHandler);
   }
   function handleNavigation() {
     if (lastPath !== window.location.pathname) {
@@ -4620,6 +4651,10 @@ Match Stats:`;
   }
   async function initPlugin() {
     cleanup();
+    window.addEventListener("beforeunload", cleanup);
+    cleanupFunctions.push(() => {
+      window.removeEventListener("beforeunload", cleanup);
+    });
     if (typeof onBadgeSettingsChange === "function") {
       try {
         onBadgeSettingsChange(() => {
@@ -4655,7 +4690,7 @@ Match Stats:`;
       setTimeout(setupScenePageTooltips, 1e3);
     }
   }
-  var attachedListeners, observer, processedCards, allPerformersCache, rankCache, isFetchingAllPerformers, isPerformerCacheInitializing, performerQueue, allScenesCache, sceneRankCache, isFetchingAllScenes, isSceneCacheInitializing, sceneQueue, pushStateOriginal, cleanupFunctions, DB_NAME, DB_VERSION, PERFORMER_STORE, SCENE_STORE, SCENE_BADGE_FRAGMENT, ASCENSION_FLAME_SVG, debouncedInjectBattleRankBadge, lastPath;
+  var attachedListeners, observer, processedCards, sceneTooltipHandler, allPerformersCache, rankCache, isFetchingAllPerformers, isPerformerCacheInitializing, performerQueue, allScenesCache, sceneRankCache, isFetchingAllScenes, isSceneCacheInitializing, sceneQueue, pushStateOriginal, cleanupFunctions, DB_NAME, DB_VERSION, PERFORMER_STORE, SCENE_STORE, SCENE_BADGE_FRAGMENT, ASCENSION_FLAME_SVG, debouncedInjectBattleRankBadge, lastPath;
   var init_ui_badge = __esm({
     "ui-badge.js"() {
       init_state();
@@ -4666,6 +4701,7 @@ Match Stats:`;
       attachedListeners = /* @__PURE__ */ new Set();
       observer = null;
       processedCards = /* @__PURE__ */ new WeakSet();
+      sceneTooltipHandler = null;
       allPerformersCache = null;
       rankCache = null;
       isFetchingAllPerformers = false;
@@ -4690,22 +4726,18 @@ rating100
 custom_fields
 `;
       ASCENSION_FLAME_SVG = `<svg
-xmlns="http://www.w3.org/2000/svg"
-viewBox="0 0 512 512"
-class="hon-asc-icon"
-fill="currentColor"
-aria-hidden="true"
-focusable="false"
-role="img"
-width="14"
-height="14"
-style="fill: currentColor !important;">
-<path d="M160.53 20.906c-22.075.207-39.973 9.138-54.218 23.782C89.507 61.962 78.3 87.6 74.876 115.624c-6.847 56.05 16.55 119.953 82.094 146.625l-7.032 17.313c-64.128-26.096-93.275-84.757-94.782-141-17.36 10.866-27.608 27.05-32.343 46.437-5.728 23.448-2.727 51.54 7.906 77.844 21.264 52.61 71.37 96.856 138.436 87.594l2.563 18.53c-48.795 6.74-90.183-11.576-119.907-41.03-8.152 16.216-7.504 32.264-.657 48.312 8.472 19.854 27.498 39.252 52.875 53.594 47.085 26.61 114.8 35.554 173.19 5.094-5.43-20.99-2.652-45.074 11.342-69.313 22.71-39.332 60.78-49.83 88.375-38.688 13.798 5.572 25.08 16.555 29.875 31.157 4.796 14.6 2.836 32.303-7.375 50.312-11.8 20.81-34.144 27.877-51.25 22.22-8.552-2.83-16.22-9.437-18.875-18.876-2.653-9.44-.142-20.366 7.063-31.313l15.594 10.282c-5.238 7.955-5.5 13.08-4.69 15.967.813 2.888 2.84 4.895 6.75 6.188 7.822 2.587 21.483-.152 29.158-13.688 8.188-14.44 8.82-26.183 5.843-35.25-2.976-9.066-9.846-15.954-19.092-19.687-18.493-7.467-46.14-2.273-65.188 30.72-14.024 24.29-14.373 45.376-6.72 63.436l2.814 4.375c-.197.13-.397.25-.594.376.256.497.513 1.008.78 1.5 1.945 3.565 4.218 7.007 6.814 10.28.1.13.21.25.312.377.395.49.81.984 1.22 1.468 11.508 13.657 28.358 24.378 47.312 30.283 24.26 7.557 51.596 7.146 74.843-3.75 23.248-10.897 42.935-31.972 52.69-68.375 3.323-12.406 5.08-23.776 5.5-34.313.01-.418.023-.832.03-1.25.087-5.1-.088-10.246-.563-15.406-.037-.407-.084-.814-.125-1.22-.032-.27-.06-.544-.093-.813-3.295-25.79-15.823-46.16-34.345-64.437-29.635-29.24-75.698-51.638-122.75-74.125-47.052-22.487-95.112-45.1-128.875-77.656-31.683-30.553-49.926-71.185-40.313-124.814-.72-.01-1.444-.006-2.156 0z"/>
+  xmlns="http://www.w3.org/2000/svg"
+  viewBox="0 0 512 512"
+  class="hon-asc-icon"
+  fill="currentColor"
+  aria-hidden="true"
+  focusable="false"
+  role="img"
+  width="14"
+  height="14"
+  style="fill: currentColor !important;">
+  <path d="M160.53 20.906c-22.075.207-39.973 9.138-54.218 23.782C89.507 61.962 78.3 87.6 74.876 115.624c-6.847 56.05 16.55 119.953 82.094 146.625l-7.032 17.313c-64.128-26.096-93.275-84.757-94.782-141-17.36 10.866-27.608 27.05-32.343 46.437-5.728 23.448-2.727 51.54 7.906 77.844 21.264 52.61 71.37 96.856 138.436 87.594l2.563 18.53c-48.795 6.74-90.183-11.576-119.907-41.03-8.152 16.216-7.504 32.264-.657 48.312 8.472 19.854 27.498 39.252 52.875 53.594 47.085 26.61 114.8 35.554 173.19 5.094-5.43-20.99-2.652-45.074 11.342-69.313 22.71-39.332 60.78-49.83 88.375-38.688 13.798 5.572 25.08 16.555 29.875 31.157 4.796 14.6 2.836 32.303-7.375 50.312-11.8 20.81-34.144 27.877-51.25 22.22-8.552-2.83-16.22-9.437-18.875-18.876-2.653-9.44-.142-20.366 7.063-31.313l15.594 10.282c-5.238 7.955-5.5 13.08-4.69 15.967.813 2.888 2.84 4.895 6.75 6.188 7.822 2.587 21.483-.152 29.158-13.688 8.188-14.44 8.82-26.183 5.843-35.25-2.976-9.066-9.846-15.954-19.092-19.687-18.493-7.467-46.14-2.273-65.188 30.72-14.024 24.29-14.373 45.376-6.72 63.436l2.814 4.375c-.197.13-.397.25-.594.376.256.497.513 1.008.78 1.5 1.945 3.565 4.218 7.007 6.814 10.28.1.13.21.25.312.377.395.49.81.984 1.22 1.468 11.508 13.657 28.358 24.378 47.312 30.283 24.26 7.557 51.596 7.146 74.843-3.75 23.248-10.897 42.935-31.972 52.69-68.375 3.323-12.406 5.08-23.776 5.5-34.313.01-.418.023-.832.03-1.25.087-5.1-.088-10.246-.563-15.406-.037-.407-.084-.814-.125-1.22-.032-.27-.06-.544-.093-.813-3.295-25.79-15.823-46.16-34.345-64.437-29.635-29.24-75.698-51.638-122.75-74.125-47.052-22.487-95.112-45.1-128.875-77.656-31.683-30.553-49.926-71.185-40.313-124.814-.72-.01-1.444-.006-2.156 0z"/>
 </svg>`;
-      window.addEventListener("beforeunload", cleanup);
-      cleanupFunctions.push(() => {
-        window.removeEventListener("beforeunload", cleanup);
-      });
       debouncedInjectBattleRankBadge = debounce(injectBattleRankBadgeInner, 300);
       lastPath = window.location.pathname;
       initPlugin();
@@ -5292,12 +5324,14 @@ style="fill: currentColor !important;">
 
   // dom-utils.js
   function clearDOMCache() {
+    elementCache.clear();
     elementCollectionCache.clear();
     commonElementsCache.clear();
   }
-  var elementCollectionCache, commonElementsCache;
+  var elementCache, elementCollectionCache, commonElementsCache;
   var init_dom_utils = __esm({
     "dom-utils.js"() {
+      elementCache = /* @__PURE__ */ new Map();
       elementCollectionCache = /* @__PURE__ */ new Map();
       commonElementsCache = /* @__PURE__ */ new Map();
     }
@@ -10965,6 +10999,9 @@ style="fill: currentColor !important;">
   }
   function applyPortraitClasses(cardElement) {
     cardElement.querySelectorAll(".hon-scene-screenshot, .hon-hover-preview").forEach((media) => {
+      if (media.dataset.honPortraitWatched)
+        return;
+      media.dataset.honPortraitWatched = "true";
       if (media.complete || media.readyState >= 2) {
         applyPortraitClass(media);
       } else {
@@ -11286,8 +11323,9 @@ style="fill: currentColor !important;">
   }
   function setupTagExpansion(cardElement) {
     applyPortraitClasses(cardElement);
-    const moreTags = cardElement.querySelectorAll(".hon-tags-more");
+    const moreTags = cardElement.querySelectorAll(".hon-tags-more:not(.hon-tag-expansion-initialized)");
     moreTags.forEach((tag) => {
+      tag.classList.add("hon-tag-expansion-initialized");
       tag.addEventListener("click", function(e) {
         e.stopPropagation();
         const container = this.closest(".hon-tags-container");
@@ -11312,8 +11350,11 @@ style="fill: currentColor !important;">
   }
   function preventLinkBubbling(cardElement) {
     applyPortraitClasses(cardElement);
-    const links = cardElement.querySelectorAll("a.hon-scene-link, a.hon-performer-link");
+    const links = cardElement.querySelectorAll(
+      "a.hon-scene-link:not(.hon-link-bubble-guarded), a.hon-performer-link:not(.hon-link-bubble-guarded)"
+    );
     links.forEach((link) => {
+      link.classList.add("hon-link-bubble-guarded");
       link.addEventListener("click", (e) => {
         e.stopPropagation();
       });
@@ -11796,8 +11837,9 @@ style="fill: currentColor !important;">
     }
   }
   function attachBattleScoreTooltip(element, performer, allPerformers = null, currentOrigin = window.location.origin) {
-    if (!performer)
+    if (!performer || element.dataset.honTooltipAttached)
       return;
+    element.dataset.honTooltipAttached = "true";
     element.addEventListener("mouseenter", (e) => {
       const existingTooltip = document.querySelector(".opponent-tooltip");
       if (existingTooltip)
@@ -14912,6 +14954,7 @@ style="fill: currentColor !important;">
   window.showPerformerSelection = showPerformerSelection;
   window.handleChooseItem = handleChooseItem;
   var lastPath2 = "";
+  var observer2 = null;
   (function initializeSelectedGendersFromLocalStorage() {
     try {
       const saved = localStorage.getItem("hotornot_selected_genders");
@@ -14935,7 +14978,6 @@ style="fill: currentColor !important;">
       console.warn("[Ascension] Failed to load selected mode from localStorage:", e);
     }
   })();
-  var observer2 = null;
   function initializeMetrics() {
     if (window.location.pathname.includes("/stats")) {
       const checkInterval = setInterval(() => {
@@ -14959,42 +15001,49 @@ style="fill: currentColor !important;">
     if (window.honLoaded) {
       cleanup2();
     }
+    if (window.honMainObserver && window.honMainObserver !== observer2) {
+      window.honMainObserver.disconnect();
+    }
+    window.honMainObserver = null;
+    if (observer2) {
+      observer2.disconnect();
+      observer2 = null;
+    }
     window.honLoaded = true;
     console.log("[Ascension] Global Scope Initialized");
     initializeMetrics();
-    if (!observer2) {
-      observer2 = new MutationObserver(() => {
-        const currentPath = window.location.pathname;
-        const existingBtn = document.getElementById("hon-floating-btn");
-        if (existingBtn) {
-          if (!shouldShowButton()) {
-            existingBtn.remove();
-          }
-        } else if (shouldShowButton()) {
-          addFloatingButton();
+    observer2 = new MutationObserver(() => {
+      const currentPath = window.location.pathname;
+      const existingBtn = document.getElementById("hon-floating-btn");
+      if (existingBtn) {
+        if (!shouldShowButton()) {
+          existingBtn.remove();
         }
-        if (isOnSinglePerformerPage()) {
-          const badgeExists = !!document.getElementById("hon-battle-rank-badge");
-          if (currentPath !== lastPath2 || !badgeExists) {
-            lastPath2 = currentPath;
-            setTimeout(() => {
-              if (!document.getElementById("hon-battle-rank-badge")) {
-                injectBattleRankBadge();
-              }
-            }, 300);
-          }
+      } else if (shouldShowButton()) {
+        addFloatingButton();
+      }
+      if (isOnSinglePerformerPage()) {
+        const badgeExists = !!document.getElementById("hon-battle-rank-badge");
+        if (currentPath !== lastPath2 || !badgeExists) {
+          lastPath2 = currentPath;
+          setTimeout(() => {
+            if (!document.getElementById("hon-battle-rank-badge")) {
+              injectBattleRankBadge();
+            }
+          }, 300);
         }
-        const container = document.getElementById("stash-main-container");
-        if (container && !document.getElementById("hotornot-container")) {
-          container.innerHTML = createMainUI();
-          attachEventListeners(container);
-        }
-      });
-      observer2.observe(document.body, {
-        childList: true,
-        subtree: true
-      });
-    }
+      }
+      const container = document.getElementById("stash-main-container");
+      if (container && !document.getElementById("hotornot-container")) {
+        container.innerHTML = createMainUI();
+        attachEventListeners(container);
+      }
+    });
+    window.honMainObserver = observer2;
+    observer2.observe(document.body, {
+      childList: true,
+      subtree: true
+    });
     if (isOnSinglePerformerPage()) {
       setTimeout(() => injectBattleRankBadge(), 1e3);
     }
@@ -15004,13 +15053,18 @@ style="fill: currentColor !important;">
       observer2.disconnect();
       observer2 = null;
     }
+    window.honMainObserver = null;
     if (typeof cleanupButtonObserver === "function") {
       cleanupButtonObserver();
     }
     try {
       const modal = document.getElementById("hon-modal");
       if (modal) {
-        modal.style.display = "none";
+        if (typeof closeRankingModal === "function") {
+          closeRankingModal();
+        } else {
+          modal.style.display = "none";
+        }
       }
       destroyEventLog();
       clearDOMCache();
