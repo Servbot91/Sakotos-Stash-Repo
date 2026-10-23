@@ -1665,8 +1665,8 @@
     return safeGraphqlMutation("deleteImage", mutation, {
       input: {
         ids: [imageId],
-        delete_file: false,
-        delete_generated: false,
+        delete_file: true,
+        delete_generated: true,
         destroy_file_entry: false
       }
     });
@@ -1678,8 +1678,8 @@
     return safeGraphqlMutation("deleteGallery", mutation, {
       input: {
         ids: [galleryId],
-        delete_file: false,
-        delete_generated: false,
+        delete_file: true,
+        delete_generated: true,
         destroy_file_entry: false
       }
     });
