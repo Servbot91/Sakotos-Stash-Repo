@@ -2920,6 +2920,21 @@ ${IMAGE_FRAGMENT}
       [recordKey]: recordArray
     };
   }
+  const RANKING_ITEM_TYPES = { performers: "performer", scenes: "scene", images: "image" };
+  function emitRankingEvent(name, detail) {
+    try {
+      // An undo is shown where its match was.
+      const slot = document.querySelector(`#hon-modal [data-ranking-slot="${name === "undo" ? "match" : name}"]`);
+      document.dispatchEvent(new CustomEvent(`stash-ranking:${name}`, {
+        detail: { source: "ascension", ...detail, slot, close: () => window.closeRankingModal?.() }
+      }));
+    } catch (err) {
+      console.warn(`[Ascension] Ranking event ${name} failed:`, err);
+    }
+  }
+  function rankingEventItem(id, item) {
+    return { id: String(id), name: item?.name ?? item?.title ?? null };
+  }
   async function handleComparison(winnerId, loserId, winnerCurrentRating, loserCurrentRating, loserRank = null, winnerObj = null, loserObj = null, isDraw = false) {
     const startTime = performance.now();
     console.log(`[Ascension Timing] handleComparison started for Winner ID: ${winnerId}, Loser ID: ${loserId}`);
@@ -3114,6 +3129,13 @@ ${IMAGE_FRAGMENT}
     }
     const endTime = performance.now();
     console.log(`[Ascension Timing] handleComparison completed in ${(endTime - startTime).toFixed(2)} ms.`);
+    emitRankingEvent("match", {
+      itemType: RANKING_ITEM_TYPES[state.battleType] || state.battleType,
+      mode: state.currentMode,
+      draw: !!isDraw,
+      winner: { ...rankingEventItem(winnerId, freshWinnerObj || winnerObj), rating: newWinnerRating, change: winnerGain },
+      loser: { ...rankingEventItem(loserId, freshLoserObj || loserObj), rating: newLoserRating, change: -loserLoss }
+    });
     return {
       newWinnerRating,
       newLoserRating,
@@ -3453,6 +3475,15 @@ path
       state.gauntletFallingItem = snap.gauntletFallingItem ? { ...snap.gauntletFallingItem } : null;
       console.log("[Ascension] Restored gauntlet state");
     }
+    const undoneItem = (id, rating) => ({
+      ...rankingEventItem(id, [last.pairSnapshot?.left, last.pairSnapshot?.right].find((item) => String(item?.id) === String(id))),
+      rating
+    });
+    emitRankingEvent("undo", {
+      itemType: RANKING_ITEM_TYPES[state.battleType] || state.battleType,
+      winner: undoneItem(last.winnerId, last.winnerOldRating),
+      loser: undoneItem(last.loserId, last.loserOldRating)
+    });
     let restoredPairSnapshot = null;
     if (last.pairSnapshot) {
       const { left, right } = last.pairSnapshot;
@@ -4403,10 +4434,12 @@ Match Stats:`;
         Rank <strong>#${rank}</strong> of ${total}<br>
         ${scoreDisplay}
       </p>
+      <div class="hon-plugin-slot" data-ranking-slot="result"></div>
       <button id="hon-new-gauntlet" class="btn btn-primary">Start New Run</button>
     </div>
   `;
     document.getElementById("hon-gauntlet-status")?.remove();
+    emitRankingEvent("result", { kind: "placement", itemType: RANKING_ITEM_TYPES[battleType] || battleType, item: rankingEventItem(item.id, item) });
     const actionsEl = document.querySelector(".hon-actions");
     if (actionsEl)
       actionsEl.style.display = "none";
@@ -6143,6 +6176,7 @@ custom_fields
                 <div id="hon-comparison-area">
                   <div class="hon-loading">Loading...</div>
                 </div>
+                <div class="hon-plugin-slot" data-ranking-slot="match"></div>
                 <div class="hon-actions">
                   <div class="hon-action-buttons">
                     <button id="hon-skip-btn" class="hon-action-btn" title="Skip Match">Skip Match</button>
@@ -9169,6 +9203,7 @@ custom_fields
       </div>
       <div class="hon-content">
         <div id="hon-comparison-area">${createSkeletonHTML(2, "hon-comparison-skeleton")}</div>
+        <div class="hon-plugin-slot" data-ranking-slot="match"></div>
         <div class="hon-actions">
           <div class="hon-action-buttons">
             <button id="hon-skip-btn" class="hon-action-btn" title="Skip Match">Skip Match</button>
@@ -11292,6 +11327,8 @@ custom_fields
     </div>`;
   }
   function createVictoryScreen(champion) {
+    // Callers insert the markup synchronously, so the slot exists by then.
+    queueMicrotask(() => emitRankingEvent("result", { kind: "champion", itemType: RANKING_ITEM_TYPES[state.battleType] || state.battleType, item: rankingEventItem(champion.id, champion) }));
     let title, imagePath;
     if (state.battleType === "performers") {
       title = champion.name || `Performer #${champion.id}`;
@@ -11317,6 +11354,7 @@ custom_fields
       </div>
       <h3 class="hon-victory-name">${title}</h3>
       <p class="hon-victory-stats">Conquered all ${state.totalItemsCount} with ${state.gauntletWins} wins!</p>
+      <div class="hon-plugin-slot" data-ranking-slot="result"></div>
       <button id="hon-new-gauntlet" class="btn btn-primary">Start New Gauntlet</button>
     </div>
   `;
