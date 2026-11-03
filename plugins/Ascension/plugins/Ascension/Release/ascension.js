@@ -2923,7 +2923,8 @@ ${IMAGE_FRAGMENT}
   const RANKING_ITEM_TYPES = { performers: "performer", scenes: "scene", images: "image" };
   function emitRankingEvent(name, detail) {
     try {
-      const slot = document.querySelector(`#hon-modal [data-ranking-slot="${name}"]`);
+      // An undo is shown where its match was.
+      const slot = document.querySelector(`#hon-modal [data-ranking-slot="${name === "undo" ? "match" : name}"]`);
       document.dispatchEvent(new CustomEvent(`stash-ranking:${name}`, {
         detail: { source: "ascension", ...detail, slot, close: () => window.closeRankingModal?.() }
       }));
@@ -3131,6 +3132,7 @@ ${IMAGE_FRAGMENT}
     emitRankingEvent("match", {
       itemType: RANKING_ITEM_TYPES[state.battleType] || state.battleType,
       mode: state.currentMode,
+      draw: !!isDraw,
       winner: { ...rankingEventItem(winnerId, freshWinnerObj || winnerObj), rating: newWinnerRating, change: winnerGain },
       loser: { ...rankingEventItem(loserId, freshLoserObj || loserObj), rating: newLoserRating, change: -loserLoss }
     });
@@ -3473,6 +3475,15 @@ path
       state.gauntletFallingItem = snap.gauntletFallingItem ? { ...snap.gauntletFallingItem } : null;
       console.log("[Ascension] Restored gauntlet state");
     }
+    const undoneItem = (id, rating) => ({
+      ...rankingEventItem(id, [last.pairSnapshot?.left, last.pairSnapshot?.right].find((item) => String(item?.id) === String(id))),
+      rating
+    });
+    emitRankingEvent("undo", {
+      itemType: RANKING_ITEM_TYPES[state.battleType] || state.battleType,
+      winner: undoneItem(last.winnerId, last.winnerOldRating),
+      loser: undoneItem(last.loserId, last.loserOldRating)
+    });
     let restoredPairSnapshot = null;
     if (last.pairSnapshot) {
       const { left, right } = last.pairSnapshot;
